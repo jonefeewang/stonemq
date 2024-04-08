@@ -77,7 +77,12 @@ pub struct BatchHeader {
     record_count: i32,
     //下边还有一个record count <i32>并未显式放到这里
 }
-#[derive(Getters)]
+#[derive(Debug, Default, Clone)]
+pub struct MemoryRecord {
+    pub buffer: Bytes,
+}
+
+#[derive(Getters, Default)]
 pub struct MemoryRecordBatch {
     #[get = "pub"]
     buffer: Bytes,

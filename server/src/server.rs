@@ -5,11 +5,13 @@ use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc, Semaphore};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{self, Duration};
 use tracing::{error, info, instrument};
 
-use crate::config::DynamicConfig;
 use crate::{AppResult, BrokerConfig, Connection, Shutdown};
+use crate::config::DynamicConfig;
+use crate::request::{ProduceRequestV0, RequestContext, RequestEnum, RequestProcessor};
 
 #[derive(Getters)]
 #[get = "pub"]
@@ -34,6 +36,8 @@ struct ConnectionHandler {
     shutdown: Shutdown,
     _shutdown_complete: mpsc::Sender<()>,
     broker_config: Arc<BrokerConfig>,
+    socket_read_ch_tx: Sender<()>,
+    socket_read_ch_rx: Receiver<()>,
 }
 
 impl Broker {
@@ -116,14 +120,17 @@ impl<'dc> Server<'dc> {
             };
 
             let broker_config_clone = Arc::clone(&self.broker_config);
+            //ensure request are processed FIFO in one connection, even client using piping
+            let (socket_read_ch_tx, socket_read_ch_rx) = mpsc::channel(1);
 
             let mut handler = ConnectionHandler {
                 connection: Connection::new(socket, dynamic_config_snap_shot),
                 shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
                 _shutdown_complete: self.shutdown_complete_tx.clone(),
                 broker_config: broker_config_clone,
+                socket_read_ch_tx,
+                socket_read_ch_rx,
             };
-
             tokio::spawn(async move {
                 if let Err(err) = handler.run().await {
                     // package oversize or data corrupted, end connection
@@ -155,19 +162,35 @@ impl<'dc> Server<'dc> {
 impl ConnectionHandler {
     #[instrument(skip(self))]
     async fn run(&mut self) -> AppResult<()> {
+        self.socket_read_ch_tx.send(()).await?;
         while !self.shutdown.is_shutdown() {
             /* 要么读取一个frame，处理请求，要么收到关闭消息，从handle返回，结束当前connection的处理 */
             let maybe_frame = tokio::select! {
-                res = self.connection.read_frame() => res?,
+                res ={
+                    self.socket_read_ch_rx.recv().await;
+                    self.connection.read_frame()
+                }=> res?,
                 _ = self.shutdown.recv() => {
                     return Ok(());
                 }
             };
-            let _ = match maybe_frame {
+            let frame = match maybe_frame {
                 Some(frame) => frame,
                 // client close the connection
                 None => return Ok(()),
             };
+
+            let request_context = RequestContext::new(&self.connection, &self.broker_config);
+            match RequestEnum::try_from(frame) {
+                Ok(request) => {
+                    RequestProcessor::process_request(request, &request_context);
+                }
+                Err(error) => {
+                    RequestProcessor::respond_invalid_request(error, &request_context);
+                }
+            }
+            //proceed socket read for next request
+            self.socket_read_ch_tx.send(()).await?;
         }
         Ok(())
     }

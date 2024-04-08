@@ -1,32 +1,42 @@
 extern crate config as rs_config;
 
+use std::borrow::Cow;
+use std::io;
 use std::path::Path;
 use std::process::exit;
+use std::string::FromUtf8Error;
 use std::sync::Arc;
-use std::{io, result};
 
-use flume::RecvError;
 use getset::{CopyGetters, Getters};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::mpsc::error::SendError;
 use tokio::time::error::Elapsed;
 
-use crate::AppError::Invalid;
+use crate::AppError::InvalidValue;
 
-pub type AppResult<T> = result::Result<T, AppError>;
+pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
 pub enum AppError {
+    #[error("malformed protocol encoding : {0}")]
+    MalformedProtocolEncoding(&'static str),
+    #[error("error in reading network stream : {0}")]
+    NetworkReadError(Cow<'static, str>),
+    #[error("error in writing network stream : {0}")]
+    NetworkWriteError(Cow<'static, str>),
+    #[error("error in convention : {0}")]
+    ConventionError(#[from] FromUtf8Error),
     #[error("invalid provided {0} value = {1}")]
-    Invalid(&'static str, &'static str),
+    InvalidValue(&'static str, String),
     Incomplete,
     #[error("I/O {0}")]
     Io(#[from] io::Error),
     #[error("Timeout")]
     Timeout(#[from] Elapsed),
-    #[error("Channel recv error")]
-    Recv(#[from] RecvError),
+    #[error("socket channel flag send error")]
+    Recv(#[from] SendError<()>),
     #[error("Accept error = {0}")]
     Accept(String),
 }
@@ -86,7 +96,7 @@ impl BrokerConfig {
         let path_str = path
             .as_ref()
             .to_str()
-            .ok_or(Invalid("config file path", ""))?;
+            .ok_or(InvalidValue("config file path", String::new()))?;
         let config = rs_config::Config::builder()
             .add_source(rs_config::File::with_name(path_str))
             .build()
