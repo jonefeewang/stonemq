@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "server",
+    "client",
+    "common",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+rust-version = "1.73.0"
+edition = "2021"
+repository = "https://github.com/jonefeewang/stonemq"
+authors = ["jonefeewang<jonefeewang@gmail.com>"]
+description = "A high performance and efficient message queue written in Rust."
+keywords = ["kafka", "pulsar"]
+categories = ["network-programming"]
+license = "Apache-2.0"
+

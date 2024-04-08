@@ -1,0 +1,9 @@
+[general]
+id = 123
+
+[network]
+ip = "localhost"
+port = 8081
+max_connection = 65536
+#default 1M
+max_package_size = 1_048_576
