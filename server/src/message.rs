@@ -49,7 +49,7 @@ const NO_SEQUENCE: i32 = -1;
 const NO_PARTITION_LEADER_EPOCH: i32 = -1;
 const ATTRIBUTES: i16 = 0;
 
-pub struct MemoryRecordBatchBuilder {
+pub struct MemoryRecordBuilder {
     buffer: BytesMut,
     magic: i8,
     attributes: i16,
@@ -77,15 +77,16 @@ pub struct BatchHeader {
     record_count: i32,
     //下边还有一个record count <i32>并未显式放到这里
 }
-#[derive(Debug, Default, Clone)]
-pub struct MemoryRecord {
-    pub buffer: Bytes,
-}
 
-#[derive(Getters, Default)]
-pub struct MemoryRecordBatch {
+#[derive(Getters, Default, Clone, PartialEq, Eq)]
+pub struct MemoryRecord {
     #[get = "pub"]
     buffer: Bytes,
+}
+impl MemoryRecord {
+    pub fn new(buffer: Bytes) -> MemoryRecord {
+        MemoryRecord { buffer }
+    }
 }
 
 #[derive(Debug)]
@@ -109,12 +110,12 @@ pub struct Header {
     header_value: Option<Vec<u8>>,
 }
 
-impl MemoryRecordBatchBuilder {
+impl MemoryRecordBuilder {
     /*
     主要用于服务端测试，buffer的创建没有做优化
     */
-    pub fn new() -> MemoryRecordBatchBuilder {
-        let mut record_batch = MemoryRecordBatchBuilder {
+    pub fn new() -> MemoryRecordBuilder {
+        let mut record_batch = MemoryRecordBuilder {
             buffer: BytesMut::with_capacity(RECORD_BATCH_OVERHEAD as usize),
             magic: MAGIC,
             attributes: 0,
@@ -258,7 +259,7 @@ impl MemoryRecordBatchBuilder {
         }
     }
 
-    pub fn build(&mut self) -> MemoryRecordBatch {
+    pub fn build(&mut self) -> MemoryRecord {
         //补写record batch的头部
         let mut src = Cursor::new(self.buffer.as_mut());
         src.set_position(0);
@@ -293,7 +294,7 @@ impl MemoryRecordBatchBuilder {
         src.write_all(&checksum.to_be_bytes()).unwrap(); //crc
 
         let record_batch_buffer = self.buffer.split();
-        MemoryRecordBatch {
+        MemoryRecord {
             buffer: record_batch_buffer.freeze(),
         }
     }
@@ -327,7 +328,7 @@ impl Header {
     }
 }
 
-impl MemoryRecordBatch {
+impl MemoryRecord {
     pub fn records(&self) -> Option<Vec<Record>> {
         let mut buffer = self.buffer.clone();
 
@@ -471,9 +472,12 @@ impl MemoryRecordBatch {
         }
     }
 }
-impl Debug for MemoryRecordBatch {
+impl Debug for MemoryRecord {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut buffer = self.buffer.clone();
+        if buffer.remaining() == 0 {
+            return write!(f, "MemoryRecord is empty");
+        }
         f.debug_struct("MemoryRecordBatch")
             .field("first offset", &buffer.get_i64())
             .field("length", &buffer.get_i64())

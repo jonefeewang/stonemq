@@ -4,14 +4,14 @@ use getset::Getters;
 use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
-use tokio::sync::{broadcast, mpsc, Semaphore};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{broadcast, mpsc, Semaphore};
 use tokio::time::{self, Duration};
 use tracing::{error, info, instrument};
 
-use crate::{AppResult, BrokerConfig, Connection, Shutdown};
 use crate::config::DynamicConfig;
-use crate::request::{ProduceRequestV0, RequestContext, RequestEnum, RequestProcessor};
+use crate::request::{ProduceRequest, RequestContext, RequestEnum, RequestProcessor};
+use crate::{AppResult, BrokerConfig, Connection, Shutdown};
 
 #[derive(Getters)]
 #[get = "pub"]

@@ -4,7 +4,7 @@ pub use config::BrokerConfig;
 pub use connection::Connection;
 pub use frame::RequestFrame;
 pub use message::Header as MessageHeader;
-pub use message::MemoryRecordBatchBuilder;
+pub use message::MemoryRecordBuilder;
 pub use message::Record;
 pub use server::Broker;
 pub use shutdown::Shutdown;

@@ -26,6 +26,8 @@ pub enum AppError {
     NetworkReadError(Cow<'static, str>),
     #[error("error in writing network stream : {0}")]
     NetworkWriteError(Cow<'static, str>),
+    #[error("{0}")]
+    ProtocolError(Cow<'static, str>),
     #[error("error in convention : {0}")]
     ConventionError(#[from] FromUtf8Error),
     #[error("invalid provided {0} value = {1}")]
@@ -39,6 +41,7 @@ pub enum AppError {
     Recv(#[from] SendError<()>),
     #[error("Accept error = {0}")]
     Accept(String),
+    TracingError(#[from] tracing::dispatcher::SetGlobalDefaultError),
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}

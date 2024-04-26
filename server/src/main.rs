@@ -29,6 +29,11 @@ pub enum Command {
 }
 
 fn main() -> Result<(), AppError> {
+    //setup tracing
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    //setup config
     let commandline: CommandLine = CommandLine::parse();
     let config_path = commandline.conf().as_ref().map_or_else(
         || {
@@ -40,6 +45,8 @@ fn main() -> Result<(), AppError> {
     );
     let broker_config = BrokerConfig::set_up_config(config_path)?;
     let config = Arc::new(broker_config);
+
+    //start broker
     let broker = Broker::new(Arc::clone(&config));
     runtime::Builder::new_multi_thread()
         .enable_all()

@@ -1,9 +1,9 @@
 use bytes::Buf;
-use server::MemoryRecordBatchBuilder;
+use server::MemoryRecordBuilder;
 
 #[tokio::test]
 pub async fn test_record_batch() {
-    let mut builder = MemoryRecordBatchBuilder::new();
+    let mut builder = MemoryRecordBuilder::new();
 
     // 直接使用append_record_with_offset来添加记录
     builder.append_record_with_offset(1234567, 1i64, "a", "v");

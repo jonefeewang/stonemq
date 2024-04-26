@@ -1,32 +1,63 @@
 use std::sync::Arc;
 
+use crate::message::MemoryRecord;
+use crate::protocol::{Acks, ApiKey, ApiVersion};
 use crate::{AppError, BrokerConfig, Connection};
-use crate::message::MemoryRecordBatch;
-use crate::protocol::Acks;
 
 pub enum RequestEnum {
-    ProduceRequestV0(ProduceRequestV0),
-    ProduceRequestV1(ProduceRequestV0),
-    ProduceRequestV2(ProduceRequestV0),
+    ProduceRequestV0E(ProduceRequest),
+    ProduceRequestV1(ProduceRequest),
+    ProduceRequestV2(ProduceRequest),
     ProduceRequestV3(ProduceRequestV3),
     MetadataRequest(MetaDataRequest),
 }
 
-pub struct PartitionData {
-    partition: i32,
-    message_set: MemoryRecordBatch,
-}
-pub struct TopicData {
-    topic_name: String,
-    partition_data: Vec<PartitionData>,
+#[derive(Default)]
+pub struct RequestHeader {
+    pub len: u32,
+    pub api_key: ApiKey,
+    pub api_version: ApiVersion,
+    pub correlation_id: i32,
 }
 
-pub struct ProduceRequestV0 {
-    correlation_id: i32,
-    required_acks: Acks,
-    timeout: i32,
-    topic_data: Vec<TopicData>,
+#[derive(Clone, Default)]
+pub struct PartitionData {
+    pub partition: i32,
+    pub message_set: MemoryRecord,
 }
+
+impl PartitionData {
+    pub fn new(partition: i32) -> PartitionData {
+        PartitionData {
+            partition,
+            message_set: MemoryRecord::default(),
+        }
+    }
+}
+#[derive(Clone, Default)]
+pub struct TopicData {
+    pub topic_name: String,
+    pub partition_data: Vec<PartitionData>,
+}
+
+impl TopicData {
+    pub fn new(topic_name: &str, partition_data: Vec<PartitionData>) -> TopicData {
+        TopicData {
+            topic_name: topic_name.to_string(),
+            partition_data,
+        }
+    }
+}
+
+pub struct ProduceRequest {
+    pub request_header: RequestHeader,
+    pub required_acks: Acks,
+    pub timeout: i32,
+    pub topic_data: Vec<TopicData>,
+}
+
+impl ProduceRequest {}
+
 pub struct ProduceRequestV3 {
     correlation_id: i32,
     required_acks: Acks,
@@ -56,7 +87,7 @@ pub struct RequestProcessor {}
 impl RequestProcessor {
     pub fn process_request(request: RequestEnum, request_context: &RequestContext) {
         match request {
-            RequestEnum::ProduceRequestV0(request)
+            RequestEnum::ProduceRequestV0E(request)
             | RequestEnum::ProduceRequestV1(request)
             | RequestEnum::ProduceRequestV2(request) => {
                 Self::handle_produce_request(request_context, request)
@@ -70,7 +101,7 @@ impl RequestProcessor {
         }
     }
 
-    pub fn handle_produce_request(request_context: &RequestContext, request: ProduceRequestV0) {
+    pub fn handle_produce_request(request_context: &RequestContext, request: ProduceRequest) {
         todo!()
     }
     pub fn handle_produce_request_v3(request_context: &RequestContext, request: ProduceRequestV3) {
