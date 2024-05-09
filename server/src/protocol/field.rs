@@ -1,10 +1,10 @@
-use crate::protocol::types::FieldTypeEnum;
+use crate::protocol::types::DataType;
 
 #[derive(Debug, Clone)]
 pub struct Field {
     pub index: i32,
     pub name: &'static str,
-    pub p_type: FieldTypeEnum,
+    pub p_type: DataType,
 }
 
 impl PartialEq for Field {

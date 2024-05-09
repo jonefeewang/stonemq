@@ -5,9 +5,9 @@ use std::io;
 use std::path::Path;
 use std::process::exit;
 use std::string::FromUtf8Error;
-use std::sync::Arc;
 
 use getset::{CopyGetters, Getters};
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc::error::SendError;
@@ -16,6 +16,7 @@ use tokio::time::error::Elapsed;
 use crate::AppError::InvalidValue;
 
 pub type AppResult<T> = Result<T, AppError>;
+pub static BROKER_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
 
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
@@ -28,10 +29,15 @@ pub enum AppError {
     NetworkWriteError(Cow<'static, str>),
     #[error("{0}")]
     ProtocolError(Cow<'static, str>),
+    #[error("{0}")]
+    RequestError(Cow<'static, str>),
     #[error("error in convention : {0}")]
     ConventionError(#[from] FromUtf8Error),
+    #[error("IllegalState : {0}")]
+    IllegalStateError(Cow<'static, str>),
     #[error("invalid provided {0} value = {1}")]
     InvalidValue(&'static str, String),
+    FormatError(#[from] serde_json::Error),
     Incomplete,
     #[error("I/O {0}")]
     Io(#[from] io::Error),
@@ -61,37 +67,40 @@ pub struct DynamicConfig {
 }
 
 impl DynamicConfig {
-    pub fn new(broker_config: Arc<BrokerConfig>) -> Self {
+    pub fn new() -> Self {
         Self {
-            max_connection: broker_config.network.max_connection,
-            max_package_size: broker_config.network.max_package_size,
+            max_connection: BROKER_CONFIG.get().unwrap().network.max_connection,
+            max_package_size: BROKER_CONFIG.get().unwrap().network.max_package_size,
         }
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Getters)]
-#[get = "pub"]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct GeneralConfig {
-    id: String,
+    pub id: String,
+    pub max_msg_size: i32,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Getters, CopyGetters)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct NetworkConfig {
-    #[getset(get = "pub")]
-    ip: String,
-    #[getset(get_copy = "pub")]
-    port: u16,
-    #[getset(get_copy = "pub")]
-    max_connection: usize,
-    #[getset(get_copy = "pub")]
-    max_package_size: usize,
+    pub ip: String,
+    pub port: u16,
+    pub max_connection: usize,
+    pub max_package_size: usize,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct LogConfig {
+    pub journal_segment_size: u64,
+    pub journal_base_dir: String,
+    pub queue_segment_size: u64,
+    pub queue_base_dir: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Getters)]
-#[get = "pub"]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
-    general: GeneralConfig,
-    network: NetworkConfig,
+    pub general: GeneralConfig,
+    pub network: NetworkConfig,
+    pub log_config: LogConfig,
 }
 
 impl BrokerConfig {

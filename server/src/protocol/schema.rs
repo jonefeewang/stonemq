@@ -1,112 +1,140 @@
-use crate::message::MemoryRecord;
-use crate::protocol::api_schemas::produce::PRODUCE_REQUEST_SCHEMA_V0;
-use crate::protocol::field::Field;
-use crate::protocol::primary_types::{
-    Bool, NPBytes, NPString, PBytes, PString, PVarInt, PVarLong, PrimaryType, I16, I32, I64, I8,
-    U32,
-};
-use crate::protocol::structure::Struct;
-use crate::protocol::types::FieldTypeEnum;
-use crate::request::RequestHeader;
-use crate::AppError::{NetworkReadError, ProtocolError};
-use crate::AppResult;
-use bytes::Bytes;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::debug;
 
+use bytes::BytesMut;
+
+use crate::AppError::{NetworkReadError, ProtocolError};
+use crate::AppResult;
+use crate::message::MemoryRecords;
+use crate::protocol::array::ArrayType;
+use crate::protocol::field::Field;
+use crate::protocol::primary_types::{
+    Bool, I16, I32, I64, I8, NPBytes, NPString, PBytes, PrimaryType, PString, PVarInt, PVarLong,
+    U32,
+};
+use crate::protocol::types::DataType;
+use crate::protocol::value_set::ValueSet;
+
+///
+/// Schema包含一系列字段，字段是有序的，表明了该schema的定义
+/// field在schema中的位置和自己的index是一致的
+/// 为了方便按名字查找schema，这里使用了HashMap做了映射
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
+    pub fields_index_by_name: HashMap<&'static str, i32>,
     pub fields: Vec<Field>,
-    pub fields_by_name: HashMap<&'static str, Field>,
 }
 
 impl PartialEq for Schema {
     fn eq(&self, other: &Self) -> bool {
-        self.fields == other.fields && self.fields_by_name == other.fields_by_name
+        self.fields == other.fields
     }
 }
+
 impl Eq for Schema {}
 
 impl Schema {
-    ///
-    /// 根据schema,从bytes里读出一个struct, struct实际是schema和values的组合体
-    ///
-    pub fn read_from(self: &Arc<Schema>, buffer: &mut Bytes) -> AppResult<FieldTypeEnum> {
-        let mut values = Vec::new();
+    pub fn from_fields_desc_vec(fields_desc: Vec<(i32, &'static str, DataType)>) -> Schema {
+        let mut fields = Vec::with_capacity(fields_desc.len());
+        let mut fields_index_by_name = HashMap::with_capacity(fields_desc.len());
+        for (index, name, p_type) in fields_desc {
+            fields.push(Field {
+                index,
+                name,
+                p_type,
+            });
+            fields_index_by_name.insert(name, index);
+            assert_eq!(fields.len() as i32, index + 1);
+        }
+        Schema {
+            fields,
+            fields_index_by_name,
+        }
+    }
+
+    pub fn read_from(self: Arc<Schema>, buffer: &mut BytesMut) -> AppResult<ValueSet> {
+        let mut value_set = ValueSet::new(self.clone());
         for field in &self.fields {
-            debug!("read field:{:?}", field);
             let result = match &field.p_type {
-                FieldTypeEnum::BoolE(_) => Bool::read_from(buffer),
-                FieldTypeEnum::I8E(_) => I8::read_from(buffer),
-                FieldTypeEnum::I16E(_) => I16::read_from(buffer),
-                FieldTypeEnum::I32E(_) => I32::read_from(buffer),
-                FieldTypeEnum::U32E(_) => U32::read_from(buffer),
-                FieldTypeEnum::I64E(_) => I64::read_from(buffer),
-                FieldTypeEnum::PStringE(_) => PString::read_from(buffer),
-                FieldTypeEnum::NPStringE(_) => NPString::read_from(buffer),
-                FieldTypeEnum::PBytesE(_) => PBytes::read_from(buffer),
-                FieldTypeEnum::NPBytesE(_) => NPBytes::read_from(buffer),
-                FieldTypeEnum::PVarIntE(_) => PVarInt::read_from(buffer),
-                FieldTypeEnum::PVarLongE(_) => PVarLong::read_from(buffer),
-                FieldTypeEnum::ArrayE(array) => array.read_from(buffer),
-                FieldTypeEnum::RecordsE(_) => MemoryRecord::read_from(buffer),
+                DataType::Bool(_) => Bool::read_from(buffer),
+                DataType::I8(_) => I8::read_from(buffer),
+                DataType::I16(_) => I16::read_from(buffer),
+                DataType::I32(_) => I32::read_from(buffer),
+                DataType::U32(_) => U32::read_from(buffer),
+                DataType::I64(_) => I64::read_from(buffer),
+                DataType::PString(_) => PString::read_from(buffer),
+                DataType::NPString(_) => NPString::read_from(buffer),
+                DataType::PBytes(_) => PBytes::read_from(buffer),
+                DataType::NPBytes(_) => NPBytes::read_from(buffer),
+                DataType::PVarInt(_) => PVarInt::read_from(buffer),
+                DataType::PVarLong(_) => PVarLong::read_from(buffer),
+                DataType::Array(array) => array.read_from(buffer),
+                DataType::Records(_) => MemoryRecords::read_from(buffer),
                 //should never happen
-                FieldTypeEnum::StructE(structure) => {
+                DataType::SchemaValues(value_set) => {
                     return Err(NetworkReadError(Cow::Owned(format!(
                         "unexpected type schema:{:?}",
-                        structure
+                        value_set
                     ))));
                 }
                 //should never happen
-                FieldTypeEnum::SchemaE(schema) => {
+                DataType::Schema(schema) => {
                     return Err(NetworkReadError(Cow::Owned(format!(
                         "unexpected type schema:{:?}",
                         schema
                     ))));
                 }
             };
-            values.push(result?);
+            value_set.append_field_value(field.name, result?)?;
         }
-        Ok(FieldTypeEnum::StructE(Struct {
-            schema: Arc::clone(self),
-            values,
-        }))
+        Ok(value_set)
     }
 
     fn size(&self) -> usize {
         todo!()
     }
 
-    pub fn get_produce_request_schema(request_header: &RequestHeader) -> Arc<Schema> {
-        Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0)
+    //
+    // Retrieve the schema of an array field
+    pub fn get_array_field_schema(self: Arc<Schema>, name: &'static str) -> AppResult<Arc<Schema>> {
+        let field = self.get_field(name)?;
+        let array_type: &ArrayType = (&field.p_type).try_into()?;
+
+        if let DataType::Schema(schema) = array_type.p_type.as_ref() {
+            Ok(schema.clone())
+        } else {
+            Err(NetworkReadError(Cow::Owned(format!(
+                "not a schema field:{:?}",
+                array_type.p_type.as_ref()
+            ))))
+        }
     }
-    ///
-    /// 获取某个array field对应的schema引用
-    pub fn get_array_field_schema(schema: Arc<Schema>, name: &str) -> AppResult<Arc<Schema>> {
-        let get_error = |message: &str| Err(ProtocolError(Cow::Owned(message.to_string())));
 
-        let field = match schema.fields_by_name.get(name) {
-            None => return get_error(&format!("unknown field:{}", name)),
-            Some(field) => field,
+    pub fn get_field_index(&self, name: &'static str) -> AppResult<i32> {
+        return if let Some(index) = self.fields_index_by_name.get(name) {
+            Ok(*index)
+        } else {
+            Err(ProtocolError(Cow::Owned(format!("unknown field:{}", name))))
         };
-
-        if let FieldTypeEnum::ArrayE(array) = &field.p_type {
-            if let FieldTypeEnum::SchemaE(schema) = array.p_type.as_ref() {
-                Ok(Arc::clone(schema))
+    }
+    pub fn get_field(&self, name: &'static str) -> AppResult<&Field> {
+        return if let Some(index) = self.fields_index_by_name.get(name) {
+            if let Some(field) = self.fields.get(*index as usize) {
+                Ok(field)
             } else {
-                get_error(&format!("not a schema field:{:?}", array.p_type.as_ref()))
+                Err(ProtocolError(Cow::Owned(format!(
+                    "can not find field in schema vec {}",
+                    name
+                ))))
             }
         } else {
-            get_error(&format!("not a array field:{:?}", &field.p_type))
-        }
+            Err(ProtocolError(Cow::Owned(format!("unknown field:{}", name))))
+        };
     }
-
-    pub fn read_struct_from_buffer(self: &Arc<Schema>, buffer: &mut Bytes) -> AppResult<Struct> {
-        match self.read_from(buffer)? {
-            FieldTypeEnum::StructE(structure) => Ok(structure),
-            _ => Err(ProtocolError("Unexpected type".into())),
-        }
+}
+impl From<Schema> for DataType {
+    fn from(value: Schema) -> Self {
+        DataType::Schema(Arc::new(value))
     }
 }

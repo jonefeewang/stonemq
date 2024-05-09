@@ -1,11 +1,11 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::Parser;
 use getset::{CopyGetters, Getters};
-use tokio::runtime;
+use tokio::{runtime, task};
 
-use server::{AppError, Broker, BrokerConfig};
+use server::{AppError, Broker, BrokerConfig, LogManager, ReplicaManager};
+use server::BROKER_CONFIG;
 
 #[derive(Parser, Getters, CopyGetters)]
 #[command(version)]
@@ -41,17 +41,38 @@ fn main() -> Result<(), AppError> {
             path.push("conf.toml");
             path
         },
-        |config| PathBuf::from(config),
+        PathBuf::from,
     );
+    // note: 这里无法使用once cell，因为config_path需要从命令行引入
     let broker_config = BrokerConfig::set_up_config(config_path)?;
-    let config = Arc::new(broker_config);
+    BROKER_CONFIG
+        .set(broker_config)
+        .expect("set broker config failed");
 
-    //start broker
-    let broker = Broker::new(Arc::clone(&config));
-    runtime::Builder::new_multi_thread()
+    // startup tokio runtime
+    let rt = runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap()
-        .block_on(broker.start());
+        .unwrap();
+
+    // start log manager
+    let log_manager = LogManager::default();
+    rt.block_on(async {
+        let _ = task::spawn(async {
+            log_manager.startup().await.unwrap();
+        });
+    });
+
+    // start replica manager
+    let replica_manager = ReplicaManager::new(log_manager);
+    rt.block_on(async {
+        let _ = task::spawn(async {
+            replica_manager.startup().await.unwrap();
+        });
+    });
+
+    //start broker
+    let broker = Broker::new(replica_manager);
+    rt.block_on(broker.start());
     Ok(())
 }

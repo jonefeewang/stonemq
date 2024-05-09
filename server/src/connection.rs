@@ -1,4 +1,4 @@
-use std::io::{self, Cursor, ErrorKind};
+use std::io::{self, ErrorKind};
 
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, BufWriter};
@@ -8,27 +8,44 @@ use crate::AppResult;
 use crate::config::DynamicConfig;
 use crate::frame::RequestFrame;
 
+/// Represents a connection to a client.
+///
+/// This struct encapsulates a TCP stream and a buffer for reading data from the stream.
+/// It also holds a reference to the dynamic configuration of the server.
 #[derive(Debug)]
 pub struct Connection {
     stream: BufWriter<TcpStream>,
-    buffer: BytesMut,
+    pub buffer: BytesMut,
+    pub compression_buffer: BytesMut,
     dynamic_config: DynamicConfig,
 }
 
 impl Connection {
+    /// Creates a new `Connection` from a `TcpStream` and a `DynamicConfig`.
+    ///
+    /// The `TcpStream` is wrapped in a `BufWriter` for efficient writing, and a `BytesMut` buffer
+    /// is created with an initial capacity of 4KB for reading data from the stream.
     pub fn new(socket: TcpStream, dynamic_config: DynamicConfig) -> Connection {
         Connection {
             stream: BufWriter::new(socket),
             buffer: BytesMut::with_capacity(4 * 1024),
+            compression_buffer: BytesMut::with_capacity(4 * 1024),
             dynamic_config,
         }
     }
-    /// 读取frame
+    /// Reads a `RequestFrame` from the connection.
+    ///
+    /// This method continuously reads data from the stream into the buffer until a complete
+    /// `RequestFrame` can be parsed. If a data format error is encountered, or if the packet
+    /// exceeds the size limit, an error is returned and the connection should be closed.
+    ///
+    /// If the client closes the connection while a frame is being sent, an error is returned.
+    /// If the client closes the connection gracefully, `None` is returned.
     pub async fn read_frame(&mut self) -> AppResult<Option<RequestFrame>> {
         loop {
-            let mut cursor = Cursor::new(&mut self.buffer);
-            // 如果遇到数据格式错误，或包超出大小，就退出，关闭connection
-            if let Some(frame) = RequestFrame::parse(&mut cursor, &self.dynamic_config)? {
+            // If a data format error is encountered, or if the packet exceeds the size limit,
+            // terminate the process and close the connection.
+            if let Some(frame) = RequestFrame::parse(&mut self.buffer, &self.dynamic_config)? {
                 return Ok(Some(frame));
             }
             if 0 == self.stream.read_buf(&mut self.buffer).await? {

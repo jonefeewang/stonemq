@@ -1,33 +1,32 @@
-use crate::message::MemoryRecord;
-use crate::protocol::primary_types::{NPBytes, PrimaryType};
-use crate::protocol::types::FieldTypeEnum;
-use crate::AppError::NetworkReadError;
-use crate::AppResult;
-use bytes::{Buf, Bytes, BytesMut};
-use std::borrow::Cow;
+use bytes::{Buf, BytesMut};
 
-impl PrimaryType for MemoryRecord {
-    fn read_from(buffer: &mut Bytes) -> AppResult<FieldTypeEnum> {
+use crate::AppResult;
+use crate::message::MemoryRecords;
+use crate::protocol::primary_types::{NPBytes, PrimaryType};
+use crate::protocol::types::DataType;
+
+impl PrimaryType for MemoryRecords {
+    fn read_from(buffer: &mut BytesMut) -> AppResult<DataType> {
         let n_pbytes_e = NPBytes::read_from(buffer)?;
 
-        if let FieldTypeEnum::NPBytesE(n_pbytes) = n_pbytes_e {
-            return Ok(FieldTypeEnum::RecordsE(MemoryRecord::new(n_pbytes.buffer)));
+        if let DataType::NPBytes(n_pbytes) = n_pbytes_e {
+            if let Some(n_pbytes) = n_pbytes.value {
+                return Ok(DataType::Records(MemoryRecords::new(n_pbytes)));
+            }
         }
-        Err(NetworkReadError(Cow::Owned(format!(
-            "unexpected type {:?}",
-            n_pbytes_e
-        ))))
+        Ok(DataType::Records(MemoryRecords::empty()))
     }
 
-    fn write_to(&self, buffer: &mut BytesMut) -> AppResult<()> {
-        let n_pbytes = NPBytes {
-            buffer: self.buffer().clone(),
-        };
-        return Ok(n_pbytes.write_to(buffer)?);
+    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+        let n_pbytes = NPBytes { value: self.buffer };
+        n_pbytes.write_to(buffer)
     }
 
     fn size(&self) -> usize {
-        4 + self.buffer().remaining()
+        match &self.buffer {
+            None => 4,
+            Some(buffer) => 4 + buffer.remaining(),
+        }
     }
 }
 
@@ -35,11 +34,12 @@ impl PrimaryType for MemoryRecord {
 fn test_record_read_write() {
     //Test MemoryRecord
     let mut buffer = BytesMut::new();
-    let memoryrecord_value = MemoryRecord::new(Bytes::from("test".as_bytes()));
-    memoryrecord_value.write_to(&mut buffer).unwrap();
-    let read_memoryrecord = MemoryRecord::read_from(&mut buffer.freeze()).unwrap();
+    let memory_record_value = MemoryRecords::new(BytesMut::from("test".as_bytes()));
+    let memory_record_value_clone = memory_record_value.clone();
+    memory_record_value.write_to(&mut buffer).unwrap();
+    let read_memory_record = MemoryRecords::read_from(&mut buffer).unwrap();
     assert_eq!(
-        read_memoryrecord,
-        FieldTypeEnum::RecordsE(memoryrecord_value)
+        read_memory_record,
+        DataType::Records(memory_record_value_clone)
     );
 }

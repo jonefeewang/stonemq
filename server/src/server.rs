@@ -4,20 +4,20 @@ use getset::Getters;
 use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Semaphore};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{self, Duration};
 use tracing::{error, info, instrument};
 
+use crate::{AppResult, BROKER_CONFIG, BrokerConfig, Connection, ReplicaManager, Shutdown};
 use crate::config::DynamicConfig;
-use crate::request::{ProduceRequest, RequestContext, RequestEnum, RequestProcessor};
-use crate::{AppResult, BrokerConfig, Connection, Shutdown};
+use crate::request::{ApiRequest, RequestContext, RequestProcessor};
 
 #[derive(Getters)]
 #[get = "pub"]
 pub struct Broker {
-    broker_config: Arc<BrokerConfig>,
     dynamic_config: RwLock<DynamicConfig>,
+    replica_manager: ReplicaManager,
 }
 
 #[derive(Debug)]
@@ -27,7 +27,6 @@ struct Server<'dc> {
     notify_shutdown: broadcast::Sender<()>,
     shutdown_complete_tx: mpsc::Sender<()>,
     dynamic_config: &'dc RwLock<DynamicConfig>,
-    broker_config: Arc<BrokerConfig>,
 }
 
 #[derive(Debug)]
@@ -35,26 +34,23 @@ struct ConnectionHandler {
     connection: Connection,
     shutdown: Shutdown,
     _shutdown_complete: mpsc::Sender<()>,
-    broker_config: Arc<BrokerConfig>,
     socket_read_ch_tx: Sender<()>,
     socket_read_ch_rx: Receiver<()>,
 }
 
 impl Broker {
-    pub fn new(broker_config: Arc<BrokerConfig>) -> Broker {
-        let broker_config_clone = Arc::clone(&broker_config);
+    pub fn new(replica_manager: ReplicaManager) -> Self {
         Broker {
-            broker_config,
             //创建动态配置，默认从静态配置加载，运行时可以动态修改
             //动态配置在启动broker、启动server、客户端新建连接时更新
             //为了减少快照生成时间，相关的动态配置对象尽可能小一些
-            dynamic_config: RwLock::new(DynamicConfig::new(broker_config_clone)),
+            dynamic_config: RwLock::new(DynamicConfig::new()),
+            replica_manager,
         }
     }
-
     pub async fn start(&self) {
-        let network_conf = self.broker_config.network();
-        let listen_address = format!("{}:{}", network_conf.ip(), network_conf.port());
+        let network_conf = &BROKER_CONFIG.get().unwrap().network;
+        let listen_address = format!("{}:{}", network_conf.ip, network_conf.port);
         let dynamic_config_snapshot = {
             let lock = self.dynamic_config.read();
             (*lock).clone()
@@ -75,7 +71,6 @@ impl Broker {
             notify_shutdown,
             shutdown_complete_tx,
             dynamic_config: &self.dynamic_config,
-            broker_config: Arc::clone(&self.broker_config),
         };
 
         tokio::select! {
@@ -103,7 +98,6 @@ impl Broker {
 impl<'dc> Server<'dc> {
     async fn run(&mut self) -> AppResult<()> {
         info!("accepting inbound connections");
-
         loop {
             let permit = self
                 .limit_connections
@@ -119,7 +113,6 @@ impl<'dc> Server<'dc> {
                 lock.clone()
             };
 
-            let broker_config_clone = Arc::clone(&self.broker_config);
             //ensure request are processed FIFO in one connection, even client using piping
             let (socket_read_ch_tx, socket_read_ch_rx) = mpsc::channel(1);
 
@@ -127,7 +120,6 @@ impl<'dc> Server<'dc> {
                 connection: Connection::new(socket, dynamic_config_snap_shot),
                 shutdown: Shutdown::new(self.notify_shutdown.subscribe()),
                 _shutdown_complete: self.shutdown_complete_tx.clone(),
-                broker_config: broker_config_clone,
                 socket_read_ch_tx,
                 socket_read_ch_rx,
             };
@@ -174,14 +166,14 @@ impl ConnectionHandler {
                     return Ok(());
                 }
             };
-            let frame = match maybe_frame {
+            let mut frame = match maybe_frame {
                 Some(frame) => frame,
                 // client close the connection
                 None => return Ok(()),
             };
 
-            let request_context = RequestContext::new(&self.connection, &self.broker_config);
-            match RequestEnum::try_from(frame) {
+            let request_context = RequestContext::new(&mut self.connection, &frame.request_header);
+            match ApiRequest::try_from(&frame) {
                 Ok(request) => {
                     RequestProcessor::process_request(request, &request_context);
                 }
@@ -189,6 +181,21 @@ impl ConnectionHandler {
                     RequestProcessor::respond_invalid_request(error, &request_context);
                 }
             }
+            // 发送响应....
+            // ...
+            // 这里不需要管理缓冲区BytesMut会处理，只要通过advance移动指针后,
+            // 再次写入的数据会由BytesMut重复使用之前的空间
+            // Note: kafka的网络读取, 一个connection一次会读取一批request(假设客户端使用piping)，(这样的方式
+            // 能否提升性能？) 但是一次只会处理一个，相关的配置由queueMaxBytes和socketRequestMaxBytes控制，
+            // StoneMQ只读取一个请求，处理完后再读取下一个请求
+
+            // 清空使用过的缓冲区, 供BytesMut回收再利用
+            // 但是这里可能body已经被split掉了很多，最后很可能是空的
+            frame.body.clear();
+
+            //
+            //发送完响应后，继续读取下一个请求
+
             //proceed socket read for next request
             self.socket_read_ch_tx.send(()).await?;
         }

@@ -1,22 +1,37 @@
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::i64;
 use std::io::Cursor;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use getset::Getters;
+use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 
+use crate::{AppResult, BROKER_CONFIG};
+use crate::AppError::RequestError;
+
+// constants related to records
+const OFFSET_OFFSET: usize = 0;
+const OFFSET_LENGTH: usize = 8;
+const SIZE_OFFSET: usize = OFFSET_OFFSET + OFFSET_LENGTH;
+const SIZE_LENGTH: usize = 4;
+const LOG_OVERHEAD: usize = SIZE_OFFSET + SIZE_LENGTH;
+
+const MAGIC_OFFSET: usize = 16;
+const MAGIC_LENGTH: usize = 1;
+const HEADER_SIZE_UP_TO_MAGIC: usize = MAGIC_OFFSET + MAGIC_LENGTH;
+
+// constants related to record batches
 const BASE_OFFSET_OFFSET: i32 = 0;
 const BASE_OFFSET_LENGTH: i32 = 8;
 const LENGTH_OFFSET: i32 = BASE_OFFSET_OFFSET + BASE_OFFSET_LENGTH;
 const LENGTH_LENGTH: i32 = 4;
 const PARTITION_LEADER_EPOCH_OFFSET: i32 = LENGTH_OFFSET + LENGTH_LENGTH;
 const PARTITION_LEADER_EPOCH_LENGTH: i32 = 4;
-const MAGIC_OFFSET: i32 = PARTITION_LEADER_EPOCH_OFFSET + PARTITION_LEADER_EPOCH_LENGTH;
-const MAGIC_LENGTH: i32 = 1;
-const CRC_OFFSET: i32 = MAGIC_OFFSET + MAGIC_LENGTH;
+const RB_MAGIC_OFFSET: i32 = PARTITION_LEADER_EPOCH_OFFSET + PARTITION_LEADER_EPOCH_LENGTH;
+const RB_MAGIC_LENGTH: i32 = 1;
+const CRC_OFFSET: i32 = RB_MAGIC_OFFSET + RB_MAGIC_LENGTH;
 const CRC_LENGTH: i32 = 4;
 const ATTRIBUTES_OFFSET: i32 = CRC_OFFSET + CRC_LENGTH;
 const ATTRIBUTE_LENGTH: i32 = 2;
@@ -37,10 +52,10 @@ const RECORDS_COUNT_LENGTH: i32 = 4;
 const RECORDS_OFFSET: i32 = RECORDS_COUNT_OFFSET + RECORDS_COUNT_LENGTH;
 pub const RECORD_BATCH_OVERHEAD: i32 = RECORDS_OFFSET;
 
-const COMPRESSION_CODEC_MASK: u8 = 0x07;
-const TRANSACTIONAL_FLAG_MASK: u8 = 0x10;
+const COMPRESSION_CODEC_MASK: i16 = 0x07;
+const TRANSACTIONAL_FLAG_MASK: i16 = 0x10;
 const CONTROL_FLAG_MASK: i32 = 0x20;
-const TIMESTAMP_TYPE_MASK: u8 = 0x08;
+const TIMESTAMP_TYPE_MASK: i16 = 0x08;
 
 const MAGIC: i8 = 2;
 const NO_PRODUCER_ID: i64 = -1;
@@ -49,44 +64,192 @@ const NO_SEQUENCE: i32 = -1;
 const NO_PARTITION_LEADER_EPOCH: i32 = -1;
 const ATTRIBUTES: i16 = 0;
 
-pub struct MemoryRecordBuilder {
-    buffer: BytesMut,
-    magic: i8,
-    attributes: i16,
-    last_offset: i64,
-    base_timestamp: i64,
-    base_offset: i64,
-    max_timestamp: i64,
-    record_count: i32,
-}
-
 #[derive(Debug)]
-pub struct BatchHeader {
-    first_offset: i64,
-    length: i32,
-    partition_leader_epoch: i32,
-    magic: i8,
-    crc: i32,
-    attributes: i16,
-    last_offset_delta: i32,
-    first_timestamp: i64,
-    max_timestamp: i64,
-    producer_id: i64,
-    producer_epoch: i16,
-    first_sequence: i32,
-    record_count: i32,
-    //下边还有一个record count <i32>并未显式放到这里
+pub enum CompressionType {
+    None(u8),
+    Gzip(u8),
+    Snappy(u8),
+    Lz4(u8),
+    Invalid(u8),
+}
+impl From<i16> for CompressionType {
+    fn from(value: i16) -> Self {
+        match value {
+            0 => CompressionType::None(0),
+            1 => CompressionType::Gzip(1),
+            2 => CompressionType::Snappy(2),
+            3 => CompressionType::Lz4(3),
+            _ => CompressionType::Invalid(0),
+        }
+    }
 }
 
-#[derive(Getters, Default, Clone, PartialEq, Eq)]
-pub struct MemoryRecord {
-    #[get = "pub"]
-    buffer: Bytes,
+/// A memory representation of a record batch.
+/// This is used to store the record batch in memory before writing it to disk.
+/// It is also used to read the record batch from disk into memory.
+/// This structure can store message sets or record batches with magic values 0, 1, or 2.
+/// However, currently, StoneMQ only supports record batches with a magic value of 2.
+/// Therefore, this structure presently supports only record batches with a magic value of 2.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MemoryRecords {
+    pub buffer: Option<BytesMut>,
 }
-impl MemoryRecord {
-    pub fn new(buffer: Bytes) -> MemoryRecord {
-        MemoryRecord { buffer }
+
+impl MemoryRecords {
+    pub fn new(buffer: BytesMut) -> MemoryRecords {
+        MemoryRecords {
+            buffer: Some(buffer),
+        }
     }
+    pub(crate) fn empty() -> Self {
+        MemoryRecords { buffer: None }
+    }
+
+    // deserialize and validate the record batches
+    // currently only support magic 2, other magic will be treated as invalid and return error
+    // magic 2 has only one record batch
+    pub fn validate_batch(&self) -> AppResult<()> {
+        if let Some(buffer) = &self.buffer {
+            let mut cursor = Cursor::new(buffer.as_ref());
+
+            let remaining = cursor.remaining();
+            if remaining == 0 || remaining < LOG_OVERHEAD {
+                return Err(RequestError(Cow::Borrowed("MemoryRecord is empty")));
+            }
+
+            // deserialize batch header
+            let base_offset = cursor.get_i64();
+            let batch_size = cursor.get_i32();
+            let magic = cursor.get_i8();
+
+            let max_msg_size = BROKER_CONFIG.get().unwrap().general.max_msg_size;
+
+            if base_offset != 0 {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Base offset should be 0, but found {}",
+                    base_offset
+                ))));
+            }
+
+            if batch_size > max_msg_size {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Message size {} exceeds the maximum message size {}",
+                    batch_size, max_msg_size
+                ))));
+            }
+            if batch_size < RECORD_BATCH_OVERHEAD {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Message size {} is less than the record batch overhead {}",
+                    batch_size, RECORD_BATCH_OVERHEAD
+                ))));
+            }
+
+            if !(0..=2).contains(&magic) {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Magic byte should be 0, 1 or 2, but found {}",
+                    magic
+                ))));
+            }
+            // currently only support with magic 2
+            if (0..=1).contains(&magic) {
+                return Err(RequestError(Cow::Owned(format!(
+                    "StoneMQ currently only support Magic 2, but found {}",
+                    magic
+                ))));
+            }
+
+            if (remaining as i32) < batch_size {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Expected {}, but only {} remaining buffer size available.",
+                    batch_size, remaining
+                ))));
+            }
+
+            let crc = cursor.get_i32();
+            // validate crc
+            cursor.set_position(ATTRIBUTES_OFFSET as u64);
+            let crc_parts = &cursor.get_ref()[..];
+            let crc_value = crc32c::crc32c(crc_parts);
+            if crc_value as i32 != crc {
+                return Err(RequestError(Cow::Owned(format!(
+                    "CRC mismatch: expected {}, but found {}",
+                    crc_value, crc
+                ))));
+            }
+            //validate record count
+            cursor.set_position(RECORDS_COUNT_OFFSET as u64);
+            let record_count = cursor.get_i32();
+
+            if record_count < 0 {
+                return Err(RequestError(Cow::Owned(format!(
+                    "Record count should be non-negative, but found {}",
+                    record_count
+                ))));
+            }
+        }
+        Ok(())
+    }
+    // pub fn compression_type(&self) -> AppResult<CompressionType> {
+    //     let mut buffer = self.records_buf.clone();
+    //     buffer.advance(ATTRIBUTES_OFFSET as usize);
+    //     let attributes = buffer.get_i16();
+    //     let compression_codec = attributes & COMPRESSION_CODEC_MASK;
+    //     let compression_type = CompressionType::from(compression_codec);
+    //     if let CompressionType::Invalid(_) = compression_type {
+    //         return Err(RequestError(Cow::Owned(format!(
+    //             "Invalid compression codec: {}",
+    //             compression_codec
+    //         ))));
+    //     }
+    //     Ok(compression_type)
+    // }
+    //
+    // pub fn deserialize_and_validate(
+    //     &mut self,
+    //     compression_buffer: &mut Vec<u8>,
+    // ) -> AppResult<Vec<Record>> {
+    //     // Since we process only one request at a time, there's no contention over buffer usage.
+    //     // We clean it up before use.
+    //     compression_buffer.clear();
+    //     let compression_type = self.compression_type()?;
+    //     let records = (0..self.header.record_count)
+    //         .map(|i| match compression_type {
+    //             CompressionType::None(_) => {
+    //                 Self::read_from_uncompressed(&mut self.records_buf, &self.header)
+    //             }
+    //             CompressionType::Gzip(_) => {
+    //                 let mut reader = GzDecoder::new(self.records_buf.as_ref());
+    //                 reader.read_to_end(compression_buffer)?;
+    //                 Self::read_from_uncompressed(compression_buffer.as_ref(), &self.header)
+    //             }
+    //             CompressionType::Snappy(_) => {
+    //                 let mut reader = FrameDecoder::new(self.records_buf.as_ref());
+    //                 reader.read_to_end(compression_buffer)?;
+    //                 Self::read_from_uncompressed(compression_buffer.as_ref(), &self.header)
+    //             }
+    //             CompressionType::Lz4(_) => {
+    //                 let mut reader = Decoder::new(self.records_buf.as_ref())?;
+    //                 reader.read_to_end(compression_buffer)?;
+    //                 Self::read_from_uncompressed(compression_buffer.as_ref(), &self.header)
+    //             }
+    //             _ => Err(RequestError(Cow::Owned(format!(
+    //                 "Unsupported compression type: {:?}",
+    //                 compression_type
+    //             )))),
+    //         })
+    //         .collect::<AppResult<Vec<_>>>()?;
+    //     if records.len() != self.header.record_count as usize {
+    //         return Err(RequestError(Cow::Owned(format!(
+    //             "Expected {} records, but found {}",
+    //             self.header.record_count,
+    //             records.len()
+    //         ))));
+    //     }
+    //     Ok(records)
+    // }
+    // pub fn validate_records(&self) -> AppResult<()> {
+    //     Ok(())
+    // }
 }
 
 #[derive(Debug)]
@@ -110,11 +273,37 @@ pub struct Header {
     header_value: Option<Vec<u8>>,
 }
 
-impl MemoryRecordBuilder {
-    /*
-    主要用于服务端测试，buffer的创建没有做优化
-    */
-    pub fn new() -> MemoryRecordBuilder {
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct BatchHeader {
+    first_offset: i64,
+    length: i32,
+    partition_leader_epoch: i32,
+    magic: i8,
+    crc: i32,
+    attributes: i16,
+    last_offset_delta: i32,
+    first_timestamp: i64,
+    max_timestamp: i64,
+    producer_id: i64,
+    producer_epoch: i16,
+    first_sequence: i32,
+    record_count: i32,
+    //下边还有一个record count <i32>并未显式放到这里
+}
+
+pub struct MemoryRecordBuilder {
+    buffer: BytesMut,
+    magic: i8,
+    attributes: i16,
+    last_offset: i64,
+    base_timestamp: i64,
+    base_offset: i64,
+    max_timestamp: i64,
+    record_count: i32,
+}
+
+impl Default for MemoryRecordBuilder {
+    fn default() -> Self {
         let mut record_batch = MemoryRecordBuilder {
             buffer: BytesMut::with_capacity(RECORD_BATCH_OVERHEAD as usize),
             magic: MAGIC,
@@ -140,7 +329,9 @@ impl MemoryRecordBuilder {
         record_batch.buffer.put_i32(0); //record count
         record_batch
     }
+}
 
+impl MemoryRecordBuilder {
     pub fn append_record_with_offset<T: AsRef<[u8]>>(
         &mut self,
         offset: i64,
@@ -259,7 +450,7 @@ impl MemoryRecordBuilder {
         }
     }
 
-    pub fn build(&mut self) -> MemoryRecord {
+    pub fn build(&mut self) -> MemoryRecords {
         //补写record batch的头部
         let mut src = Cursor::new(self.buffer.as_mut());
         src.set_position(0);
@@ -294,8 +485,8 @@ impl MemoryRecordBuilder {
         src.write_all(&checksum.to_be_bytes()).unwrap(); //crc
 
         let record_batch_buffer = self.buffer.split();
-        MemoryRecord {
-            buffer: record_batch_buffer.freeze(),
+        MemoryRecords {
+            buffer: Some(record_batch_buffer),
         }
     }
 
@@ -328,28 +519,29 @@ impl Header {
     }
 }
 
-impl MemoryRecord {
+impl MemoryRecords {
     pub fn records(&self) -> Option<Vec<Record>> {
-        let mut buffer = self.buffer.clone();
+        if let Some(ref buffer) = self.buffer {
+            let mut buffer = buffer.clone();
+            let remaining = buffer.remaining();
+            if remaining == 0 || remaining <= RECORDS_OFFSET as usize {
+                return None;
+            }
+            let _ = buffer.split_to(RECORDS_OFFSET as usize);
+            let record_count = buffer.get_i32();
+            if record_count > 0 {
+                let mut records: Vec<Record> = vec![];
+                (0..record_count).for_each(|_| {
+                    let record_length = i32::decode_var(buffer.as_ref());
+                    if let Some((record_length, read_size)) = record_length {
+                        buffer.advance(read_size); //跳过刚解析过的record长度字段
+                        Self::decode_record_body(&mut buffer, &mut records, record_length);
+                    }
+                });
+                return Some(records);
+            }
+        }
 
-        //确保至少能解析出一个record count
-        let remaining = buffer.remaining();
-        if remaining == 0 || remaining <= RECORDS_COUNT_OFFSET as usize {
-            return None;
-        }
-        let _ = buffer.split_to(RECORDS_COUNT_OFFSET as usize);
-        let record_count = buffer.get_i32();
-        if record_count > 0 {
-            let mut records: Vec<Record> = vec![];
-            (0..record_count).for_each(|_| {
-                let record_length = i32::decode_var(buffer.as_ref());
-                if let Some((record_length, read_size)) = record_length {
-                    buffer.advance(read_size); //跳过刚解析过的record长度字段
-                    Self::decode_record_body(&mut buffer, &mut records, record_length);
-                }
-            });
-            return Some(records);
-        }
         None
     }
 
@@ -358,7 +550,7 @@ impl MemoryRecord {
      record attributes 一直会被写入为0
     */
     fn decode_record_body<'a>(
-        buffer: &mut Bytes,
+        buffer: &mut BytesMut,
         mut records: &'a mut Vec<Record>,
         record_length: i32,
     ) -> &'a Vec<Record> {
@@ -453,44 +645,53 @@ impl MemoryRecord {
         records
     }
 
-    pub fn batch_header(&self) -> BatchHeader {
-        let mut buffer = self.buffer().clone();
-        BatchHeader {
-            first_offset: buffer.get_i64(),
-            length: buffer.get_i32(),
-            partition_leader_epoch: buffer.get_i32(),
-            magic: buffer.get_i8(),
-            crc: buffer.get_i32(),
-            attributes: buffer.get_i16(),
-            last_offset_delta: buffer.get_i32(),
-            first_timestamp: buffer.get_i64(),
-            max_timestamp: buffer.get_i64(),
-            producer_id: buffer.get_i64(),
-            producer_epoch: buffer.get_i16(),
-            first_sequence: buffer.get_i32(),
-            record_count: buffer.get_i32(),
+    pub fn batch_header(&self) -> Option<BatchHeader> {
+        if let Some(buffer) = &self.buffer {
+            let mut buffer = buffer.clone();
+            let batch_header = BatchHeader {
+                first_offset: buffer.get_i64(),
+                length: buffer.get_i32(),
+                partition_leader_epoch: buffer.get_i32(),
+                magic: buffer.get_i8(),
+                crc: buffer.get_i32(),
+                attributes: buffer.get_i16(),
+                last_offset_delta: buffer.get_i32(),
+                first_timestamp: buffer.get_i64(),
+                max_timestamp: buffer.get_i64(),
+                producer_id: buffer.get_i64(),
+                producer_epoch: buffer.get_i16(),
+                first_sequence: buffer.get_i32(),
+                record_count: buffer.get_i32(),
+            };
+            Some(batch_header)
+        } else {
+            None
         }
     }
 }
-impl Debug for MemoryRecord {
+impl Debug for MemoryRecords {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut buffer = self.buffer.clone();
-        if buffer.remaining() == 0 {
-            return write!(f, "MemoryRecord is empty");
+        if let Some(buffer) = &self.buffer {
+            let mut buffer = buffer.clone();
+            if buffer.remaining() == 0 {
+                return write!(f, "MemoryRecord is empty");
+            }
+            f.debug_struct("MemoryRecordBatch")
+                .field("first offset", &buffer.get_i64())
+                .field("length", &buffer.get_i64())
+                .field("partition leader epoch", &buffer.get_i64())
+                .field("Magic", &buffer.get_i64())
+                .field("CRC", &buffer.get_i64())
+                .field("Attributes", &buffer.get_i64())
+                .field("Last Offset Delta", &buffer.get_i64())
+                .field("First timestamp", &buffer.get_i64())
+                .field("Max Timestamp", &buffer.get_i64())
+                .field("Producer Id", &buffer.get_i64())
+                .field("Producer Epoch", &buffer.get_i64())
+                .field("First sequence", &buffer.get_i64())
+                .finish()
+        } else {
+            write!(f, "MemoryRecord is empty")
         }
-        f.debug_struct("MemoryRecordBatch")
-            .field("first offset", &buffer.get_i64())
-            .field("length", &buffer.get_i64())
-            .field("partition leader epoch", &buffer.get_i64())
-            .field("Magic", &buffer.get_i64())
-            .field("CRC", &buffer.get_i64())
-            .field("Attributes", &buffer.get_i64())
-            .field("Last Offset Delta", &buffer.get_i64())
-            .field("First timestamp", &buffer.get_i64())
-            .field("Max Timestamp", &buffer.get_i64())
-            .field("Producer Id", &buffer.get_i64())
-            .field("Producer Epoch", &buffer.get_i64())
-            .field("First sequence", &buffer.get_i64())
-            .finish()
     }
 }
