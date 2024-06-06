@@ -1,9 +1,18 @@
 [general]
 id = 123
+#default 1M
+max_msg_size=1_048_576
 
 [network]
 ip = "localhost"
 port = 8081
 max_connection = 65536
-#default 1M
-max_package_size = 1_048_576
+#default 10M
+max_package_size = 10_048_576
+
+[log]
+journal_segment_size=1_048_576
+journal_base_dir="test_data/journal"
+queue_segment_size = 1_048_576
+queue_base_dir= "test_data/queue"
+kv_store_path = "test_data/kv_store/kv.db"

@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use getset::{CopyGetters, Getters};
-use tokio::{runtime, task};
+use tokio::runtime;
 
-use server::{AppError, Broker, BrokerConfig, LogManager, ReplicaManager};
+use server::{AppResult, Broker, BrokerConfig, LogManager, ReplicaManager};
 use server::BROKER_CONFIG;
 
 #[derive(Parser, Getters, CopyGetters)]
@@ -28,7 +28,7 @@ pub enum Command {
     PrintConfig,
 }
 
-fn main() -> Result<(), AppError> {
+fn main() -> AppResult<()> {
     //setup tracing
     let subscriber = tracing_subscriber::FmtSubscriber::new();
     tracing::subscriber::set_global_default(subscriber)?;
@@ -55,24 +55,20 @@ fn main() -> Result<(), AppError> {
         .build()
         .unwrap();
 
-    // start log manager
-    let log_manager = LogManager::default();
-    rt.block_on(async {
-        let _ = task::spawn(async {
-            log_manager.startup().await.unwrap();
-        });
-    });
+    // startup log manager
+    let mut log_manager = LogManager::new();
+    log_manager.startup(&rt)?;
 
-    // start replica manager
-    let replica_manager = ReplicaManager::new(log_manager);
-    rt.block_on(async {
-        let _ = task::spawn(async {
-            replica_manager.startup().await.unwrap();
-        });
-    });
+    // startup replica manager
+    let mut replica_manager = ReplicaManager::new(log_manager);
+    replica_manager.startup()?;
 
-    //start broker
-    let broker = Broker::new(replica_manager);
-    rt.block_on(broker.start());
+    // startup broker
+    rt.block_on(async {
+        // Start broker
+        let mut broker = Broker::new(replica_manager);
+        broker.start().await
+    })?;
+
     Ok(())
 }
