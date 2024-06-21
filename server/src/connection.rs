@@ -14,7 +14,7 @@ use crate::frame::RequestFrame;
 /// It also holds a reference to the dynamic configuration of the server.
 #[derive(Debug)]
 pub struct Connection {
-    stream: BufWriter<TcpStream>,
+    pub writer: BufWriter<TcpStream>,
     pub buffer: BytesMut,
     pub compression_buffer: BytesMut,
     dynamic_config: DynamicConfig,
@@ -27,7 +27,7 @@ impl Connection {
     /// is created with an initial capacity of 4KB for reading data from the stream.
     pub fn new(socket: TcpStream, dynamic_config: DynamicConfig) -> Connection {
         Connection {
-            stream: BufWriter::new(socket),
+            writer: BufWriter::new(socket),
             buffer: BytesMut::with_capacity(4 * 1024),
             compression_buffer: BytesMut::with_capacity(4 * 1024),
             dynamic_config,
@@ -48,7 +48,7 @@ impl Connection {
             if let Some(frame) = RequestFrame::parse(&mut self.buffer, &self.dynamic_config)? {
                 return Ok(Some(frame));
             }
-            if 0 == self.stream.read_buf(&mut self.buffer).await? {
+            if 0 == self.writer.read_buf(&mut self.buffer).await? {
                 return if self.buffer.is_empty() {
                     // client has closed the connection gracefully
                     Ok(None)

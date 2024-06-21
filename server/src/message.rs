@@ -94,6 +94,13 @@ impl From<i16> for CompressionType {
 pub struct MemoryRecords {
     pub buffer: Option<BytesMut>,
 }
+impl Debug for MemoryRecords {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryRecords")
+            .field("buffer length", &self.buffer.as_ref().map(|b| b.len()))
+            .finish()
+    }
+}
 
 impl MemoryRecords {
     pub fn new(buffer: BytesMut) -> MemoryRecords {
@@ -103,6 +110,35 @@ impl MemoryRecords {
     }
     pub(crate) fn empty() -> Self {
         MemoryRecords { buffer: None }
+    }
+    pub(crate) fn records_count(&self) -> i32 {
+        if let Some(ref buffer) = &self.buffer {
+            let mut cursor = Cursor::new(buffer.as_ref());
+            cursor.set_position(RECORDS_COUNT_OFFSET as u64);
+            cursor.get_i32()
+        } else {
+            0
+        }
+    }
+    pub(crate) fn get_max_timestamp(&self) -> i64 {
+        if let Some(ref buffer) = &self.buffer {
+            let mut cursor = Cursor::new(buffer.as_ref());
+            cursor.set_position(MAX_TIMESTAMP_OFFSET as u64);
+            cursor.get_i64()
+        } else {
+            0
+        }
+    }
+    pub(crate) fn set_base_offset(&mut self, base_offset: i64) -> AppResult<()> {
+        if let Some(ref mut buffer) = &mut self.buffer {
+            let mut cursor = Cursor::new(buffer.as_mut());
+            cursor.set_position(LAST_OFFSET_DELTA_OFFSET as u64);
+            let last_offset_delta = cursor.get_i32();
+            let base_offset = base_offset - 1 - last_offset_delta as i64;
+            cursor.set_position(BASE_OFFSET_OFFSET as u64);
+            cursor.write_all(&base_offset.to_be_bytes())?;
+        }
+        Ok(())
     }
 
     // deserialize and validate the record batches
@@ -666,32 +702,6 @@ impl MemoryRecords {
             Some(batch_header)
         } else {
             None
-        }
-    }
-}
-impl Debug for MemoryRecords {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(buffer) = &self.buffer {
-            let mut buffer = buffer.clone();
-            if buffer.remaining() == 0 {
-                return write!(f, "MemoryRecord is empty");
-            }
-            f.debug_struct("MemoryRecordBatch")
-                .field("first offset", &buffer.get_i64())
-                .field("length", &buffer.get_i64())
-                .field("partition leader epoch", &buffer.get_i64())
-                .field("Magic", &buffer.get_i64())
-                .field("CRC", &buffer.get_i64())
-                .field("Attributes", &buffer.get_i64())
-                .field("Last Offset Delta", &buffer.get_i64())
-                .field("First timestamp", &buffer.get_i64())
-                .field("Max Timestamp", &buffer.get_i64())
-                .field("Producer Id", &buffer.get_i64())
-                .field("Producer Epoch", &buffer.get_i64())
-                .field("First sequence", &buffer.get_i64())
-                .finish()
-        } else {
-            write!(f, "MemoryRecord is empty")
         }
     }
 }

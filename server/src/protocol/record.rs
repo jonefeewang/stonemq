@@ -1,4 +1,5 @@
 use bytes::{Buf, BytesMut};
+use tokio::io::AsyncWriteExt;
 
 use crate::AppResult;
 use crate::message::MemoryRecords;
@@ -17,9 +18,12 @@ impl PrimaryType for MemoryRecords {
         Ok(DataType::Records(MemoryRecords::empty()))
     }
 
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         let n_pbytes = NPBytes { value: self.buffer };
-        n_pbytes.write_to(buffer)
+        n_pbytes.write_to(writer).await
     }
 
     fn size(&self) -> usize {
@@ -30,13 +34,14 @@ impl PrimaryType for MemoryRecords {
     }
 }
 
-#[test]
-fn test_record_read_write() {
+#[tokio::test]
+async fn test_record_read_write() {
     //Test MemoryRecord
-    let mut buffer = BytesMut::new();
+    let mut writer = Vec::new();
     let memory_record_value = MemoryRecords::new(BytesMut::from("test".as_bytes()));
     let memory_record_value_clone = memory_record_value.clone();
-    memory_record_value.write_to(&mut buffer).unwrap();
+    memory_record_value.write_to(&mut writer).await.unwrap();
+    let mut buffer = BytesMut::from(&writer[..]);
     let read_memory_record = MemoryRecords::read_from(&mut buffer).unwrap();
     assert_eq!(
         read_memory_record,

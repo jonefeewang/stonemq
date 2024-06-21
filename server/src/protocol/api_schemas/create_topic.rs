@@ -52,7 +52,7 @@ pub static SINGLE_CREATE_TOPIC_REQUEST_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             REPLICA_ASSIGNMENT_REPLICAS_KEY_NAME,
-            DataType::array_of(0i32),
+            DataType::array_of_i32_type(0i32),
         ),
     ]));
     let replica_assignment_ary = DataType::array_of_schema(replica_assignment_schema);

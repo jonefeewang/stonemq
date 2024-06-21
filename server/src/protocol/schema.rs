@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use tracing::trace;
 
 use crate::AppError::{NetworkReadError, ProtocolError};
 use crate::AppResult;
@@ -45,6 +46,7 @@ impl Schema {
                 p_type,
             });
             fields_index_by_name.insert(name, index);
+            // Ensure that both fields and fields_index_by_name are consistent.
             assert_eq!(fields.len() as i32, index + 1);
         }
         Schema {
@@ -56,6 +58,7 @@ impl Schema {
     pub fn read_from(self: Arc<Schema>, buffer: &mut BytesMut) -> AppResult<ValueSet> {
         let mut value_set = ValueSet::new(self.clone());
         for field in &self.fields {
+            trace!("read field:{}", field.name);
             let result = match &field.p_type {
                 DataType::Bool(_) => Bool::read_from(buffer),
                 DataType::I8(_) => I8::read_from(buffer),
@@ -72,7 +75,7 @@ impl Schema {
                 DataType::Array(array) => array.read_from(buffer),
                 DataType::Records(_) => MemoryRecords::read_from(buffer),
                 //should never happen
-                DataType::SchemaValues(value_set) => {
+                DataType::ValueSet(value_set) => {
                     return Err(NetworkReadError(Cow::Owned(format!(
                         "unexpected type schema:{:?}",
                         value_set
@@ -97,7 +100,10 @@ impl Schema {
 
     //
     // Retrieve the schema of an array field
-    pub fn get_array_field_schema(self: Arc<Schema>, name: &'static str) -> AppResult<Arc<Schema>> {
+    pub fn sub_schema_of_ary_field(
+        self: Arc<Schema>,
+        name: &'static str,
+    ) -> AppResult<Arc<Schema>> {
         let field = self.get_field(name)?;
         let array_type: &ArrayType = (&field.p_type).try_into()?;
 

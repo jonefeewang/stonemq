@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use once_cell::sync::Lazy;
+use tokio::io::AsyncWriteExt;
+use tracing::trace;
 
 use crate::AppError::ProtocolError;
 use crate::AppResult;
@@ -27,17 +29,25 @@ pub const PARTITION_KEY_NAME: &str = "partition";
 pub const RECORD_SET_KEY_NAME: &str = "record_set";
 
 impl ProtocolCodec<ProduceRequest> for ProduceRequest {
-    fn write_to(self, buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<()> {
-        let schema = Self::fetch_schema_for_api(&api_version, &ApiKey::Produce(0, "Produce"));
+    async fn write_to<W>(
+        self,
+        buffer: &mut W,
+        api_version: &ApiVersion,
+        correlation_id: i32,
+    ) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin + Send,
+    {
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
         let mut produce_req_value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut produce_req_value_set)?;
-        let body_size = produce_req_value_set.size();
-        buffer.reserve(body_size);
-        produce_req_value_set.write_to(buffer)
+        produce_req_value_set.write_to(buffer).await
     }
 
     fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
-        let schema = Self::fetch_schema_for_api(api_version, &ApiKey::Produce(0, "Produce"));
+        trace!("ProduceRequest read start");
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
+        trace!("ProduceRequest schema read start ----{:?}", schema);
         let produce_req_value_set = schema.read_from(buffer)?;
         let produce_request = ProduceRequest::decode_from_value_set(produce_req_value_set)?;
         Ok(produce_request)
@@ -80,7 +90,7 @@ impl ProduceRequest {
                 .ok_or(ProtocolError(Cow::Borrowed("partition data is empty")))?;
             let mut partition_ary = Vec::with_capacity(partition_data.len());
             for partition in partition_data {
-                if let DataType::SchemaValues(mut value_set) = partition {
+                if let DataType::ValueSet(mut value_set) = partition {
                     // "partition" field
                     let partition_num: i32 =
                         value_set.get_field_value(PARTITION_KEY_NAME)?.try_into()?;
@@ -132,12 +142,12 @@ impl ProduceRequest {
             produce_req_value_set
                 .append_field_value(TRANSACTIONAL_ID_KEY_NAME, self.transactional_id.into())?;
         }
-        produce_req_value_set.append_field_value(ACKS_KEY_NAME, (&self.required_acks).into())?;
+        produce_req_value_set.append_field_value(ACKS_KEY_NAME, self.required_acks.into())?;
         produce_req_value_set.append_field_value(TIMEOUT_KEY_NAME, DataType::from(self.timeout))?;
 
         let topic_data_ary =
             Self::generate_topic_data_array(self.topic_data, produce_req_value_set)?;
-        let topic_data_schema = Schema::get_array_field_schema(
+        let topic_data_schema = Schema::sub_schema_of_ary_field(
             produce_req_value_set.schema.clone(),
             TOPIC_DATA_KEY_NAME,
         )?;
@@ -171,20 +181,20 @@ impl ProduceRequest {
 
         for data in topic_data {
             let mut topic_data_value_set =
-                produce_req_value_set.create_from_array_of_schema(TOPIC_DATA_KEY_NAME)?;
+                produce_req_value_set.sub_valueset_of_ary_field(TOPIC_DATA_KEY_NAME)?;
             topic_data_value_set
                 .append_field_value(TOPIC_KEY_NAME, DataType::from(data.topic_name.as_str()))?;
 
             let partition_data_ary =
                 Self::generate_partition_data_array(data.partition_data, &topic_data_value_set)?;
-            let partition_ary_schema = Schema::get_array_field_schema(
+            let partition_ary_schema = Schema::sub_schema_of_ary_field(
                 topic_data_value_set.schema.clone(),
                 PARTITION_DATA_KEY_NAME,
             )?;
             let partition_array =
                 DataType::array_of_value_set(partition_data_ary, partition_ary_schema);
             topic_data_value_set.append_field_value(PARTITION_DATA_KEY_NAME, partition_array)?;
-            topic_data_ary.push(DataType::SchemaValues(topic_data_value_set));
+            topic_data_ary.push(DataType::ValueSet(topic_data_value_set));
         }
 
         Ok(topic_data_ary)
@@ -201,14 +211,14 @@ impl ProduceRequest {
 
         for partition_data in partition_data_vec {
             let mut partition_value_set =
-                topic_data_value_set.create_from_array_of_schema(PARTITION_DATA_KEY_NAME)?;
+                topic_data_value_set.sub_valueset_of_ary_field(PARTITION_DATA_KEY_NAME)?;
             partition_value_set
                 .append_field_value(PARTITION_KEY_NAME, partition_data.partition.into())?;
             partition_value_set.append_field_value(
                 RECORD_SET_KEY_NAME,
                 DataType::Records(partition_data.message_set),
             )?;
-            partition_data_ary.push(DataType::SchemaValues(partition_value_set));
+            partition_data_ary.push(DataType::ValueSet(partition_value_set));
         }
         Ok(partition_data_ary)
     }
@@ -318,10 +328,10 @@ pub static PRODUCE_REQUEST_SCHEMA_V3: Lazy<Arc<Schema>> = Lazy::new(|| {
             TRANSACTIONAL_ID_KEY_NAME,
             DataType::NPString(NPString::default()),
         ),
-        (0, ACKS_KEY_NAME, DataType::I8(I8::default())),
-        (1, TIMEOUT_KEY_NAME, DataType::I32(I32::default())),
+        (1, ACKS_KEY_NAME, DataType::I16(I16::default())),
+        (2, TIMEOUT_KEY_NAME, DataType::I32(I32::default())),
         (
-            2,
+            3,
             TOPIC_DATA_KEY_NAME,
             DataType::Array(ArrayType {
                 can_be_empty: false,
@@ -355,10 +365,10 @@ mod tests {
         let produce_request = create_test_produce_request();
         let api_version = ApiVersion::default();
         let schema = match api_version {
-            ApiVersion::V0(_) | ApiVersion::V1(_) | ApiVersion::V2(_) => {
+            ApiVersion::V0 | ApiVersion::V1 | ApiVersion::V2 => {
                 Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0)
             }
-            ApiVersion::V3(_) => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
+            ApiVersion::V3 | ApiVersion::V4 => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
         };
         let mut produce_req_value_set = ValueSet::new(schema);
 
@@ -388,7 +398,7 @@ mod tests {
         if let DataType::Array(array) = topic_data_field {
             assert!(array.values.is_some(), "Topic data should not be empty");
             for (index, item) in array.values.unwrap().into_iter().enumerate() {
-                if let DataType::SchemaValues(mut topic_value_set) = item {
+                if let DataType::ValueSet(mut topic_value_set) = item {
                     assert_eq!(
                         topic_value_set.get_field_value(TOPIC_KEY_NAME).unwrap(),
                         format!("test_topic{}", index + 1).into()
@@ -399,7 +409,7 @@ mod tests {
                     {
                         assert!(array.values.is_some(), "Partition data should not be empty");
                         for (index, item) in array.values.unwrap().into_iter().enumerate() {
-                            if let DataType::SchemaValues(mut partition_value_set) = item {
+                            if let DataType::ValueSet(mut partition_value_set) = item {
                                 assert_eq!(
                                     partition_value_set
                                         .get_field_value(PARTITION_KEY_NAME)
@@ -432,18 +442,22 @@ mod tests {
     ///         )
     /// `
     ///
-    #[test]
-    fn test_produce_request_read_write() {
+    #[tokio::test]
+    async fn test_produce_request_read_write() {
         tracing_subscriber::fmt()
             .with_env_filter("debug")
             .with_test_writer()
             .init();
 
-        let mut produce_request = create_test_produce_request();
-        let mut buffer = BytesMut::new();
+        let produce_request = create_test_produce_request();
+        let mut buffer = Vec::new();
         let api_version = ApiVersion::default();
         let produce_request_clone = produce_request.clone();
-        produce_request.write_to(&mut buffer, &api_version).unwrap();
+        produce_request
+            .write_to(&mut buffer, &api_version, 0)
+            .await
+            .unwrap();
+        let mut buffer = BytesMut::from(&buffer[..]);
         let target_produce_request = ProduceRequest::read_from(&mut buffer, &api_version).unwrap();
         assert_eq!(produce_request_clone, target_produce_request);
     }

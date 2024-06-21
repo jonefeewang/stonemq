@@ -2,6 +2,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use bytes::{Buf, BufMut, BytesMut};
+use tokio::io::AsyncWriteExt;
+use tracing::trace;
 
 use crate::AppError::NetworkReadError;
 use crate::AppResult;
@@ -26,8 +28,9 @@ pub struct ArrayType {
 impl ArrayType {
     pub fn read_from(&self, buffer: &mut BytesMut) -> AppResult<DataType> {
         let ary_size = buffer.get_i32();
+        trace!("array size: {}", ary_size);
         let p_type = match &*self.p_type {
-            DataType::Schema(schema) => DataType::SchemaValues(ValueSet::new(schema.clone())),
+            DataType::Schema(schema) => DataType::ValueSet(ValueSet::new(schema.clone())),
             other_type => other_type.clone(),
         };
         if ary_size < 0 && self.can_be_empty {
@@ -68,7 +71,7 @@ impl ArrayType {
                     Err(NetworkReadError(Cow::Borrowed("unexpected array in array")))
                 }
                 //should never happen
-                DataType::SchemaValues(_) => Err(NetworkReadError(Cow::Borrowed(
+                DataType::ValueSet(_) => Err(NetworkReadError(Cow::Borrowed(
                     "unexpected schema data type in array",
                 ))),
             };
@@ -84,35 +87,35 @@ impl ArrayType {
 
     ///
     /// 将ArrayType写入到缓冲区, 消耗掉自己，之后不能再使用
-    pub fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    pub async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin + Send,
+    {
         match self.values {
             None => {
-                buffer.put_i32(-1);
+                writer.write_i32(-1).await?;
                 return Ok(());
             }
             Some(values) => {
-                buffer.put_i32(values.len() as i32);
+                writer.write_i32(values.len() as i32).await?;
                 for value in values {
                     match value {
-                        DataType::Bool(bool) => {
-                            bool.write_to(buffer)?;
-                        }
-                        DataType::I8(i8) => i8.write_to(buffer)?,
-                        DataType::I16(i16) => i16.write_to(buffer)?,
-                        DataType::I32(i32) => i32.write_to(buffer)?,
-                        DataType::U32(u32) => u32.write_to(buffer)?,
-                        DataType::I64(i64) => i64.write_to(buffer)?,
-                        DataType::PString(string) => string.write_to(buffer)?,
-                        DataType::NPString(npstring) => npstring.write_to(buffer)?,
-                        DataType::PBytes(bytes) => bytes.write_to(buffer)?,
-                        DataType::NPBytes(npbytes) => npbytes.write_to(buffer)?,
-                        DataType::PVarInt(pvarint) => pvarint.write_to(buffer)?,
-                        DataType::PVarLong(pvarlong) => pvarlong.write_to(buffer)?,
-                        DataType::Array(array) => array.write_to(buffer)?,
-                        DataType::Records(records) => records.write_to(buffer)?,
-                        DataType::SchemaValues(structure) => structure.write_to(buffer)?,
+                        DataType::Bool(bool) => bool.write_to(writer).await?,
+                        DataType::I8(i8) => i8.write_to(writer).await?,
+                        DataType::I16(i16) => i16.write_to(writer).await?,
+                        DataType::I32(i32) => i32.write_to(writer).await?,
+                        DataType::U32(u32) => u32.write_to(writer).await?,
+                        DataType::I64(i64) => i64.write_to(writer).await?,
+                        DataType::PString(string) => string.write_to(writer).await?,
+                        DataType::NPString(npstring) => npstring.write_to(writer).await?,
+                        DataType::PBytes(bytes) => bytes.write_to(writer).await?,
+                        DataType::NPBytes(npbytes) => npbytes.write_to(writer).await?,
+                        DataType::PVarInt(pvarint) => pvarint.write_to(writer).await?,
+                        DataType::PVarLong(pvarlong) => pvarlong.write_to(writer).await?,
+                        DataType::Records(records) => records.write_to(writer).await?,
+                        DataType::ValueSet(value_set) => value_set.write_to(writer).await?,
                         //should never happen
-                        DataType::Schema(_) => {
+                        DataType::Schema(_) | DataType::Array(_) => {
                             return Err(NetworkReadError(Cow::Borrowed(
                                 "unexpected array of schema",
                             )));
@@ -124,10 +127,10 @@ impl ArrayType {
         Ok(())
     }
 
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> AppResult<usize> {
         let mut total_size = 4;
         match &self.values {
-            None => return total_size,
+            None => return Ok(total_size),
             Some(values) => {
                 for value in values {
                     total_size += match value {
@@ -143,26 +146,26 @@ impl ArrayType {
                         DataType::NPBytes(npbytes) => npbytes.size(),
                         DataType::PVarInt(pvarint) => pvarint.size(),
                         DataType::PVarLong(pvarlong) => pvarlong.size(),
-                        DataType::Array(array) => array.size(),
+                        DataType::Array(array) => array.size()?,
                         DataType::Records(records) => records.size(),
                         //should never happen
                         DataType::Schema(_) => {
                             //array of schema should not be here
                             panic!("unexpected array of schema");
                         }
-                        DataType::SchemaValues(schema_data) => schema_data.size(),
+                        DataType::ValueSet(valueset) => valueset.size()?,
                     };
                 }
             }
         }
-        total_size
+        Ok(total_size)
     }
 }
 mod tests {
-    #[test]
-    fn test_array_read_write() {
+    #[tokio::test]
+    async fn test_array_read_write() {
         use super::*;
-        let mut buffer = BytesMut::new();
+        let mut writer = Vec::new();
         let array = ArrayType {
             can_be_empty: false,
             p_type: Arc::new(DataType::I32(I32::default())),
@@ -173,21 +176,24 @@ mod tests {
             ]),
         };
         let array_clone = array.clone();
-        array.write_to(&mut buffer).unwrap();
+        array.write_to(&mut writer).await.unwrap();
+
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_array = array_clone.read_from(&mut buffer).unwrap();
         assert_eq!(read_array, DataType::Array(array_clone));
     }
-    #[test]
-    fn test_array_read_write_empty() {
+    #[tokio::test]
+    async fn test_array_read_write_empty() {
         use super::*;
-        let mut buffer = BytesMut::new();
+        let mut writer = Vec::new();
         let array = ArrayType {
             can_be_empty: true,
             p_type: Arc::new(DataType::I32(I32::default())),
             values: None,
         };
         let array_clone = array.clone();
-        array.write_to(&mut buffer).unwrap();
+        array.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_array = array_clone.read_from(&mut buffer).unwrap();
         assert_eq!(read_array, DataType::Array(array_clone));
     }

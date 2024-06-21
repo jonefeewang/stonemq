@@ -3,6 +3,8 @@ use std::fmt::Debug;
 
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tracing::trace;
 
 use crate::AppError::NetworkReadError;
 use crate::AppResult;
@@ -38,8 +40,11 @@ macro_rules! implement_primary_type {
                 let value = buffer.$read_method();
                 Ok(DataType::$return_type($type { value }))
             }
-            fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
-                buffer.$write_method(self.value);
+            async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+            where
+                W: AsyncWriteExt + Unpin,
+            {
+                writer.$write_method(self.value).await?;
                 Ok(())
             }
             fn size(&self) -> usize {
@@ -67,9 +72,12 @@ macro_rules! implement_var_type {
                 };
             }
 
-            fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+            async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+            where
+                W: AsyncWriteExt + Unpin,
+            {
                 let var = $encode_var_vec(self.value);
-                buffer.put_slice(var.as_slice());
+                writer.write_all(var.as_slice()).await?;
                 Ok(())
             }
 
@@ -94,7 +102,9 @@ macro_rules! implement_var_type {
 /// have minimal impact,serving merely as a collection of functionalities.
 pub trait PrimaryType {
     fn read_from(buffer: &mut BytesMut) -> AppResult<DataType>;
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()>;
+    async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin;
     fn size(&self) -> usize;
 }
 
@@ -111,11 +121,11 @@ define_type!(NPBytes, Option<BytesMut>);
 define_type!(PVarInt, i32);
 define_type!(PVarLong, i64);
 
-implement_primary_type!(I8, I8, get_i8, put_i8, 1);
-implement_primary_type!(I16, I16, get_i16, put_i16, 2);
-implement_primary_type!(I32, I32, get_i32, put_i32, 4);
-implement_primary_type!(U32, U32, get_u32, put_u32, 4);
-implement_primary_type!(I64, I64, get_i64, put_i64, 8);
+implement_primary_type!(I8, I8, get_i8, write_i8, 1);
+implement_primary_type!(I16, I16, get_i16, write_i16, 2);
+implement_primary_type!(I32, I32, get_i32, write_i32, 4);
+implement_primary_type!(U32, U32, get_u32, write_u32, 4);
+implement_primary_type!(I64, I64, get_i64, write_i64, 8);
 
 implement_var_type!(
     PVarInt,
@@ -147,12 +157,16 @@ impl PrimaryType for PBytes {
             }))
         }
     }
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    async fn write_to<W>(mut self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         let length = self.value.remaining();
-        buffer.put_i32(length as i32);
-        buffer.put(self.value);
+        writer.write_i32(length as i32).await?;
+        writer.write_buf(&mut self.value).await?;
         Ok(())
     }
+
     fn size(&self) -> usize {
         4 + self.value.remaining()
     }
@@ -169,13 +183,16 @@ impl PrimaryType for NPBytes {
             }))
         }
     }
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
-        if let Some(value) = self.value {
+    async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        if let Some(mut value) = self.value {
             let length = value.remaining();
-            buffer.put_i32(length as i32);
-            buffer.put(value);
+            writer.write_i32(length as i32).await?;
+            writer.write_buf(&mut value).await?;
         } else {
-            buffer.put_i32(-1);
+            writer.write_i32(-1).await?;
         }
         Ok(())
     }
@@ -197,15 +214,19 @@ impl PrimaryType for PString {
                 length
             ))))
         } else {
+            trace!("Reading PString with length: {}", length);
             Ok(DataType::PString(PString {
                 value: String::from_utf8(buffer.split_to(length as usize).to_vec())?,
             }))
         }
     }
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         let length = self.value.len();
-        buffer.put_i16(length as i16);
-        buffer.put_slice(self.value.into_bytes().as_slice());
+        writer.write_i16(length as i16).await?;
+        writer.write_all(self.value.as_bytes()).await?;
         Ok(())
     }
     fn size(&self) -> usize {
@@ -218,6 +239,7 @@ impl PrimaryType for NPString {
         if length < 0 {
             Ok(DataType::NPString(NPString { value: None }))
         } else {
+            trace!("Reading NPString with length: {}", length);
             Ok(DataType::NPString(NPString {
                 value: Some(String::from_utf8(
                     buffer.split_to(length as usize).to_vec(),
@@ -225,13 +247,16 @@ impl PrimaryType for NPString {
             }))
         }
     }
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    async fn write_to<W>(mut self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         if let Some(value) = self.value {
             let length = value.len();
-            buffer.put_i16(length as i16);
-            buffer.put_slice(value.into_bytes().as_slice());
+            writer.write_i16(length as i16).await?;
+            writer.write_all(value.as_bytes()).await?;
         } else {
-            buffer.put_i16(-1);
+            writer.write_i16(-1).await?;
         }
         Ok(())
     }
@@ -254,9 +279,12 @@ impl PrimaryType for Bool {
         }
     }
 
-    fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
+    async fn write_to<W>(mut self, writer: &mut W) -> AppResult<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
         let value = if self.value { 1 } else { 0 };
-        buffer.put_i8(value);
+        writer.write_i8(value).await?;
         Ok(())
     }
 
@@ -265,125 +293,128 @@ impl PrimaryType for Bool {
     }
 }
 
-impl<T> From<T> for DataType
-where
-    T: PrimaryType + Into<DataType>,
-{
-    fn from(item: T) -> Self {
-        item.into()
-    }
-}
-
 mod test {
     use bytes::BytesMut;
 
     use super::*;
 
-    #[test]
-    fn test_primary_type_read_write() {
+    #[tokio::test]
+    async fn test_primary_type_read_write() {
+        let mut writer = Vec::new();
+
         // Test Bool
-        let mut buffer = BytesMut::new();
-        buffer.clear();
         let bool_value = Bool { value: true };
-        bool_value.write_to(&mut buffer).unwrap();
-        let read_bool = Bool::read_from(&mut buffer).unwrap();
+        bool_value.write_to(&mut writer).await.unwrap();
+        let mut bytes_mut = BytesMut::from(&writer[..]);
+        let read_bool = Bool::read_from(&mut bytes_mut).unwrap();
         assert_eq!(read_bool, DataType::Bool(Bool { value: true }));
 
         // Test I8
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let i8_value = I8 { value: 127 };
         let i8_value_clone = i8_value.clone();
-        i8_value.write_to(&mut buffer).unwrap();
+        i8_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_i8 = I8::read_from(&mut buffer).unwrap();
         assert_eq!(read_i8, DataType::I8(i8_value_clone));
 
         // Test I16
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let i16_value = I16 { value: 32767 };
         let i16_value_clone = i16_value.clone();
-        i16_value.write_to(&mut buffer).unwrap();
+        i16_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_i16 = I16::read_from(&mut buffer).unwrap();
         assert_eq!(read_i16, DataType::I16(i16_value_clone));
 
         // Test I32
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let i32_value = I32 { value: 2147483647 };
         let i32_value_clone = i32_value.clone();
-        i32_value.write_to(&mut buffer).unwrap();
+        i32_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_i32 = I32::read_from(&mut buffer).unwrap();
         assert_eq!(read_i32, DataType::I32(i32_value_clone));
 
         // Test U32
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let u32_value = U32 { value: 4294967295 };
         let u32_value_clone = u32_value.clone();
-        u32_value.write_to(&mut buffer).unwrap();
+        u32_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_u32 = U32::read_from(&mut buffer).unwrap();
         assert_eq!(read_u32, DataType::U32(u32_value_clone));
 
         // Test I64
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let i64_value = I64 {
             value: 9223372036854775807,
         };
         let i64_value_clone = i64_value.clone();
-        i64_value.write_to(&mut buffer).unwrap();
+        i64_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_i64 = I64::read_from(&mut buffer).unwrap();
         assert_eq!(read_i64, DataType::I64(i64_value_clone));
 
         // Test PString
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let pstring_value = PString {
             value: "test".to_string(),
         };
         let pstring_value_clone = pstring_value.clone();
-        pstring_value.write_to(&mut buffer).unwrap();
+        pstring_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_pstring = PString::read_from(&mut buffer).unwrap();
         assert_eq!(read_pstring, DataType::PString(pstring_value_clone));
 
         // Test NPString
-        let mut buffer = BytesMut::new();
+        buffer.clear();
         let npstring_value = NPString {
             value: Some("test".to_string()),
         };
         let npstring_value_clone = npstring_value.clone();
-        npstring_value.write_to(&mut buffer).unwrap();
+        npstring_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_npstring = NPString::read_from(&mut buffer).unwrap();
         assert_eq!(read_npstring, DataType::NPString(npstring_value_clone));
 
         //Test PBytes
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let pbytes_value = PBytes {
             value: BytesMut::from("test".as_bytes()),
         };
         let pbytes_value_clone = pbytes_value.clone();
-        pbytes_value.write_to(&mut buffer).unwrap();
+        pbytes_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_pbytes = PBytes::read_from(&mut buffer).unwrap();
         assert_eq!(read_pbytes, DataType::PBytes(pbytes_value_clone));
 
         //Test NPBytes
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let npbytes_value = NPBytes {
             value: Some(BytesMut::from("test".as_bytes())),
         };
         let npbytes_value_clone = npbytes_value.clone();
-        npbytes_value.write_to(&mut buffer).unwrap();
+        npbytes_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_npbytes = NPBytes::read_from(&mut buffer).unwrap();
         assert_eq!(read_npbytes, DataType::NPBytes(npbytes_value_clone));
 
         //Test PVarInt
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let pvarint_value = PVarInt { value: 12345 };
         let pvarint_value_clone = pvarint_value.clone();
-        pvarint_value.write_to(&mut buffer).unwrap();
+        pvarint_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_pvarint = PVarInt::read_from(&mut buffer).unwrap();
         assert_eq!(read_pvarint, DataType::PVarInt(pvarint_value_clone));
 
         //Test PVarLong
-        let mut buffer = BytesMut::new();
+        writer.clear();
         let pvarlong_value = PVarLong { value: 1234567890 };
         let pvarlong_value_clone = pvarlong_value.clone();
-        pvarlong_value.write_to(&mut buffer).unwrap();
+        pvarlong_value.write_to(&mut writer).await.unwrap();
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_pvarlong = PVarLong::read_from(&mut buffer).unwrap();
         assert_eq!(read_pvarlong, DataType::PVarLong(pvarlong_value_clone));
     }

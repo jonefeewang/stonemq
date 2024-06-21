@@ -1,18 +1,60 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
+use dashmap::DashMap;
+
+use crate::{AppResult, BROKER_CONFIG};
 use crate::AppError::InvalidValue;
-use crate::AppResult;
+use crate::log::Log;
 use crate::message::MemoryRecords;
 use crate::replica::Replica;
 
-pub struct Partition {
-    assigned_replicas: HashMap<i32, Replica>,
+#[derive(Debug)]
+pub struct Partition<T: Log> {
+    pub topic_partition: TopicPartition,
+    pub assigned_replicas: DashMap<i32, Replica<T>>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct LogAppendInfo {
+    pub base_offset: i64,
+    pub log_append_time: i64,
+}
+impl<T: Log> Partition<T> {
+    pub fn new(topic_partition: TopicPartition) -> Self {
+        Partition {
+            topic_partition,
+            assigned_replicas: DashMap::new(),
+        }
+    }
+    ///
+    /// Append a record to the leader replica of this partition
+    /// # Arguments
+    /// * `record` - The record to append
+    /// * `queue_topic_partition` - The topic partition of the queue log
+    /// # Return
+    pub async fn append_record_to_leader(
+        &self,
+        record: MemoryRecords,
+        queue_topic_partition: TopicPartition,
+    ) -> AppResult<LogAppendInfo> {
+        let local_replica_id = &BROKER_CONFIG.get().unwrap().general.id;
+        let replica = self
+            .assigned_replicas
+            .get(local_replica_id)
+            .ok_or(InvalidValue("replica", local_replica_id.to_string()))?;
+
+        replica
+            .log
+            .append_records((queue_topic_partition, record))
+            .await
+    }
+    pub fn create_replica(&mut self, broker_id: i32, replica: Replica<T>) {
+        self.assigned_replicas.entry(broker_id).or_insert(replica);
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct TopicPartition {
     pub topic: String,
     pub partition: i32,

@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppResult;
 
+///
+/// 模拟的journal topic 列表，通常一个10节点组成的集群，3-5个topic即可
+pub const JOURNAL_TOPICS_LIST: &str = "journal_topics_list";
+///
+/// 实际的topic列表，这个是整个集群里真正的topic数量，没有限制
+pub const QUEUE_TOPICS_LIST: &str = "queue_topics_list";
 #[derive(Serialize, Deserialize)]
 pub struct KvStore {
     store: HashMap<String, String>,
@@ -91,5 +97,29 @@ mod test {
         let store: KvStore = KvStore::open(path.to_str().unwrap()).unwrap();
         assert_eq!(store.get("key1"), None);
         assert_eq!(store.get("key2"), Some("value2".to_owned()));
+    }
+    #[test]
+    fn init() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = "/Users/wangjunfei/projects/stonemq/test_data/kv_store/kv.db";
+
+        let mut kv_store = KvStore::open(path).unwrap();
+        kv_store
+            .put(
+                "journal_topics_list".to_owned(),
+                "journal-0, journal-1".to_owned(),
+            )
+            .unwrap();
+        kv_store
+            .put(
+                "queue_topics_list".to_owned(),
+                "topic_a-0,topic_a-1,topic_a-2\
+            ,topic_b-0,topic_b-1.topic_b-2\
+            ,topic_c-0,topic_c-1\
+            ,topic_d-0,topic_d-1,"
+                    .to_owned(),
+            )
+            .unwrap();
+        kv_store.save(path).unwrap();
     }
 }

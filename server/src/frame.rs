@@ -1,28 +1,34 @@
 use std::io;
 use std::io::ErrorKind;
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BytesMut};
 
 use crate::{AppError, AppResult};
 use crate::AppError::Incomplete;
 use crate::config::DynamicConfig;
 use crate::protocol::{ApiKey, ProtocolCodec};
-use crate::request::{ApiRequest, RequestHeader};
+use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
+use crate::request::metadata::MetaDataRequest;
 use crate::request::produce::ProduceRequest;
 
-impl TryFrom<&RequestFrame> for ApiRequest {
+impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
     type Error = AppError;
 
-    fn try_from(frame: &RequestFrame) -> Result<Self, Self::Error> {
-        match frame.request_header.api_key {
-            ApiKey::Produce(_, _) => {
-                let mut body = frame.body.clone();
-                let produce_request =
-                    ProduceRequest::read_from(&mut body, &frame.request_header.api_version)?;
-                return Ok(ApiRequest::Produce(produce_request));
+    fn try_from(mut data: (BytesMut, &RequestHeader)) -> Result<Self, Self::Error> {
+        match data.1.api_key {
+            ApiKey::Produce => {
+                let produce_request = ProduceRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::Produce(produce_request))
             }
-            ApiKey::Metadata(_, _) => {
-                todo!()
+            ApiKey::Metadata => {
+                let metadata_request =
+                    MetaDataRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::Metadata(metadata_request))
+            }
+            ApiKey::ApiVersion => {
+                let api_version_request =
+                    ApiVersionRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::ApiVersion(api_version_request))
             }
         }
     }
@@ -39,7 +45,7 @@ pub struct RequestFrame {
 #[derive(Debug)]
 pub struct ResponseFrame {
     correlation_id: i32,
-    body: Bytes,
+    body: BytesMut,
 }
 
 impl RequestFrame {
@@ -83,12 +89,13 @@ impl RequestFrame {
         dynamic_config: &DynamicConfig,
     ) -> AppResult<Option<RequestFrame>> {
         // perform a check to ensure we have enough data
-        return match RequestFrame::check(buffer, dynamic_config) {
+        match RequestFrame::check(buffer, dynamic_config) {
             Ok(_) => {
-                let length_bytes = buffer.get(0..4).unwrap();
-                let body_length = i32::from_be_bytes(length_bytes.try_into().unwrap());
+                // let length_bytes = buffer.get(0..4).ok_or(Incomplete)?;
+                // let body_length = i32::from_be_bytes(length_bytes.try_into().or(Err(Incomplete))?);
+                let body_length = buffer.get_i32();
                 //这里必须使用BytesMut, 因为后续在验证record batch时，需要assign offset,修改缓冲区里的内容
-                let mut body = buffer.split_to(body_length as usize + 4);
+                let mut body = buffer.split_to(body_length as usize);
                 let request_header = RequestHeader::read_from(&mut body)?;
                 let frame = RequestFrame {
                     request_header,
@@ -98,6 +105,6 @@ impl RequestFrame {
             }
             Err(AppError::Incomplete) => Ok(None),
             Err(e) => Err(e),
-        };
+        }
     }
 }

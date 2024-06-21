@@ -2,9 +2,11 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use futures_util::future::BoxFuture;
+use futures_util::FutureExt;
+use tokio::io::AsyncWriteExt;
 
-use crate::AppError::{NetworkWriteError, ProtocolError};
+use crate::AppError::{IllegalStateError, NetworkWriteError, ProtocolError};
 use crate::AppResult;
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::PrimaryType;
@@ -29,35 +31,35 @@ impl ValueSet {
         }
     }
 
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> AppResult<usize> {
         let mut total_size = 0usize;
         for data in self.values.values() {
             let size = match data {
-                DataType::Bool(bool) => bool.size(),
-                DataType::I8(i8) => i8.size(),
-                DataType::I16(i16) => i16.size(),
-                DataType::I32(i32) => i32.size(),
-                DataType::U32(u32) => u32.size(),
-                DataType::I64(i164) => i164.size(),
-                DataType::PString(pstring) => pstring.size(),
-                DataType::NPString(npstring) => npstring.size(),
-                DataType::PBytes(pbytes) => pbytes.size(),
-                DataType::NPBytes(npbytes) => npbytes.size(),
-                DataType::PVarInt(pvarint) => pvarint.size(),
-                DataType::PVarLong(pvarlong) => pvarlong.size(),
-                DataType::Array(array) => array.size(),
-                DataType::Records(records) => records.size(),
-                DataType::SchemaValues(data) => data.size(),
-                DataType::Schema(_) => {
-                    panic!("Schema type should not be in the values")
-                }
+                DataType::Bool(bool) => Ok(bool.size()),
+                DataType::I8(i8) => Ok(i8.size()),
+                DataType::I16(i16) => Ok(i16.size()),
+                DataType::I32(i32) => Ok(i32.size()),
+                DataType::U32(u32) => Ok(u32.size()),
+                DataType::I64(i164) => Ok(i164.size()),
+                DataType::PString(pstring) => Ok(pstring.size()),
+                DataType::NPString(npstring) => Ok(npstring.size()),
+                DataType::PBytes(pbytes) => Ok(pbytes.size()),
+                DataType::NPBytes(npbytes) => Ok(npbytes.size()),
+                DataType::PVarInt(pvarint) => Ok(pvarint.size()),
+                DataType::PVarLong(pvarlong) => Ok(pvarlong.size()),
+                DataType::Array(array) => Ok(array.size()?),
+                DataType::Records(records) => Ok(records.size()),
+                DataType::ValueSet(data) => data.size(),
+                DataType::Schema(_) => Err(IllegalStateError(Cow::Borrowed(
+                    "Schema type should not be in the values",
+                ))),
             };
-            total_size += size;
+            total_size += size?;
         }
-        total_size
+        Ok(total_size)
     }
 
-    pub fn create_from_array_of_schema(&self, field_name: &'static str) -> AppResult<ValueSet> {
+    pub fn sub_valueset_of_ary_field(&self, field_name: &'static str) -> AppResult<ValueSet> {
         let array_field = self.schema.get_field(field_name)?;
         let array_type: &ArrayType = (&array_field.p_type).try_into()?;
 
@@ -87,9 +89,10 @@ impl ValueSet {
         self.values.insert(field.index, new_value);
         if field.index + 1 != self.values.len() as i32 {
             return Err(ProtocolError(Cow::Owned(format!(
-                "field index not match, expect:{},actual:{}",
+                "field index not match, expect:{},actual:{} with filed name:{}",
                 field.index + 1,
-                self.values.len()
+                self.values.len(),
+                field_name
             ))));
         };
         Ok(())
@@ -111,51 +114,58 @@ impl ValueSet {
     /// 将values写进stream, 消耗掉自己，方法调用后，自己就不能再使用了
     ///
     ///
-    pub fn write_to(self, buffer: &mut BytesMut) -> AppResult<()> {
-        for (_, value) in self.values {
-            match value {
-                DataType::Bool(bool) => bool.write_to(buffer)?,
-                DataType::I8(i8) => i8.write_to(buffer)?,
-                DataType::I16(i16) => i16.write_to(buffer)?,
-                DataType::I32(i32) => i32.write_to(buffer)?,
-                DataType::U32(u32) => u32.write_to(buffer)?,
-                DataType::I64(i64) => i64.write_to(buffer)?,
-                DataType::PString(string) => string.write_to(buffer)?,
-                DataType::NPString(npstring) => npstring.write_to(buffer)?,
-                DataType::PBytes(bytes) => bytes.write_to(buffer)?,
-                DataType::NPBytes(npbytes) => npbytes.write_to(buffer)?,
-                DataType::PVarInt(pvarint) => pvarint.write_to(buffer)?,
-                DataType::PVarLong(pvarlong) => pvarlong.write_to(buffer)?,
-                DataType::Array(array) => array.write_to(buffer)?,
-                DataType::Records(records) => records.write_to(buffer)?,
-                //should never happen
-                DataType::Schema(schema) => {
-                    return Err(NetworkWriteError(Cow::Owned(format!(
-                        "unexpected type schema:{:?}",
-                        schema
-                    ))));
-                }
-                //should never happen
-                DataType::SchemaValues(structure) => {
-                    return Err(NetworkWriteError(Cow::Owned(format!(
-                        "unexpected type schema:{:?}",
-                        structure
-                    ))));
+    pub fn write_to<W>(self, writer: &mut W) -> BoxFuture<'_, AppResult<()>>
+    where
+        W: AsyncWriteExt + Unpin + Send,
+    {
+        async move {
+            for (_, value) in self.values {
+                match value {
+                    DataType::Bool(bool) => bool.write_to(writer).await?,
+                    DataType::I8(i8) => i8.write_to(writer).await?,
+                    DataType::I16(i16) => i16.write_to(writer).await?,
+                    DataType::I32(i32) => i32.write_to(writer).await?,
+                    DataType::U32(u32) => u32.write_to(writer).await?,
+                    DataType::I64(i64) => i64.write_to(writer).await?,
+                    DataType::PString(string) => string.write_to(writer).await?,
+                    DataType::NPString(npstring) => npstring.write_to(writer).await?,
+                    DataType::PBytes(bytes) => bytes.write_to(writer).await?,
+                    DataType::NPBytes(npbytes) => npbytes.write_to(writer).await?,
+                    DataType::PVarInt(pvarint) => pvarint.write_to(writer).await?,
+                    DataType::PVarLong(pvarlong) => pvarlong.write_to(writer).await?,
+                    DataType::Array(array) => array.write_to(writer).await?,
+                    DataType::Records(records) => records.write_to(writer).await?,
+                    //should never happen
+                    DataType::Schema(schema) => {
+                        return Err(NetworkWriteError(Cow::Owned(format!(
+                            "unexpected type schema:{:?}",
+                            schema
+                        ))));
+                    }
+                    //should never happen
+                    DataType::ValueSet(structure) => {
+                        return Err(NetworkWriteError(Cow::Owned(format!(
+                            "unexpected type schema:{:?}",
+                            structure
+                        ))));
+                    }
                 }
             }
+            Ok(())
         }
-        Ok(())
+        .boxed()
     }
 }
 
 mod test {
+    use bytes::BytesMut;
 
-    #[test]
-    fn test_schema_data_read_write() {
+    #[tokio::test]
+    async fn test_schema_data_read_write() {
         use super::*;
         use crate::protocol::primary_types::PString;
         use crate::protocol::primary_types::I32;
-        let mut buffer = BytesMut::new();
+        let mut writer = Vec::new();
         let schema = Arc::new(Schema::from_fields_desc_vec(vec![
             (0, "field1", DataType::I32(I32::default())),
             (1, "field2", DataType::PString(PString::default())),
@@ -174,14 +184,18 @@ mod test {
             )
             .unwrap();
         let value_set_clone = value_set.clone();
-        value_set.write_to(&mut buffer).unwrap();
 
+        // write
+        value_set.write_to(&mut writer).await.unwrap();
+
+        // read
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_value_set = schema_clone.read_from(&mut buffer).unwrap();
         assert_eq!(read_value_set, value_set_clone);
     }
 
-    #[test]
-    fn test_two_hierarchy_schema_read_write() {
+    #[tokio::test]
+    async fn test_two_hierarchy_schema_read_write() {
         struct Inner {
             inner_field1: i32,
             inner_field2: String,
@@ -241,7 +255,7 @@ mod test {
         let mut inner_array = Vec::with_capacity(outer.outer_field2.len());
         for inner in outer.outer_field2 {
             let mut inner_value_set = outer_value_set
-                .create_from_array_of_schema(OUTER_FIELD2)
+                .sub_valueset_of_ary_field(OUTER_FIELD2)
                 .unwrap();
 
             inner_value_set
@@ -250,11 +264,11 @@ mod test {
             inner_value_set
                 .append_field_value(INNER_FIELD2, inner.inner_field2.into())
                 .unwrap();
-            inner_array.push(DataType::SchemaValues(inner_value_set));
+            inner_array.push(DataType::ValueSet(inner_value_set));
         }
 
         let schema =
-            Schema::get_array_field_schema(outer_value_set.schema.clone(), OUTER_FIELD2).unwrap();
+            Schema::sub_schema_of_ary_field(outer_value_set.schema.clone(), OUTER_FIELD2).unwrap();
         let array = DataType::array_of_value_set(inner_array, schema);
 
         outer_value_set
@@ -264,10 +278,11 @@ mod test {
         let outer_value_set_clone = outer_value_set.clone();
 
         //write to buffer
-        let mut buffer = BytesMut::new();
-        outer_value_set.write_to(&mut buffer).unwrap();
+        let mut writer = Vec::new();
+        outer_value_set.write_to(&mut writer).await.unwrap();
 
         //read from buffer
+        let mut buffer = BytesMut::from(&writer[..]);
         let read_outer_structure = outer_schema.read_from(&mut buffer).unwrap();
         //check
         assert_eq!(read_outer_structure, outer_value_set_clone);

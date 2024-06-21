@@ -1,8 +1,9 @@
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use crate::{AppError, AppResult};
 use crate::protocol::Acks;
-use crate::topic_partition::TopicData;
+use crate::topic_partition::{TopicData, TopicPartition};
 
 #[derive(Debug, Clone)]
 pub struct ProduceRequest {
@@ -31,7 +32,7 @@ impl ProduceRequest {
     pub(crate) fn new_empty() -> ProduceRequest {
         ProduceRequest {
             transactional_id: None,
-            required_acks: Acks::All(-1, "All"),
+            required_acks: Acks::All,
             timeout: 0,
             topic_data: vec![],
         }
@@ -54,7 +55,15 @@ impl PartialEq for ProduceRequest {
     }
 }
 impl Eq for ProduceRequest {}
-
-pub struct MetaDataRequest {
-    b: i16,
+#[derive(Debug)]
+pub struct PartitionResponse {
+    pub partition: i32,
+    pub error_code: i16,
+    pub base_offset: i64,
+    pub log_append_time: Option<i64>,
+}
+#[derive(Debug)]
+pub struct ProduceResponse {
+    pub responses: BTreeMap<TopicPartition, PartitionResponse>,
+    pub throttle_time: Option<i32>,
 }
