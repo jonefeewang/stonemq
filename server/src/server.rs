@@ -1,15 +1,18 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use getset::Getters;
-use parking_lot::RwLock;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::signal;
-use tokio::sync::{broadcast, mpsc, Semaphore};
+use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{self, Duration};
 use tracing::{error, info, instrument};
 
-use crate::{AppResult, BROKER_CONFIG, BrokerConfig, Connection, ReplicaManager, Shutdown};
+use crate::{
+    AppResult, BROKER_CONFIG, BrokerConfig, Connection, LogManager, ReplicaManager, Shutdown,
+};
+use crate::AppError::IllegalStateError;
 use crate::config::DynamicConfig;
 use crate::request::{ApiRequest, RequestContext, RequestProcessor};
 
@@ -44,24 +47,31 @@ impl Broker {
             //创建动态配置，默认从静态配置加载，运行时可以动态修改
             //动态配置在启动broker、启动server、客户端新建连接时更新
             //为了减少快照生成时间，相关的动态配置对象尽可能小一些
+            // Create dynamic configuration, initially loading from static configuration,
+            // with runtime modifications allowed
+            // Dynamic configuration updates when the broker starts, the server starts,
+            // and new client connections are established
+            // To minimize snapshot generation time, keep related dynamic configuration objects
+            // as small as possible
             dynamic_config: RwLock::new(DynamicConfig::new()),
             replica_manager,
         }
     }
-    pub async fn start(&self) {
+    pub async fn start(&mut self) -> AppResult<()> {
         let network_conf = &BROKER_CONFIG.get().unwrap().network;
         let listen_address = format!("{}:{}", network_conf.ip, network_conf.port);
         let dynamic_config_snapshot = {
-            let lock = self.dynamic_config.read();
+            let lock = self.dynamic_config.read().await;
             (*lock).clone()
         };
         let bind_result = TcpListener::bind(&listen_address).await;
         if let Err(err) = &bind_result {
-            error!(
+            let error_msg = format!(
                 "Failed to bind server to address: {} - Error: {}",
                 listen_address, err
             );
-            return;
+            error!(error_msg);
+            return Err(IllegalStateError(Cow::Owned(error_msg)));
         }
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
@@ -92,6 +102,7 @@ impl Broker {
         drop(notify_shutdown);
         drop(shutdown_complete_tx);
         let _ = shutdown_complete_rx.recv().await;
+        Ok(())
     }
 }
 
@@ -109,7 +120,7 @@ impl<'dc> Server<'dc> {
             let socket = self.accept().await?;
 
             let dynamic_config_snap_shot = {
-                let lock = self.dynamic_config.read();
+                let lock = self.dynamic_config.read().await;
                 lock.clone()
             };
 

@@ -1,1 +1,1 @@
-mod mini_kv_db;
+pub mod mini_kv_db;

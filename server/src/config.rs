@@ -11,9 +11,11 @@ use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc::error::SendError;
+use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
 
 use crate::AppError::InvalidValue;
+use crate::log::LogMessage;
 
 pub type AppResult<T> = Result<T, AppError>;
 pub static BROKER_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
@@ -35,6 +37,7 @@ pub enum AppError {
     ConventionError(#[from] FromUtf8Error),
     #[error("IllegalState : {0}")]
     IllegalStateError(Cow<'static, str>),
+    ParseError(#[from] std::num::ParseIntError),
     #[error("invalid provided {0} value = {1}")]
     InvalidValue(&'static str, String),
     FormatError(#[from] serde_json::Error),
@@ -44,7 +47,10 @@ pub enum AppError {
     #[error("Timeout")]
     Timeout(#[from] Elapsed),
     #[error("socket channel flag send error")]
-    Recv(#[from] SendError<()>),
+    SendLogMsg(#[from] SendError<LogMessage>),
+    SendToken(#[from] SendError<()>),
+    #[error("receive error")]
+    Recv(#[from] RecvError),
     #[error("Accept error = {0}")]
     Accept(String),
     TracingError(#[from] tracing::dispatcher::SetGlobalDefaultError),
@@ -77,7 +83,7 @@ impl DynamicConfig {
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct GeneralConfig {
-    pub id: String,
+    pub id: i32,
     pub max_msg_size: i32,
 }
 
@@ -94,13 +100,14 @@ pub struct LogConfig {
     pub journal_base_dir: String,
     pub queue_segment_size: u64,
     pub queue_base_dir: String,
+    pub kv_store_path: String,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
     pub general: GeneralConfig,
     pub network: NetworkConfig,
-    pub log_config: LogConfig,
+    pub log: LogConfig,
 }
 
 impl BrokerConfig {

@@ -1,15 +1,47 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
+use dashmap::DashMap;
+
+use crate::{AppResult, BROKER_CONFIG};
 use crate::AppError::InvalidValue;
-use crate::AppResult;
+use crate::log::Log;
 use crate::message::MemoryRecords;
 use crate::replica::Replica;
 
-pub struct Partition {
-    assigned_replicas: HashMap<i32, Replica>,
+pub struct Partition<T: Log> {
+    pub topic_partition: TopicPartition,
+    pub assigned_replicas: DashMap<i32, Replica<T>>,
+}
+
+pub struct LogAppendInfo {
+    pub base_offset: i64,
+    pub log_append_time: i64,
+    pub log_append_result: AppResult<()>,
+}
+impl<T: Log> Partition<T> {
+    pub fn new(topic_partition: TopicPartition) -> Self {
+        Partition {
+            topic_partition,
+            assigned_replicas: DashMap::new(),
+        }
+    }
+    pub async fn append_record_to_leader(&self, record: MemoryRecords) -> AppResult<LogAppendInfo> {
+        let local_replica_id = &BROKER_CONFIG.get().unwrap().general.id;
+        let replica = self
+            .assigned_replicas
+            .get(local_replica_id)
+            .ok_or(InvalidValue("replica", local_replica_id.to_string()))?;
+
+        replica
+            .log
+            .append_records((self.topic_partition.clone(), record))
+            .await
+    }
+    pub fn create_replica(&mut self, broker_id: i32, replica: Replica<T>) {
+        self.assigned_replicas.entry(broker_id).or_insert(replica);
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
