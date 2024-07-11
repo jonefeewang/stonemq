@@ -16,3 +16,4 @@ journal_base_dir="test_data/journal"
 queue_segment_size = 1_048_576
 queue_base_dir= "test_data/queue"
 kv_store_path = "test_data/kv_store/kv.db"
+recovery_checkpoint_interval=30

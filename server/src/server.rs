@@ -57,6 +57,10 @@ impl Broker {
         }
     }
     pub async fn start(&mut self) -> AppResult<()> {
+        // 开启logManager和replicaManager的定时线程
+        let log_manager = self.replica_manager.log_manager.clone();
+        log_manager.start_task().await?;
+
         let network_conf = &BROKER_CONFIG.get().unwrap().network;
         let listen_address = format!("{}:{}", network_conf.ip, network_conf.port);
 

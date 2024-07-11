@@ -28,6 +28,7 @@ mod log;
 mod message;
 
 mod broker;
+mod checkpoint;
 mod protocol;
 mod replica;
 pub mod request;

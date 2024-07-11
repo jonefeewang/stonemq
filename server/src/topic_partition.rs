@@ -65,7 +65,7 @@ impl Display for TopicPartition {
     }
 }
 impl TopicPartition {
-    pub fn string_id(&self) -> String {
+    pub fn id(&self) -> String {
         format!("{}-{}", self.topic, self.partition)
     }
     pub fn from_string(str_name: Cow<str>) -> AppResult<TopicPartition> {

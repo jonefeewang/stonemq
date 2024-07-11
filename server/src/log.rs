@@ -1,10 +1,11 @@
 use std::any::type_name;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::fs as sync_fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
@@ -16,10 +17,12 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::Interval;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{AppResult, BROKER_CONFIG};
+use crate::{AppError, AppResult, BROKER_CONFIG};
 use crate::AppError::{IllegalStateError, InvalidValue};
+use crate::checkpoint::CheckPointFile;
 use crate::message::MemoryRecords;
 use crate::topic_partition::{LogAppendInfo, TopicPartition};
 
@@ -33,15 +36,19 @@ pub(crate) trait Log: Debug {
         &self,
         records: (TopicPartition, MemoryRecords),
     ) -> AppResult<LogAppendInfo>;
-    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<i64, LogSegment>>;
+    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<u64, LogSegment>>;
     async fn new(
         dir: String,
-        segments: BTreeMap<i64, LogSegment>,
-        log_start_offset: i64,
-        log_recovery_point: i64,
+        segments: BTreeMap<u64, LogSegment>,
+        log_start_offset: u64,
+        log_recovery_point: u64,
     ) -> AppResult<Self>
     where
         Self: Sized;
+    async fn flush(&self) -> AppResult<()>;
+    fn no_active_segment_error(&self, dir: String) -> AppError {
+        IllegalStateError(Cow::Owned(format!("no active segment found log:{}", dir,)))
+    }
 }
 
 /// 每个Log代表一个topic-partition的目录及下边的日志文件
@@ -51,20 +58,21 @@ pub(crate) trait Log: Debug {
 /// 2. append message, 读取message时， 都使用的是读锁，频率相对较高
 #[derive(Debug)]
 pub struct QueueLog {
-    pub segments: RwLock<BTreeMap<i64, LogSegment>>,
+    pub segments: RwLock<BTreeMap<u64, LogSegment>>,
     pub dir: String,
-    pub log_start_offset: i64,
-    pub recover_point: i64,
+    pub log_start_offset: u64,
+    pub recover_point: u64,
 }
 /// 1. 写场景：roll log或delete segment时，需要修改segments，需要写锁，频率相对较低
 /// 2. append message, 读取message时， 都使用的是读锁，频率相对较高
 #[derive(Debug)]
 pub struct JournalLog {
-    pub segments: RwLock<BTreeMap<i64, LogSegment>>,
+    pub segments: RwLock<BTreeMap<u64, LogSegment>>,
+    // queue log的topicPartition对应的下一个offset值
     pub next_offset_info: DashMap<TopicPartition, i64>,
     pub dir: String,
-    pub log_start_offset: i64,
-    pub recover_point: i64,
+    pub log_start_offset: u64,
+    pub recover_point: AtomicCell<u64>,
 }
 pub enum LogMessage {
     AppendRecords(
@@ -75,29 +83,20 @@ pub enum LogMessage {
         ),
     ),
     FetchRecords,
+    Flush(oneshot::Sender<AppResult<(u64)>>),
 }
-// #[derive(Debug)]
-// pub struct OffsetMetadata {
-//     pub message_offset: i64,
-//     pub seg_base_offset: i64,
-//     pub seg_relative_pos: i32,
-// }
+impl CheckPointFile for LogManager {}
 impl Log for JournalLog {
     ///
     /// 1. validate memory records
     /// 2. assign offset to records
     /// 2. may be rolled the segment file
     /// 3. append to active segment file
+    /// 注意：这里的records(TopicPartition, MemoryRecords)是queue log的topicPartition
     async fn append_records(
         &self,
         records: (TopicPartition, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
-        let no_active_segment = || {
-            IllegalStateError(Cow::Owned(format!(
-                "no active segment found in journal log:{}",
-                self.dir.clone(),
-            )))
-        };
         let (topic_partition, mut memory_records) = records;
         // assign offset for the record batch, configure the base offset,
         // set the maximum timestamp, and retain the offset of the maximum timestamp.
@@ -118,34 +117,43 @@ impl Log for JournalLog {
         let max_timestamp = memory_records.get_max_timestamp();
         let max_timestamp_offset = next_offset_value - 1;
 
-        let mut active_seg_size = 0u32;
-        let mut active_base_offset = 0i64;
+        let mut active_seg_size = 0u64;
+        let mut active_base_offset = 0u64;
         {
             // get active segment info
             let segments = self.segments.read().await;
-            let last_seg = segments.iter().next_back().ok_or_else(no_active_segment)?;
-            active_seg_size = last_seg.1.size() as u32;
+            let last_seg = segments
+                .iter()
+                .next_back()
+                .ok_or(self.no_active_segment_error(self.dir.clone()))?;
+            active_seg_size = last_seg.1.size() as u64;
             active_base_offset = *last_seg.0;
             // 使用这个作用域释放读锁
         }
 
         let buffer = memory_records.buffer.as_ref().ok_or(InvalidValue(
             "empty message when append to file",
-            topic_partition.string_id(),
+            topic_partition.id(),
         ))?;
         let msg_len = buffer.remaining();
 
         // check active segment size, if exceed the segment size, roll the segment
-        if active_seg_size + msg_len as u32
-            >= BROKER_CONFIG.get().unwrap().log.journal_segment_size as u32
+        if active_seg_size + msg_len as u64 >= BROKER_CONFIG.get().unwrap().log.journal_segment_size
         {
             // 确定需要滚动日之后，进入新的作用域，获取写锁，准备滚动日志
             let mut segments = self.segments.write().await;
-            let last_seg = segments.iter().next_back().ok_or_else(no_active_segment)?;
+            let (write_active_base, write_active_seg) = segments
+                .iter()
+                .next_back()
+                .ok_or(self.no_active_segment_error(self.dir.clone()))?;
             // check again to make sure other request has not rolled it already
-            if *last_seg.0 == active_base_offset {
+            if *write_active_base == active_base_offset {
                 // other request has not rolled it yet
-                let new_base_offset = active_base_offset + 1;
+                let new_base_offset = write_active_seg.size() as u64;
+                self.recover_point.store(new_base_offset);
+                write_active_seg.flush().await?;
+                write_active_seg.close_write().await;
+                // create new segment file
                 let new_seg =
                     LogSegment::new_queue_seg(self.dir.clone(), new_base_offset, true).await?;
                 segments.insert(new_base_offset, new_seg);
@@ -157,12 +165,10 @@ impl Log for JournalLog {
         }
 
         let segments = self.segments.read().await;
-        let (active_base_offset, active_seg) = segments.iter().next_back().ok_or_else(|| {
-            IllegalStateError(Cow::Owned(format!(
-                "no active segment found in journal log:{}",
-                self.dir.clone(),
-            )))
-        })?;
+        let (_, active_seg) = segments
+            .iter()
+            .next_back()
+            .ok_or(self.no_active_segment_error(self.dir.clone()))?;
         let (tx, rx) = oneshot::channel::<AppResult<()>>();
 
         active_seg
@@ -182,7 +188,7 @@ impl Log for JournalLog {
     /// 加载`dir`下的所有segment文件
     /// journal log没有index文件
     /// queue log有time index和offset index文件
-    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<i64, LogSegment>> {
+    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<u64, LogSegment>> {
         let mut segments = BTreeMap::new();
         info!("load segment files from dir:{}", dir);
 
@@ -213,7 +219,7 @@ impl Log for JournalLog {
                                 continue;
                             }
                             ".log" => {
-                                let base_offset = file_prefix.parse::<i64>();
+                                let base_offset = file_prefix.parse::<u64>();
                                 match base_offset {
                                     Ok(base_offset) => {
                                         let segment = rt.block_on(LogSegment::new_journal_seg(
@@ -245,9 +251,9 @@ impl Log for JournalLog {
 
     async fn new(
         dir: String,
-        mut segments: BTreeMap<i64, LogSegment>,
-        log_start_offset: i64,
-        log_recovery_point: i64,
+        mut segments: BTreeMap<u64, LogSegment>,
+        log_start_offset: u64,
+        log_recovery_point: u64,
     ) -> AppResult<Self> {
         // 如果segments是空的, 默认创建一个
         // 运行时候，创建topic 不管是journal还是queue，都需要在异步运行时内，因为要做同步，在不同运行时内无法做同步
@@ -266,37 +272,53 @@ impl Log for JournalLog {
             dir: dir.clone(),
             segments: RwLock::new(segments),
             log_start_offset,
-            recover_point: log_recovery_point,
+            recover_point: AtomicCell::new(log_recovery_point),
             next_offset_info: DashMap::new(),
         })
     }
+
+    async fn flush(&self) -> AppResult<()> {
+        let segments = self.segments.read().await;
+        let (_, active_seg) = segments.iter().next_back().ok_or_else(|| {
+            IllegalStateError(Cow::Owned(format!(
+                "no active segment found in journal log:{}",
+                self.dir.clone(),
+            )))
+        })?;
+        let size = active_seg.flush().await?;
+        self.recover_point.store(size);
+        Ok(())
+    }
 }
+
 impl Log for QueueLog {
     async fn append_records(
         &self,
         records: (TopicPartition, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
         let (topic_partition, memory_records) = records;
-        let mut active_seg_size = 0u32;
-        let mut active_base_offset = 0i64;
+        let mut active_seg_size = 0u64;
+        let mut active_base_offset = 0u64;
         {
             // get active segment info
             let segments = self.segments.read().await;
-            let last_seg = segments.iter().next_back().unwrap();
-            active_seg_size = last_seg.1.size() as u32;
+            let last_seg = segments
+                .iter()
+                .next_back()
+                .ok_or(self.no_active_segment_error(self.dir.clone()))?;
+            active_seg_size = last_seg.1.size() as u64;
             active_base_offset = *last_seg.0;
             // 使用这个作用域释放读锁
         }
 
         let buffer = memory_records.buffer.as_ref().ok_or(InvalidValue(
             "empty message when append to file",
-            topic_partition.string_id(),
+            topic_partition.id(),
         ))?;
         let msg_len = buffer.remaining();
 
         // check active segment size, if exceed the segment size, roll the segment
-        if active_seg_size + msg_len as u32
-            >= BROKER_CONFIG.get().unwrap().log.journal_segment_size as u32
+        if active_seg_size + msg_len as u64 >= BROKER_CONFIG.get().unwrap().log.journal_segment_size
         {
             // 确定需要滚动日之后，进入新的作用域，获取写锁，准备滚动日志
             // check again to make sure other request has rolled it already
@@ -304,10 +326,11 @@ impl Log for QueueLog {
             let last_seg = segments.iter().next_back().unwrap();
             if *last_seg.0 == active_base_offset {
                 // other request has not rolled it yet
-                let new_base_offset = active_base_offset + 1;
+                let new_base_offset = last_seg.1.size() as u64;
                 let new_seg =
                     LogSegment::new_queue_seg(self.dir.clone(), new_base_offset, true).await?;
                 // close old segment write, release its pipe resource
+                last_seg.1.flush().await?;
                 last_seg.1.close_write().await;
                 segments.insert(new_base_offset, new_seg);
             }
@@ -322,14 +345,14 @@ impl Log for QueueLog {
             .await?;
         rx.await??;
         Ok(LogAppendInfo {
-            base_offset: *active_base_offset,
+            base_offset: *active_base_offset as i64,
             log_append_time: 0,
         })
     }
     /// 加载`dir`下的所有segment文件
     /// journal log没有index文件
     /// queue log有time index和offset index文件
-    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<i64, LogSegment>> {
+    fn load_segments(dir: &str, rt: &Runtime) -> AppResult<BTreeMap<u64, LogSegment>> {
         let mut segments = BTreeMap::new();
         info!("load segment files from dir:{}", dir);
 
@@ -354,7 +377,7 @@ impl Log for QueueLog {
                             ".timeindex" => {}
                             ".index" => {}
                             ".log" => {
-                                let base_offset = file_prefix.parse::<i64>();
+                                let base_offset = file_prefix.parse::<u64>();
                                 match base_offset {
                                     Ok(base_offset) => {
                                         let segment = rt.block_on(LogSegment::new_queue_seg(
@@ -385,9 +408,9 @@ impl Log for QueueLog {
 
     async fn new(
         dir: String,
-        mut segments: BTreeMap<i64, LogSegment>,
-        log_start_offset: i64,
-        log_recovery_point: i64,
+        mut segments: BTreeMap<u64, LogSegment>,
+        log_start_offset: u64,
+        log_recovery_point: u64,
     ) -> AppResult<Self> {
         // 如果segments是空的, 默认创建一个
         // 运行时候，创建topic 不管是journal还是queue，都需要在异步运行时内，因为要做同步，在不同运行时内无法做同步
@@ -410,6 +433,10 @@ impl Log for QueueLog {
             recover_point: log_recovery_point,
         })
     }
+
+    async fn flush(&self) -> AppResult<()> {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -417,6 +444,8 @@ pub struct FileRecords {
     tx: Sender<LogMessage>,
     size: Arc<AtomicCell<usize>>,
 }
+
+const JOURNAL_CHECK_POINT_FILE_NAME: &str = ".journal_recovery_checkpoints";
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
 /// 来保护。
@@ -433,7 +462,7 @@ pub struct LogManager {
 pub struct LogSegment {
     log_dir: String,
     log: FileRecords,
-    base_offset: i64,
+    base_offset: u64,
     time_index: Option<TimeIndex>,
     offset_index: Option<OffsetIndex>,
     index_interval_bytes: i32,
@@ -471,18 +500,38 @@ impl FileRecords {
             let writer = &mut buf_writer;
             let total_size = size.clone();
             while let Some(message) = rx.recv().await {
-                if let LogMessage::AppendRecords((topic_partition, records, resp_tx)) = message {
-                    match Self::append(writer, (topic_partition, records)).await {
-                        Ok(size) => {
-                            trace!("{} file append finished .", &file_name);
-                            total_size.fetch_add(size);
-                            resp_tx.send(Ok(())).unwrap();
-                        }
-                        Err(error) => {
-                            error!("append record error:{:?}", error);
-                            let _ = resp_tx.send(Err(error));
+                match message {
+                    LogMessage::AppendRecords((topic_partition, records, resp_tx)) => {
+                        match Self::append(writer, (topic_partition, records)).await {
+                            Ok(size) => {
+                                trace!("{} file append finished .", &file_name);
+                                total_size.fetch_add(size);
+                                resp_tx.send(Ok(())).unwrap_or_else(|_| {
+                                    error!("send success  response error");
+                                });
+                            }
+                            Err(error) => {
+                                error!("append record error:{:?}", error);
+                                resp_tx.send(Err(error)).unwrap_or_else(|_| {
+                                    error!("send error response error");
+                                });
+                            }
                         }
                     }
+                    LogMessage::Flush(sender) => match writer.get_ref().sync_all().await {
+                        Ok(_) => {
+                            sender
+                                .send(Ok(total_size.load() as u64))
+                                .unwrap_or_else(|_| {
+                                    error!("send flush success response error");
+                                });
+                            trace!("{} file flush finished .", &file_name);
+                        }
+                        Err(error) => {
+                            error!("flush file error:{:?}", error);
+                        }
+                    },
+                    LogMessage::FetchRecords => {}
                 }
             }
             trace!("{} file records append thread exit", &file_name)
@@ -497,7 +546,7 @@ impl FileRecords {
         records: (TopicPartition, MemoryRecords),
     ) -> AppResult<usize> {
         trace!("append log to file ..");
-        let topic_partition_id = records.0.string_id();
+        let topic_partition_id = records.0.id();
         let mut total_write = 0;
         buf_writer
             .write_u32(topic_partition_id.len() as u32)
@@ -568,7 +617,7 @@ impl LogManager {
             if dir.metadata()?.file_type().is_dir() {
                 let log = LogManager::load_log(dir.path().to_string_lossy().as_ref(), rt)?;
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
-                trace!("found log:{:}", &tp.string_id());
+                trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
             } else {
                 warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
@@ -592,10 +641,9 @@ impl LogManager {
         ))?;
         Ok(log)
     }
-    pub fn get_or_create_journal_log(
-        &mut self,
+    pub async fn get_or_create_journal_log(
+        &self,
         topic_partition: &TopicPartition,
-        rt: &Runtime,
     ) -> AppResult<Arc<JournalLog>> {
         let log = self.journal_logs.entry(topic_partition.clone());
         match log {
@@ -603,26 +651,22 @@ impl LogManager {
             Entry::Vacant(vacant) => {
                 warn!(
                     "journal log for topic-partition:{} not found",
-                    topic_partition.string_id()
+                    topic_partition.id()
                 );
                 let journal_log_path = format!(
                     "{}/{}",
                     BROKER_CONFIG.get().unwrap().log.journal_base_dir,
-                    topic_partition.string_id()
+                    topic_partition.id()
                 );
-                let log = Arc::new(rt.block_on(JournalLog::new(
-                    journal_log_path,
-                    BTreeMap::new(),
-                    0,
-                    0,
-                ))?);
+                let journal_log = JournalLog::new(journal_log_path, BTreeMap::new(), 0, 0).await?;
+                let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
             }
         }
     }
     pub fn get_or_create_queue_log(
-        &mut self,
+        &self,
         topic_partition: &TopicPartition,
         rt: &Runtime,
     ) -> AppResult<Arc<QueueLog>> {
@@ -633,7 +677,7 @@ impl LogManager {
                 let queue_log_path = format!(
                     "{}/{}",
                     BROKER_CONFIG.get().unwrap().log.queue_base_dir,
-                    topic_partition.string_id()
+                    topic_partition.id()
                 );
                 let log =
                     Arc::new(rt.block_on(QueueLog::new(queue_log_path, BTreeMap::new(), 0, 0))?);
@@ -642,13 +686,51 @@ impl LogManager {
             }
         }
     }
+    async fn recovery_checkpoint_task(&self, mut interval: Interval) -> AppResult<()> {
+        loop {
+            interval.tick().await;
+            let check_points: HashMap<TopicPartition, u64> = self
+                .journal_logs
+                .iter()
+                .map(|entry| {
+                    let tp = entry.key();
+                    let log = entry.value();
+                    (tp.clone(), log.recover_point.load())
+                })
+                .collect();
+            self.checkpoints(JOURNAL_CHECK_POINT_FILE_NAME, check_points, 0)
+                .await?;
+        }
+    }
+    pub(crate) async fn start_task(self: Arc<Self>) -> AppResult<()> {
+        let recovery_check_interval = BROKER_CONFIG
+            .get()
+            .unwrap()
+            .log
+            .recovery_checkpoint_interval;
+        let interval = tokio::time::interval(Duration::from_secs(recovery_check_interval));
+        tokio::spawn(async move {
+            {
+                let result = self.recovery_checkpoint_task(interval).await;
+                match result {
+                    Ok(_) => {
+                        debug!("journal log recovery checkpoint task finished");
+                    }
+                    Err(error) => {
+                        error!("recovery checkpoint task error:{:?}", error);
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
 }
 
 impl LogSegment {
     pub fn size(&self) -> usize {
         self.log.size()
     }
-    pub async fn new_journal_seg(dir: String, base_offset: i64, create: bool) -> AppResult<Self> {
+    pub async fn new_journal_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
         let file_name = format!("{}/{}.log", dir, base_offset);
         trace!("new segment file:{}", file_name);
         if create {
@@ -668,7 +750,7 @@ impl LogSegment {
         };
         Ok(segment)
     }
-    pub async fn new_queue_seg(dir: String, base_offset: i64, create: bool) -> AppResult<Self> {
+    pub async fn new_queue_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
         let file_name = format!("{}/{}.log", dir, base_offset);
         if create {
             trace!("create queue segment file:{}", file_name);
@@ -697,5 +779,11 @@ impl LogSegment {
     }
     pub(crate) async fn close_write(&self) {
         self.log.close_write().await;
+    }
+    pub(crate) async fn flush(&self) -> AppResult<(u64)> {
+        let (tx, rx) = oneshot::channel::<AppResult<(u64)>>();
+        self.log.tx.send(LogMessage::Flush(tx)).await?;
+        let size = rx.await??;
+        Ok(size)
     }
 }

@@ -279,7 +279,7 @@ impl PrimaryType for Bool {
         }
     }
 
-    async fn write_to<W>(mut self, writer: &mut W) -> AppResult<()>
+    async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
     where
         W: AsyncWriteExt + Unpin,
     {

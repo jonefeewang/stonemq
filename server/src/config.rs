@@ -101,6 +101,7 @@ pub struct LogConfig {
     pub queue_segment_size: u64,
     pub queue_base_dir: String,
     pub kv_store_path: String,
+    pub recovery_checkpoint_interval: u64,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
