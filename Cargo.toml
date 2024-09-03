@@ -1,14 +1,8 @@
-[workspace]
-members = [
-    "server",
-    "common",
-]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "stonemq"
 version = "0.1.0"
-rust-version = "1.73.0"
 edition = "2021"
+rust-version = "1.73.0"
 repository = "https://github.com/jonefeewang/stonemq"
 authors = ["jonefeewang<jonefeewang@gmail.com>"]
 description = "A high performance and efficient message queue written in Rust."
@@ -16,3 +10,43 @@ keywords = ["kafka", "pulsar"]
 categories = ["network-programming"]
 license = "Apache-2.0"
 
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+#
+[dependencies]
+tokio = { version = "1.33", features = ["rt", "time", "net", "io-util","fs", "macros", "signal", "rt-multi-thread", "tracing"] }
+console-subscriber = "0.2.0"
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+bytes = { version = "1", features = ["serde"] }
+slab = "0.4.9"
+thiserror = "1.0.49"
+tokio-util = { version = "0.7", features = ["codec"] }
+futures-util = { version = "0.3.28" }
+# concurrency lib
+dashmap = "5.5.3"
+crossbeam-utils= "0.8.5"
+
+config = "0.13"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+metrics = "0.21.1"
+metrics-exporter-prometheus = "0.12.1"
+clap = { version = "4.4", features = ["derive"] }
+axum = "0.6.20"
+rand = "0.8.5"
+getset = "0.1.2"
+derive_builder = "0.20.0"
+integer-encoding = "4.0.0"
+crc32c = "0.6.5"
+once_cell = "1.19.0"
+# compression lib
+flate2 = "1.0"
+lz4 = "1.23"
+snap = "1.0.0"
+log = "0.4.20"
+memmap2 = "0.9.4"
+
+[dev-dependencies]
+fake = "2.9.2"
+tempfile = "3"
