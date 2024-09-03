@@ -18,10 +18,16 @@ max_package_size = 10_048_576
 # default segment size 10M
 journal_segment_size=1_048_576
 journal_base_dir="test_data/journal"
+# default index file size 10M
+journal_index_file_size=10_048_576
+journal_index_interval_bytes=4096
 ###### queue config
 # default segment size 10M
 queue_segment_size = 1_048_576
 queue_base_dir= "test_data/queue"
+# default index file size 10M
+queue_index_file_size=10_048_576
+queue_index_interval_bytes=4096
 ###### kv config
 kv_store_path = "test_data/kv_store/kv.db"
 ###### recovery config

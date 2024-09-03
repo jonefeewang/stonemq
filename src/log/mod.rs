@@ -20,10 +20,6 @@ use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 use crate::message::{TopicPartition,MemoryRecords,LogAppendInfo};
 
-#[derive(Debug)]
-struct TimeIndex {}
-#[derive(Debug)]
-struct OffsetIndex {}
 
 pub trait Log: Debug {
     async fn append_records(

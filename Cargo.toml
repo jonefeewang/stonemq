@@ -50,3 +50,4 @@ memmap2 = "0.9.4"
 [dev-dependencies]
 fake = "2.9.2"
 tempfile = "3"
+rstest = "0.22.0"

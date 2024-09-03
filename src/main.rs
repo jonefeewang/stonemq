@@ -4,6 +4,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
+use stonemq::service::setup_tracing;
 
 #[derive(Parser)]
 #[command(version)]
@@ -26,15 +27,7 @@ pub enum Command {
 fn main() -> AppResult<()> {
     //setup tracing
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
-    let subscriber = tracing_subscriber::fmt()
-        .with_timer(timer)
-        .with_max_level(tracing::Level::TRACE) // 设置最大日志级别
-        .with_target(true) // 是否显示日志目标
-        .with_thread_names(true) // 是否显示线程名称
-        .with_thread_ids(true) // 是否显示线程ID
-        .with_line_number(true)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    setup_tracing()?;
 
     //setup config
     let commandline: CommandLine = CommandLine::parse();

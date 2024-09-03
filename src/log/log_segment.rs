@@ -1,19 +1,21 @@
 use crate::log::file_records::FileRecords;
-use crate::log::{FileOp, OffsetIndex, TimeIndex};
+use crate::log::{FileOp};
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
-use crate::AppResult;
+use crate::{global_config, AppResult};
 use tokio::sync::oneshot;
 use tracing::trace;
+use crate::AppError::IllegalStateError;
+use crate::log::index_file::IndexFile;
 
 #[derive(Debug)]
 pub struct LogSegment {
     log_dir: String,
     file_records: FileRecords,
     base_offset: u64,
-    time_index: Option<TimeIndex>,
-    offset_index: Option<OffsetIndex>,
-    index_interval_bytes: i32,
+    time_index: Option<IndexFile>,
+    offset_index: Option<IndexFile>,
+    bytes_since_last_index_entry: usize,
 }
 
 impl LogSegment {
@@ -22,6 +24,8 @@ impl LogSegment {
     }
     pub async fn new_journal_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
         let file_name = format!("{}/{}.log", dir, base_offset);
+        let index_file_name = format!("{}/{}.index", dir, base_offset);
+        let index_file_size=global_config().log.journal_index_file_size;
         trace!("new segment file:{}", file_name);
         if create {
             trace!(
@@ -35,8 +39,8 @@ impl LogSegment {
             file_records,
             base_offset,
             time_index: None,
-            offset_index: None,
-            index_interval_bytes: 0,
+            offset_index: Some(IndexFile::new(index_file_name, index_file_size).await?),
+            bytes_since_last_index_entry: 0,
         };
         Ok(segment)
     }
@@ -52,21 +56,26 @@ impl LogSegment {
             base_offset,
             time_index: None,
             offset_index: None,
-            index_interval_bytes: 0,
+            bytes_since_last_index_entry: 0,
         };
         Ok(segment)
     }
     pub async fn append_record(
         &self,
-        records: (
+        records_package: (
             TopicPartition,
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
+        let records_size = records_package.1.size();
+        self.bytes_since_last_index_entry += records_size;
+
+
+
         self.file_records
             .tx
-            .send(FileOp::AppendRecords(records))
+            .send(FileOp::AppendRecords(records_package))
             .await?;
         Ok(())
     }

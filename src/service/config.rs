@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
-
+use tracing_subscriber::fmt::time::ChronoLocal;
 use crate::log::FileOp;
 use crate::AppError::InvalidValue;
 
@@ -22,6 +22,19 @@ pub fn global_config() -> &'static BrokerConfig {
     GLOBAL_CONFIG.get().unwrap()
 }
 
+pub fn setup_tracing()->AppResult<()>{
+    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
+    let subscriber = tracing_subscriber::fmt()
+        .with_timer(timer)
+        .with_max_level(tracing::Level::TRACE) // 设置最大日志级别
+        .with_target(true) // 是否显示日志目标
+        .with_thread_names(true) // 是否显示线程名称
+        .with_thread_ids(true) // 是否显示线程ID
+        .with_line_number(true)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+    Ok(())
+}
 pub static GLOBAL_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
@@ -97,16 +110,32 @@ pub struct NetworkConfig {
     pub max_connection: usize,
     pub max_package_size: usize,
 }
+/// Represents the configuration for a log.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LogConfig {
-    pub journal_segment_size: u64,
+    /// The base directory for the journal.
     pub journal_base_dir: String,
-    pub queue_segment_size: u64,
+    /// The size of each journal segment.
+    pub journal_segment_size: u64,
+    /// The size of the journal index file.
+    pub journal_index_file_size: usize,
+    /// The interval at which journal index entries are written.
+    pub journal_index_interval_bytes: usize,
+
+    /// The base directory for the queue.
     pub queue_base_dir: String,
+    /// The size of each queue segment.
+    pub queue_segment_size: u64,
+    /// The size of the queue index file.
+    pub queue_index_file_size: usize,
+    /// The interval at which queue index entries are written.
+    pub queue_index_interval_bytes: usize,
+
+    /// The path to the key-value store.
     pub kv_store_path: String,
+    /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
 }
-
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
     pub general: GeneralConfig,
