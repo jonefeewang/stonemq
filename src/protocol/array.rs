@@ -134,20 +134,20 @@ impl ArrayType {
             Some(values) => {
                 for value in values {
                     total_size += match value {
-                        DataType::Bool(bool) => bool.size(),
-                        DataType::I8(i8) => i8.size(),
-                        DataType::I16(i16) => i16.size(),
-                        DataType::I32(i32) => i32.size(),
-                        DataType::U32(u32) => u32.size(),
-                        DataType::I64(i64) => i64.size(),
-                        DataType::PString(string) => string.size(),
-                        DataType::NPString(npstring) => npstring.size(),
-                        DataType::PBytes(bytes) => bytes.size(),
-                        DataType::NPBytes(npbytes) => npbytes.size(),
-                        DataType::PVarInt(pvarint) => pvarint.size(),
-                        DataType::PVarLong(pvarlong) => pvarlong.size(),
+                        DataType::Bool(bool) => bool.wire_format_size(),
+                        DataType::I8(i8) => i8.wire_format_size(),
+                        DataType::I16(i16) => i16.wire_format_size(),
+                        DataType::I32(i32) => i32.wire_format_size(),
+                        DataType::U32(u32) => u32.wire_format_size(),
+                        DataType::I64(i64) => i64.wire_format_size(),
+                        DataType::PString(string) => string.wire_format_size(),
+                        DataType::NPString(npstring) => npstring.wire_format_size(),
+                        DataType::PBytes(bytes) => bytes.wire_format_size(),
+                        DataType::NPBytes(npbytes) => npbytes.wire_format_size(),
+                        DataType::PVarInt(pvarint) => pvarint.wire_format_size(),
+                        DataType::PVarLong(pvarlong) => pvarlong.wire_format_size(),
                         DataType::Array(array) => array.size()?,
-                        DataType::Records(records) => records.size(),
+                        DataType::Records(records) => records.wire_format_size(),
                         //should never happen
                         DataType::Schema(_) => {
                             //array of schema should not be here

@@ -47,7 +47,7 @@ macro_rules! implement_primary_type {
                 writer.$write_method(self.value).await?;
                 Ok(())
             }
-            fn size(&self) -> usize {
+            fn wire_format_size(&self) -> usize {
                 $size
             }
         }
@@ -81,7 +81,7 @@ macro_rules! implement_var_type {
                 Ok(())
             }
 
-            fn size(&self) -> usize {
+            fn wire_format_size(&self) -> usize {
                 $required_space(self.value)
             }
         }
@@ -105,7 +105,7 @@ pub trait PrimaryType {
     async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
     where
         W: AsyncWriteExt + Unpin;
-    fn size(&self) -> usize;
+    fn wire_format_size(&self) -> usize;
 }
 
 define_type!(Bool, bool);
@@ -167,7 +167,7 @@ impl PrimaryType for PBytes {
         Ok(())
     }
 
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         4 + self.value.remaining()
     }
 }
@@ -196,7 +196,7 @@ impl PrimaryType for NPBytes {
         }
         Ok(())
     }
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         if let Some(value) = &self.value {
             4 + value.remaining()
         } else {
@@ -229,7 +229,7 @@ impl PrimaryType for PString {
         writer.write_all(self.value.as_bytes()).await?;
         Ok(())
     }
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         2 + self.value.len()
     }
 }
@@ -260,7 +260,7 @@ impl PrimaryType for NPString {
         }
         Ok(())
     }
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         if let Some(value) = &self.value {
             2 + value.len()
         } else {
@@ -288,7 +288,7 @@ impl PrimaryType for Bool {
         Ok(())
     }
 
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         1
     }
 }

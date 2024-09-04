@@ -1,12 +1,13 @@
 use crate::log::file_records::FileRecords;
-use crate::log::{FileOp};
+use crate::log::index_file::IndexFile;
+use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
+use crate::AppError::IllegalStateError;
 use crate::{global_config, AppResult};
+use crossbeam_utils::atomic::AtomicCell;
 use tokio::sync::oneshot;
 use tracing::trace;
-use crate::AppError::IllegalStateError;
-use crate::log::index_file::IndexFile;
 
 #[derive(Debug)]
 pub struct LogSegment {
@@ -15,7 +16,7 @@ pub struct LogSegment {
     base_offset: u64,
     time_index: Option<IndexFile>,
     offset_index: Option<IndexFile>,
-    bytes_since_last_index_entry: usize,
+    bytes_since_last_index_entry: AtomicCell<usize>,
 }
 
 impl LogSegment {
@@ -25,7 +26,7 @@ impl LogSegment {
     pub async fn new_journal_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
         let file_name = format!("{}/{}.log", dir, base_offset);
         let index_file_name = format!("{}/{}.index", dir, base_offset);
-        let index_file_size=global_config().log.journal_index_file_size;
+        let index_file_size = global_config().log.journal_index_file_size;
         trace!("new segment file:{}", file_name);
         if create {
             trace!(
@@ -39,8 +40,8 @@ impl LogSegment {
             file_records,
             base_offset,
             time_index: None,
-            offset_index: Some(IndexFile::new(index_file_name, index_file_size).await?),
-            bytes_since_last_index_entry: 0,
+            offset_index: Some(IndexFile::new(index_file_name, index_file_size, true).await?),
+            bytes_since_last_index_entry: AtomicCell::new(0),
         };
         Ok(segment)
     }
@@ -56,7 +57,7 @@ impl LogSegment {
             base_offset,
             time_index: None,
             offset_index: None,
-            bytes_since_last_index_entry: 0,
+            bytes_since_last_index_entry: AtomicCell::new(0),
         };
         Ok(segment)
     }
@@ -69,8 +70,20 @@ impl LogSegment {
         ),
     ) -> AppResult<()> {
         let records_size = records_package.1.size();
-        self.bytes_since_last_index_entry += records_size;
-
+        self.bytes_since_last_index_entry.fetch_add(records_size);
+        // if self.bytes_since_last_index_entry >= global_config().log.index_interval_bytes {
+        //     self.bytes_since_last_index_entry = 0;
+        //     self.time_index.as_mut().unwrap().add_entry(
+        //         self.base_offset,
+        //         self.file_records.file.metadata().await?.len() as u32,
+        //     );
+        // }
+        // if self.offset_index.is_some() {
+        //     self.offset_index.as_mut().unwrap().add_entry(
+        //         self.base_offset,
+        //         self.file_records.file.metadata().await?.len() as u32,
+        //     );
+        // }
 
 
         self.file_records

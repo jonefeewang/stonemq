@@ -26,7 +26,7 @@ impl PrimaryType for MemoryRecords {
         n_pbytes.write_to(writer).await
     }
 
-    fn size(&self) -> usize {
+    fn wire_format_size(&self) -> usize {
         match &self.buffer {
             None => 4,
             Some(buffer) => 4 + buffer.remaining(),

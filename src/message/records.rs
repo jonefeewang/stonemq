@@ -226,7 +226,7 @@ impl MemoryRecords {
         Ok(())
     }
 
-    pub fn  content_size(&self)->usize{
+    pub fn size(&self) ->usize{
         self.buffer.as_ref().map(|buf| buf.len()).unwrap_or(0)
     }
 
