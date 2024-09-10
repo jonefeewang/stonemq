@@ -39,6 +39,7 @@ impl<T: Log> Partition<T> {
         queue_topic_partition: TopicPartition,
     ) -> AppResult<LogAppendInfo> {
         let local_replica_id = &global_config().general.id;
+
         let replica = self
             .assigned_replicas
             .get(local_replica_id)
@@ -59,12 +60,17 @@ pub struct TopicPartition {
     pub topic: String,
     pub partition: i32,
 }
+
+
 impl Display for TopicPartition {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}-{}", self.topic, self.partition)
     }
 }
 impl TopicPartition {
+    pub fn new(topic: String, partition: i32) -> Self {
+        TopicPartition { topic, partition }
+    }
     pub fn id(&self) -> String {
         format!("{}-{}", self.topic, self.partition)
     }

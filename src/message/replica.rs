@@ -9,11 +9,11 @@ use tokio::sync::RwLock;
 use tracing::{info, trace};
 
 use crate::log::JournalLog;
-use crate::log::QueueLog;
 use crate::log::Log;
+use crate::log::QueueLog;
+use crate::message::{LogAppendInfo, Partition, TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
-use crate::message::{LogAppendInfo, Partition, TopicData, TopicPartition};
 use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
 use crate::{global_config, AppError, AppResult, KvStore, LogManager};
@@ -138,7 +138,7 @@ impl ReplicaManager {
             .get(QUEUE_TOPICS_LIST)
             .ok_or(InvalidValue("queue_topics_list", String::new()))?;
         let tp_strs: Vec<&str> = queue_tps.split(',').collect();
-        let mut partitions = rt.block_on(self.create_queue_partitions(broker_id, tp_strs, rt))?;
+        let mut partitions = self.create_queue_partitions(broker_id, tp_strs, rt)?;
         self.all_queue_partitions.extend(partitions.drain(..));
         info!(
             "load queue partitions: {:?}",
@@ -205,7 +205,7 @@ impl ReplicaManager {
         }
         Ok(partitions)
     }
-    async fn create_queue_partitions(
+    fn create_queue_partitions(
         &self,
         broker_id: i32,
         tp_strs: Vec<&str>,
@@ -276,11 +276,5 @@ impl ReplicaManager {
                     .collect()
             }
         }
-    }
-    pub async fn shutting_down(&self) -> AppResult<()> {
-        // send shutdown signal to all journal logs and queue logs
-
-        // make new checkpoint
-        todo!()
     }
 }

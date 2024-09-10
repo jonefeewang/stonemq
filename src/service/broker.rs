@@ -1,14 +1,14 @@
-use crate::DynamicConfig;
+use crate::service::Server;
 use crate::AppError::IllegalStateError;
+use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
 use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::{runtime, signal};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
-use tracing::{error, info};
-use crate::service::Server;
+use tokio::{runtime, signal};
+use tracing::{error, info, trace};
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -68,16 +68,19 @@ impl Broker {
         rt.block_on(Self::run_tcp_server(
             replica_manager.clone(),
             dynamic_config,
-            notify_shutdown,
+            notify_shutdown.clone(),
             shutdown_complete_tx,
             &mut shutdown_complete_rx,
         ))?;
 
-        // tcp server has been shutdown, drop log manager and replica manager to trigger their shutdown procedure
+        // tcp server has been shutdown, send shutdown signal
+        notify_shutdown.send(())?;
         drop(log_manager);
         drop(replica_manager);
         // wait for shutdown complete
+        trace!("waiting for shutdown complete...");
         rt.block_on(shutdown_complete_rx.recv());
+        info!("broker shutdown complete");
         Ok(())
     }
 
@@ -100,17 +103,17 @@ impl Broker {
             error!(error_msg);
             return Err(IllegalStateError(Cow::Owned(error_msg)));
         }
-        info!("Binding to {} for listening", &listen_address);
+        info!("tcp server binding to {} for listening", &listen_address);
         let max_connection = {
             let lock = dynamic_config.read().await;
             lock.max_connection()
         };
-        let mut server = Server::new (
-             bind_result?,
-             Arc::new(Semaphore::new(max_connection)),
+        let mut server = Server::new(
+            bind_result?,
+            Arc::new(Semaphore::new(max_connection)),
             notify_shutdown,
             shutdown_complete_tx,
-             replica_manager.clone(),
+            replica_manager.clone(),
             dynamic_config.clone(),
         );
         tokio::select! {
@@ -120,7 +123,7 @@ impl Broker {
               }
           }
           _ = signal::ctrl_c() => {
-              info!("shutting down");
+              info!("get shutdown signal");
           }
         }
 

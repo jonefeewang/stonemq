@@ -8,8 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 
-use crate::{global_config, AppResult};
 use crate::AppError::RequestError;
+use crate::{global_config, AppResult};
 
 // constants related to records
 const OFFSET_OFFSET: usize = 0;
@@ -108,38 +108,42 @@ impl MemoryRecords {
             buffer: Some(buffer),
         }
     }
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         MemoryRecords { buffer: None }
     }
-    pub(crate) fn records_count(&self) -> i32 {
+    pub fn records_count(&self) -> i32 {
+        self.get_field(RECORDS_COUNT_OFFSET, |c| c.get_i32(), 0)
+    }
+
+    pub fn max_timestamp(&self) -> i64 {
+        self.get_field(MAX_TIMESTAMP_OFFSET, |c| c.get_i64(), 0)
+    }
+
+    pub fn base_offset(&self) -> i64 {
+        self.get_field(BASE_OFFSET_OFFSET, |c| c.get_i64(), 0)
+    }
+
+    fn get_field<T>(&self, offset: i32, getter: impl Fn(&mut Cursor<&[u8]>) -> T, default: T) -> T {
         if let Some(ref buffer) = &self.buffer {
             let mut cursor = Cursor::new(buffer.as_ref());
-            cursor.set_position(RECORDS_COUNT_OFFSET as u64);
-            cursor.get_i32()
+            cursor.set_position(offset as u64);
+            getter(&mut cursor)
         } else {
-            0
+            default
         }
     }
-    pub(crate) fn get_max_timestamp(&self) -> i64 {
-        if let Some(ref buffer) = &self.buffer {
-            let mut cursor = Cursor::new(buffer.as_ref());
-            cursor.set_position(MAX_TIMESTAMP_OFFSET as u64);
-            cursor.get_i64()
-        } else {
-            0
-        }
-    }
-    pub(crate) fn set_base_offset(&mut self, base_offset: i64) -> AppResult<()> {
+    pub fn set_base_offset(&mut self, base_offset: i64) -> AppResult<()> {
         if let Some(ref mut buffer) = &mut self.buffer {
             let mut cursor = Cursor::new(buffer.as_mut());
-            cursor.set_position(LAST_OFFSET_DELTA_OFFSET as u64);
-            let last_offset_delta = cursor.get_i32();
-            let base_offset = base_offset - 1 - last_offset_delta as i64;
+            // cursor.set_position(LAST_OFFSET_DELTA_OFFSET as u64);
+            // let last_offset_delta = cursor.get_i32();
+            // let base_offset = base_offset - 1 - last_offset_delta as i64;
             cursor.set_position(BASE_OFFSET_OFFSET as u64);
             cursor.write_all(&base_offset.to_be_bytes())?;
         }
         Ok(())
     }
+
 
     // deserialize and validate the record batches
     // currently only support magic 2, other magic will be treated as invalid and return error
@@ -226,7 +230,7 @@ impl MemoryRecords {
         Ok(())
     }
 
-    pub fn size(&self) ->usize{
+    pub fn size(&self) -> usize {
         self.buffer.as_ref().map(|buf| buf.len()).unwrap_or(0)
     }
 

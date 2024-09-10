@@ -1855,7 +1855,6 @@ dependencies = [
  "futures-util",
  "getset",
  "integer-encoding",
- "log",
  "lz4",
  "memmap2",
  "metrics",

@@ -2,9 +2,9 @@ use clap::Parser;
 
 
 use std::path::PathBuf;
-use tracing_subscriber::fmt::time::ChronoLocal;
-use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
 use stonemq::service::setup_tracing;
+use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
+use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Parser)]
 #[command(version)]
@@ -33,7 +33,7 @@ fn main() -> AppResult<()> {
     let commandline: CommandLine = CommandLine::parse();
     let config_path = commandline.conf.as_ref().map_or_else(
         || {
-            let mut path = PathBuf::from("server");
+            let mut path = PathBuf::from("./");
             path.push("conf.toml");
             path
         },

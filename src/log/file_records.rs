@@ -5,6 +5,7 @@ use crate::AppError::InvalidValue;
 use crate::AppResult;
 use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
@@ -19,43 +20,44 @@ pub struct FileRecords {
 }
 
 impl FileRecords {
-    pub async fn open(file_name: String) -> AppResult<FileRecords> {
-        let write_file = OpenOptions::new()
+    pub async fn open<P: AsRef<Path>>(file_name: P) -> AppResult<Self> {
+        let file = OpenOptions::new()
             .create(true)
-            .truncate(false)
             .write(true)
             .open(&file_name)
             .await?;
+
+        let metadata = file.metadata().await?;
         let (tx, rx) = mpsc::channel(100);
-        let file_records = FileRecords {
+
+        let file_records = Self {
             tx,
-            size: Arc::new(AtomicCell::new(0)),
+            size: Arc::new(AtomicCell::new(metadata.len() as usize)),
         };
-        file_records.start_append_thread(
-            rx,
-            BufWriter::new(write_file),
-            file_records.size.clone(),
-            file_name,
-        );
+
+        let buf_writer = BufWriter::new(file);
+        let file_name = file_name.as_ref().to_string_lossy().into_owned();
+
+        file_records.start_job_task(rx, buf_writer, file_records.size.clone(), file_name);
+
         Ok(file_records)
     }
-    pub fn start_append_thread(
+    pub fn start_job_task(
         &self,
         mut rx: Receiver<FileOp>,
         mut buf_writer: BufWriter<File>,
-        size: Arc<AtomicCell<usize>>,
+        total_size: Arc<AtomicCell<usize>>,
         file_name: String,
     ) {
         tokio::spawn(async move {
             let writer = &mut buf_writer;
-            let total_size = size.clone();
             while let Some(message) = rx.recv().await {
                 match message {
                     FileOp::AppendRecords((topic_partition, records, resp_tx)) => {
                         match Self::append(writer, (topic_partition, records)).await {
-                            Ok(size) => {
+                            Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
-                                total_size.fetch_add(size);
+                                total_size.fetch_add(total_write);
                                 resp_tx.send(Ok(())).unwrap_or_else(|_| {
                                     error!("send success  response error");
                                 });
@@ -87,7 +89,7 @@ impl FileRecords {
             trace!("{} file records append thread exit", &file_name)
         });
     }
-    pub async fn close_write(&self) {
+    pub async fn stop_job_task(&self) {
         self.tx.closed().await;
     }
 

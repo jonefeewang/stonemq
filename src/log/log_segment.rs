@@ -6,16 +6,17 @@ use crate::message::TopicPartition;
 use crate::AppError::IllegalStateError;
 use crate::{global_config, AppResult};
 use crossbeam_utils::atomic::AtomicCell;
+use std::path::PathBuf;
 use tokio::sync::oneshot;
 use tracing::trace;
 
 #[derive(Debug)]
 pub struct LogSegment {
-    log_dir: String,
+    topic_partition: TopicPartition,
     file_records: FileRecords,
     base_offset: u64,
     time_index: Option<IndexFile>,
-    offset_index: Option<IndexFile>,
+    offset_index: IndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
 
@@ -23,40 +24,52 @@ impl LogSegment {
     pub fn size(&self) -> usize {
         self.file_records.size()
     }
-    pub async fn new_journal_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
-        let file_name = format!("{}/{}.log", dir, base_offset);
-        let index_file_name = format!("{}/{}.index", dir, base_offset);
-        let index_file_size = global_config().log.journal_index_file_size;
-        trace!("new segment file:{}", file_name);
-        if create {
-            trace!(
-                "file dose not exist, create one journal segment file:{}",
-                file_name
-            );
-        }
-        let file_records = FileRecords::open(file_name).await?;
-        let segment = LogSegment {
-            log_dir: dir.to_string(),
-            file_records,
-            base_offset,
-            time_index: None,
-            offset_index: Some(IndexFile::new(index_file_name, index_file_size, true).await?),
-            bytes_since_last_index_entry: AtomicCell::new(0),
-        };
-        Ok(segment)
+
+    pub(crate) async fn offset_index_full(&self) -> AppResult<bool> {
+        self.offset_index.is_full().await
     }
-    pub async fn new_queue_seg(dir: String, base_offset: u64, create: bool) -> AppResult<Self> {
-        let file_name = format!("{}/{}.log", dir, base_offset);
+
+    pub async fn new_journal_seg(topic_partition: &TopicPartition, base_offset: u64, create: bool) -> AppResult<Self> {
+        let config = global_config();
+        let partition_dir = PathBuf::from(&config.log.journal_base_dir).join(topic_partition.to_string());
+        let file_name = partition_dir.join(format!("{}.log", base_offset));
+        let index_file_name = partition_dir.join(format!("{}.index", base_offset));
+        let index_file_max_size = config.log.journal_index_file_size;
+
         if create {
-            trace!("create queue segment file:{}", file_name);
+            trace!("Creating new journal segment file: {}", file_name.display());
+        } else {
+            trace!("Opening existing journal segment file: {}", file_name.display());
         }
-        let file_records = FileRecords::open(file_name).await?;
-        let segment = LogSegment {
-            log_dir: dir,
+
+        let file_records = FileRecords::open(&file_name).await?;
+        let offset_index = IndexFile::new(&index_file_name, index_file_max_size, false).await?;
+
+        Ok(Self {
+            topic_partition: topic_partition.clone(),
             file_records,
             base_offset,
             time_index: None,
-            offset_index: None,
+            offset_index,
+            bytes_since_last_index_entry: AtomicCell::new(0),
+        })
+    }
+    pub async fn new_queue_seg(topic_partition: &TopicPartition, base_offset: u64, create: bool) -> AppResult<Self> {
+        let config = &global_config().log;
+        let partition_dir = PathBuf::from(&config.queue_base_dir).join(topic_partition.to_string());
+        let file_name = partition_dir.join(format!("{}.log", base_offset));
+        let index_file_name = partition_dir.join(format!("{}.index", base_offset));
+        let index_file_max_size = config.journal_index_file_size;
+        if create {
+            trace!("create queue segment file:{}", file_name.display());
+        }
+        let file_records = FileRecords::open(file_name).await?;
+        let segment = LogSegment {
+            topic_partition: topic_partition.clone(),
+            file_records,
+            base_offset,
+            time_index: None,
+            offset_index: IndexFile::new(index_file_name, index_file_max_size, false).await?,
             bytes_since_last_index_entry: AtomicCell::new(0),
         };
         Ok(segment)
@@ -69,22 +82,16 @@ impl LogSegment {
             oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
-        let records_size = records_package.1.size();
+        let memory_records = &records_package.1;
+        let records_size = memory_records.size();
         self.bytes_since_last_index_entry.fetch_add(records_size);
-        // if self.bytes_since_last_index_entry >= global_config().log.index_interval_bytes {
-        //     self.bytes_since_last_index_entry = 0;
-        //     self.time_index.as_mut().unwrap().add_entry(
-        //         self.base_offset,
-        //         self.file_records.file.metadata().await?.len() as u32,
-        //     );
-        // }
-        // if self.offset_index.is_some() {
-        //     self.offset_index.as_mut().unwrap().add_entry(
-        //         self.base_offset,
-        //         self.file_records.file.metadata().await?.len() as u32,
-        //     );
-        // }
-
+        if self.bytes_since_last_index_entry.load() >= global_config().log.journal_index_interval_bytes {
+            self.offset_index.add_entry(
+                memory_records.base_offset() as u32,
+                self.file_records.size() as u32,
+            ).await?;
+            self.bytes_since_last_index_entry.store(0);
+        }
 
         self.file_records
             .tx
@@ -92,13 +99,12 @@ impl LogSegment {
             .await?;
         Ok(())
     }
-    pub(crate) async fn close_write(&self) {
-        self.file_records.close_write().await;
-    }
+
     pub(crate) async fn flush(&self) -> AppResult<(u64)> {
         let (tx, rx) = oneshot::channel::<AppResult<(u64)>>();
         self.file_records.tx.send(FileOp::Flush(tx)).await?;
         let size = rx.await??;
+        self.offset_index.trim_to_valid_size().await?;
         Ok(size)
     }
 }

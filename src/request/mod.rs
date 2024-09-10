@@ -5,15 +5,15 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, trace};
 
-use crate::{AppError, AppResult, LogManager};
-use crate::AppError::IllegalStateError;
-use crate::service::Node;
-use crate::ReplicaManager;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
+use crate::network::Connection;
 use crate::protocol::api_schemas::SUPPORTED_API_VERSIONS;
+use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::{MetaDataRequest, MetadataResponse};
 use crate::request::produce::{ProduceRequest, ProduceResponse};
-use crate::network::Connection;
+use crate::service::Node;
+use crate::AppError::IllegalStateError;
+use crate::ReplicaManager;
+use crate::{AppError, AppResult, LogManager};
 
 mod create_topic;
 

@@ -6,23 +6,24 @@ use std::path::Path;
 use std::process::exit;
 use std::string::FromUtf8Error;
 
+use crate::log::FileOp;
+use crate::AppError::InvalidValue;
 use getset::{CopyGetters, Getters};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::broadcast::error::SendError as BroadcastSendError;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
 use tracing_subscriber::fmt::time::ChronoLocal;
-use crate::log::FileOp;
-use crate::AppError::InvalidValue;
 
 pub type AppResult<T> = Result<T, AppError>;
 pub fn global_config() -> &'static BrokerConfig {
     GLOBAL_CONFIG.get().unwrap()
 }
 
-pub fn setup_tracing()->AppResult<()>{
+pub fn setup_tracing() -> AppResult<()> {
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
     let subscriber = tracing_subscriber::fmt()
         .with_timer(timer)
@@ -65,6 +66,7 @@ pub enum AppError {
     #[error("socket channel flag send error")]
     SendLogMsg(#[from] SendError<FileOp>),
     SendToken(#[from] SendError<()>),
+    BroadcastSendToken(#[from] BroadcastSendError<()>),
     #[error("receive error")]
     Recv(#[from] RecvError),
     #[error("Accept error = {0}")]

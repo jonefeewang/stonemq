@@ -8,14 +8,13 @@ use tokio::time::{self, Duration};
 use tokio::{runtime, signal};
 use tracing::{error, info, instrument, trace};
 
-use crate::DynamicConfig;
-use crate::service::BrokerConfig;
+use crate::network::Connection;
 use crate::request::{ApiRequest, RequestContext, RequestProcessor};
+use crate::service::BrokerConfig;
 use crate::AppError::IllegalStateError;
+use crate::DynamicConfig;
 use crate::LogManager;
 use crate::{AppResult, ReplicaManager, Shutdown};
-use crate::network::Connection;
-
 
 
 struct ConnectionHandler {
@@ -36,14 +35,13 @@ pub struct Server {
 }
 
 impl Server {
-    pub  fn new(
+    pub fn new(
         listener: TcpListener,
         limit_connections: Arc<Semaphore>,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
-        dynamic_config: Arc<RwLock<DynamicConfig>>    ) -> Self {
-
+        dynamic_config: Arc<RwLock<DynamicConfig>>) -> Self {
         Server {
             listener,
             limit_connections,
@@ -54,8 +52,8 @@ impl Server {
         }
     }
 
-     pub async fn run(&mut self) -> AppResult<()> {
-        info!("accepting inbound connections");
+    pub async fn run(&mut self) -> AppResult<()> {
+        info!("tcp server accepting inbound connections");
         loop {
             let permit = self
                 .limit_connections
