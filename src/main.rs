@@ -4,7 +4,6 @@ use clap::Parser;
 use std::path::PathBuf;
 use stonemq::service::setup_tracing;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
-use tracing_subscriber::fmt::time::ChronoLocal;
 
 #[derive(Parser)]
 #[command(version)]
@@ -26,7 +25,6 @@ pub enum Command {
 
 fn main() -> AppResult<()> {
     //setup tracing
-    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
     setup_tracing()?;
 
     //setup config

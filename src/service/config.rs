@@ -57,6 +57,8 @@ pub enum AppError {
     ParseError(#[from] std::num::ParseIntError),
     #[error("invalid provided {0} value = {1}")]
     InvalidValue(&'static str, String),
+    #[error("{0}")]
+    CommonError(String),
     FormatError(#[from] serde_json::Error),
     Incomplete,
     #[error("I/O {0}")]
@@ -137,6 +139,11 @@ pub struct LogConfig {
     pub kv_store_path: String,
     /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
+    /// the size of the file records communication channel size
+    pub fr_read_chnl_size: usize,
+    pub fr_write_chnl_size: usize,
+    //
+    pub splitter_read_buffer_size: u32,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {

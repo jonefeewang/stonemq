@@ -3,7 +3,7 @@ use crate::log::index_file::IndexFile;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
-use crate::AppError::IllegalStateError;
+use crate::AppError::CommonError;
 use crate::{global_config, AppResult};
 use crossbeam_utils::atomic::AtomicCell;
 use std::path::PathBuf;
@@ -20,9 +20,30 @@ pub struct LogSegment {
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
 
+pub struct PositionInfo {
+    pub base_offset: u64,
+    pub offset: u64,
+    pub position: u32,
+}
+
 impl LogSegment {
+    pub async fn get_position(&self, offset: u64) -> AppResult<PositionInfo> {
+        let offset_position = self.offset_index
+            .lookup((offset - self.base_offset) as u32).await
+            .ok_or(CommonError(format!("can not find offset:{} in index file: {}"
+                                       , offset, self.base_offset)))?;
+        let pos_info = PositionInfo {
+            base_offset: self.base_offset,
+            offset: offset_position.0 as u64 + self.base_offset,
+            position: offset_position.1,
+        };
+        Ok(pos_info)
+    }
     pub fn size(&self) -> usize {
         self.file_records.size()
+    }
+    pub fn base_offset(&self) -> u64 {
+        self.base_offset
     }
 
     pub(crate) async fn offset_index_full(&self) -> AppResult<bool> {
@@ -82,6 +103,7 @@ impl LogSegment {
             oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
+        // 计算是否更新index file
         let memory_records = &records_package.1;
         let records_size = memory_records.size();
         self.bytes_since_last_index_entry.fetch_add(records_size);
@@ -92,7 +114,7 @@ impl LogSegment {
             ).await?;
             self.bytes_since_last_index_entry.store(0);
         }
-
+        // 写入消息
         self.file_records
             .tx
             .send(FileOp::AppendRecords(records_package))

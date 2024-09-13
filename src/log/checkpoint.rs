@@ -4,8 +4,8 @@ use crate::AppResult;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use tokio::fs::OpenOptions;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tracing::{error, trace, warn};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tracing::{trace, warn};
 
 #[derive(Debug)]
 pub struct CheckPointFile {

@@ -8,6 +8,7 @@ use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
 use std::collections::BTreeMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
@@ -21,10 +22,24 @@ use tracing::{info, warn};
 #[derive(Debug)]
 pub struct QueueLog {
     pub segments: RwLock<BTreeMap<u64, LogSegment>>,
-    pub dir: String,
+    pub topic_partition: TopicPartition,
     pub log_start_offset: u64,
     pub recover_point: u64,
+    pub next_offset: AtomicCell<u64>,
+    pub split_offset: AtomicCell<u64>,
 }
+
+impl Hash for QueueLog {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.topic_partition.hash(state);
+    }
+}
+impl PartialEq for QueueLog {
+    fn eq(&self, other: &Self) -> bool {
+        self.topic_partition == other.topic_partition
+    }
+}
+impl Eq for QueueLog {}
 
 impl Log for QueueLog {
     async fn append_records(
@@ -40,7 +55,7 @@ impl Log for QueueLog {
             let last_seg = segments
                 .iter()
                 .next_back()
-                .ok_or(self.no_active_segment_error(self.dir.clone()))?;
+                .ok_or(self.no_active_segment_error(&self.topic_partition))?;
             active_seg_size = last_seg.1.size() as u64;
             active_base_offset = *last_seg.0;
             // 使用这个作用域释放读锁
@@ -145,7 +160,8 @@ impl Log for QueueLog {
         topic_partition: &TopicPartition,
         mut segments: BTreeMap<u64, LogSegment>,
         log_start_offset: u64,
-        log_recovery_point: u64,
+        recovery_offset: u64,
+        split_offset: u64,
     ) -> AppResult<Self> {
         let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
 
@@ -166,10 +182,12 @@ impl Log for QueueLog {
 
 
         Ok(QueueLog {
-            dir: dir.to_string(),
+            topic_partition: topic_partition.clone(),
             segments: RwLock::new(segments),
             log_start_offset,
-            recover_point: log_recovery_point,
+            recover_point: recovery_offset,
+            next_offset: AtomicCell::new(recovery_offset),
+            split_offset: AtomicCell::new(split_offset),
         })
     }
 

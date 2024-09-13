@@ -1,14 +1,13 @@
-use crate::log::{CheckPointFile, JournalLog, Log, LogType, QueueLog, CHECK_POINT_FILE_NAME};
+use crate::log::{CheckPointFile, JournalLog, Log, LogType, QueueLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::any::type_name;
 
-use crate::message::{LogAppendInfo, TopicPartition};
-use crate::AppError::{IllegalStateError, InvalidValue};
-use crate::{global_config, AppResult, Shutdown};
-use axum::extract::Path;
-use crossbeam_utils::atomic::AtomicCell;
-use std::collections::{BTreeMap, HashMap};
+use crate::log::splitter::SplitterTask;
+use crate::message::TopicPartition;
+use crate::AppError::InvalidValue;
+use crate::{global_config, log, AppResult, ReplicaManager, Shutdown};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +15,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
-use tracing::{debug, error, info, trace, warn};
-
+use tracing::{error, info, trace, warn};
 
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
@@ -32,6 +30,7 @@ pub struct LogManager {
     queue_logs: DashMap<TopicPartition, Arc<QueueLog>>,
     journal_recovery_checkpoints: CheckPointFile,
     queue_recovery_checkpoints: CheckPointFile,
+    split_checkpoint: CheckPointFile,
     notify_shutdown: broadcast::Sender<()>,
     shutdown_complete_tx: Sender<()>,
     journal_log_path: String,
@@ -40,13 +39,15 @@ pub struct LogManager {
 
 impl LogManager {
     pub fn new(notify_shutdown: broadcast::Sender<()>, shutdown_complete_tx: Sender<()>) -> Self {
-        let journal_recovery_checkpoint_path = format!("{}/{}", global_config().log.journal_base_dir, CHECK_POINT_FILE_NAME);
-        let queue_recovery_checkpoint_path = format!("{}/{}", global_config().log.queue_base_dir, CHECK_POINT_FILE_NAME);
+        let journal_recovery_checkpoint_path = format!("{}/{}", global_config().log.journal_base_dir, RECOVERY_POINT_FILE_NAME);
+        let queue_recovery_checkpoint_path = format!("{}/{}", global_config().log.queue_base_dir, RECOVERY_POINT_FILE_NAME);
+        let split_checkpoint_path = format!("{}/{}", global_config().log.journal_base_dir, SPLIT_POINT_FILE_NAME);
         LogManager {
             journal_logs: DashMap::new(),
             queue_logs: DashMap::new(),
             journal_recovery_checkpoints: CheckPointFile::new(journal_recovery_checkpoint_path),
             queue_recovery_checkpoints: CheckPointFile::new(queue_recovery_checkpoint_path),
+            split_checkpoint: CheckPointFile::new(split_checkpoint_path),
             notify_shutdown,
             shutdown_complete_tx,
             journal_log_path: global_config().log.journal_base_dir.clone(),
@@ -94,8 +95,9 @@ impl LogManager {
         }
 
         // 加载check points file
-        let mut checkpoints = HashMap::new();
-        checkpoints = rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
+
+        let recovery_checkpoints = rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
+        let split_checkpoints = rt.block_on(self.split_checkpoint.read_checkpoints())?;
 
 
         let mut logs = vec![];
@@ -104,7 +106,9 @@ impl LogManager {
             let file_type = dir.metadata()?.file_type();
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
-                let log = LogManager::load_log(&tp, &checkpoints, rt)?;
+                let split_offset = split_checkpoints.get(&tp).unwrap_or(&0).to_owned();
+                let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
+                let log = LogManager::load_log(&tp, recovery_offset, split_offset, rt)?;
 
                 trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
@@ -117,24 +121,19 @@ impl LogManager {
     }
     ///
     /// 加载单个topic-partition的日志目录,并加载其中的segment文件
-    fn load_log<T: Log>(topic_partition: &TopicPartition, check_points: &HashMap<TopicPartition, u64>, rt: &Runtime) -> AppResult<T> {
-        let mut next_offset = 0u64;
+    fn load_log<T: Log>(topic_partition: &TopicPartition, recovery_offset: u64, split_offset: u64, rt: &Runtime) -> AppResult<T> {
 
-        if let Some(offset) = check_points.get(topic_partition) {
-            next_offset = *offset;
-        } else {
-            warn!("no checkpoint for topic partition:{:?}", topic_partition);
-        }
 
         // 加载log目录下的segment文件
-        let log_segments = T::load_segments(topic_partition, next_offset, rt)?;
+        let log_segments = T::load_segments(topic_partition, recovery_offset, rt)?;
         // 构建Log
         let log_start_offset = log_segments.first_key_value().map(|(k, _)| *k).unwrap_or(0);
         let log = rt.block_on(T::new(
             topic_partition,
             log_segments,
             log_start_offset,
-            next_offset,
+            recovery_offset,
+            split_offset,
         ))?;
         Ok(log)
     }
@@ -151,7 +150,8 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = JournalLog::new(topic_partition, BTreeMap::new(), 0, 0).await?;
+                let journal_log = JournalLog::new(topic_partition, BTreeMap::new()
+                                                  , 0, 0, 0).await?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
@@ -173,7 +173,7 @@ impl LogManager {
                     topic_partition.id()
                 );
                 let log =
-                    Arc::new(rt.block_on(QueueLog::new(topic_partition, BTreeMap::new(), 0, 0))?);
+                    Arc::new(rt.block_on(QueueLog::new(topic_partition, BTreeMap::new(), 0, 0, 0))?);
                 vacant.insert(log.clone());
                 Ok(log)
             }
@@ -186,6 +186,7 @@ impl LogManager {
     ) -> AppResult<()> {
         loop {
             tokio::select! {
+                // 第一次运行定时任务，会马上结束
                 _ = interval.tick() => {trace!("tick complete .")},
                 _ = shutdown.recv() => {trace!("receiving shutdown signal");}
             };
@@ -225,6 +226,20 @@ impl LogManager {
                 }
             }
         });
+        Ok(())
+    }
+    pub async fn start_splitter_task(&self, journal_topic_partition: &TopicPartition,
+                                     queue_topic_partition: &HashSet<TopicPartition>) -> AppResult<()> {
+        let journal_log = self.journal_logs
+            .get(journal_topic_partition).unwrap().value().clone();
+        let queue_logs = queue_topic_partition.iter()
+            .map(|tp| self.queue_logs.get(tp).unwrap().value().clone())
+            .collect::<HashSet<_>>();
+        let splitter = SplitterTask::new(journal_log, queue_logs, journal_topic_partition.clone());
+        let ret = tokio::spawn(async move {
+            splitter.run().await
+        });
+        ret.await.unwrap()?;
         Ok(())
     }
 }

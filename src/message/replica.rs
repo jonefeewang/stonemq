@@ -1,9 +1,10 @@
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use futures_util::future::try_maybe_done;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{info, trace};
@@ -70,6 +71,8 @@ impl ReplicaManager {
                     topic: topic_name.clone(),
                     partition: partition.partition,
                 };
+
+                // 一次循环形成一个dashmap的entry value的作用域，尽快释放读锁
                 let journal_partition =
                     self.queue_2_journal
                         .get(&topic_partition)
@@ -84,6 +87,7 @@ impl ReplicaManager {
                         "corresponding journal partition not found.:{}",
                         *journal_partition
                     ))))?;
+
                 let LogAppendInfo { base_offset, .. } = journal_partition
                     .append_record_to_leader(partition.message_set, topic_partition)
                     .await?;
@@ -172,6 +176,27 @@ impl ReplicaManager {
                 .collect::<Vec<String>>()
         );
 
+        // 启动journal log splitter
+        // Create a BTreeMap to store the reverse mapping
+        let mut journal_to_queues: BTreeMap<TopicPartition, HashSet<TopicPartition>> = BTreeMap::new();
+
+        // Iterate over the DashMap and build the reverse mapping
+        for entry in self.queue_2_journal.iter() {
+            let queue_tp = entry.key().clone();
+            let journal_tp = entry.value().clone();
+
+            journal_to_queues
+                .entry(journal_tp)
+                .or_default()
+                .insert(queue_tp);
+        }
+
+        // 启动journal log splitter
+        for (journal_tp, queue_tps) in &journal_to_queues {
+            trace!("starting splitter task for journal: {} and queues: {:?}", 
+                journal_tp.id(),queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>());
+            rt.block_on(self.log_manager.start_splitter_task(journal_tp, queue_tps))?;
+        }
         info!("ReplicaManager startup completed.");
         Ok(())
     }
@@ -276,5 +301,8 @@ impl ReplicaManager {
                     .collect()
             }
         }
+    }
+    pub fn get_journal_partition(&self, queue_topic_partition: &TopicPartition) -> Option<TopicPartition> {
+        self.queue_2_journal.get(queue_topic_partition).map(|tp| tp.clone())
     }
 }

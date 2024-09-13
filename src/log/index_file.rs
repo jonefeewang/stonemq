@@ -13,6 +13,11 @@ use tracing::{debug, trace};
 
 const INDEX_ENTRY_SIZE: usize = 8;
 
+/// 相比Kafka中的IndexFile在写入时使用了锁，但是在读取时未使用锁，这样提升了并发，但是却允许脏读的存在
+/// Rust从语言机制上不允许对需要锁保护的对象进行脏读，如果需要脏读的话，需要使用unsafe代码，这里分析一下不别要
+/// 对于非active得segment的index file，没有写入操作，所以都是读取，不会被写锁block
+/// 对于active得segment的index file，有写入操作，所以会被写锁block,这样影响了并发，但是保障读取到的数据不是旧的，
+/// 不会出现写入的数据无法及时读取到
 #[derive(Debug)]
 pub enum IndexFileMode {
     ReadOnly(Mmap),
@@ -102,44 +107,51 @@ impl IndexFile {
             }
         }
     }
-    pub async fn lookup(&self, target_offset: u32) -> Option<u32> {
+    pub async fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
         let entries = self.entries.load();
         if entries == 0 {
             return None;
         }
 
-        let mut left = 0;
-        let mut right = entries - 1;
-
-        let mmap = &*self.mode.read().await;
-        let mmap = match mmap {
+        // 获取读锁
+        let mode = self.mode.read().await;
+        let mmap = match &*mode {
             IndexFileMode::ReadOnly(mmap) => mmap,
             IndexFileMode::ReadWrite(mmap) => mmap.as_ref(),
         };
 
+        let mut left = 0;
+        let mut right = entries - 1;
+
         while left <= right {
             let mid = (left + right) / 2;
             let offset = mid * INDEX_ENTRY_SIZE;
-            let entry_offset = u32::from_be_bytes(mmap[offset..offset + 4].try_into().unwrap());
+            let entry_offset = u32::from_be_bytes([
+                mmap[offset], mmap[offset + 1], mmap[offset + 2], mmap[offset + 3]
+            ]);
 
-            if entry_offset == target_offset {
-                return Some(u32::from_be_bytes(mmap[offset + 4..offset + 8].try_into().unwrap()));
-            } else if entry_offset < target_offset {
-                left = mid + 1;
-            } else {
+            if entry_offset > target_offset {
                 if mid == 0 {
                     return None;
                 }
                 right = mid - 1;
+            } else {
+                if mid == entries - 1 || u32::from_be_bytes([
+                    mmap[offset + INDEX_ENTRY_SIZE],
+                    mmap[offset + INDEX_ENTRY_SIZE + 1],
+                    mmap[offset + INDEX_ENTRY_SIZE + 2],
+                    mmap[offset + INDEX_ENTRY_SIZE + 3],
+                ]) > target_offset {
+                    let position = u32::from_be_bytes([
+                        mmap[offset + 4], mmap[offset + 5], mmap[offset + 6], mmap[offset + 7]
+                    ]);
+                    return Some((entry_offset, position));
+                }
+                left = mid + 1;
             }
         }
 
-        if left == 0 {
-            return None;
-        }
-
-        let offset = (left - 1) * INDEX_ENTRY_SIZE;
-        Some(u32::from_be_bytes(mmap[offset + 4..offset + 8].try_into().unwrap()))
+        None
     }
 
 

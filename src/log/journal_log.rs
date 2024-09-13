@@ -1,15 +1,14 @@
-use crate::log::log_segment::LogSegment;
+use crate::log::log_segment::{LogSegment, PositionInfo};
 use crate::log::Log;
 use crate::message::MemoryRecords;
 use crate::message::{LogAppendInfo, TopicPartition};
-use crate::AppError::{IllegalStateError, InvalidValue};
+use crate::AppError::{CommonError, InvalidValue};
 use crate::{global_config, AppResult};
-use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
@@ -25,12 +24,19 @@ pub struct JournalLog {
     pub log_start_offset: u64,
     // journal log's next offset
     pub next_offset: AtomicCell<u64>,
-    // offset + physic position
+    // offset
     pub recover_point: AtomicCell<u64>,
+    // split point offset
+    pub split_offset: AtomicCell<u64>,
     // journal log的全局锁，确保插入消息等操作的一致性
     write_lock: RwLock<()>,
     // journal log的topicPartition
     topic_partition: TopicPartition,
+}
+impl Hash for JournalLog {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.topic_partition.hash(state);
+    }
 }
 
 impl Log for JournalLog {
@@ -60,7 +66,7 @@ impl Log for JournalLog {
                 let (_, active_seg) = segments
                     .iter()
                     .next_back()
-                    .ok_or(self.no_active_segment_error(self.topic_partition.to_string()))?;
+                    .ok_or(self.no_active_segment_error(&self.topic_partition))?;
                 active_seg_size = active_seg.size() as u64;
                 active_segment_offset_index_full = active_seg.offset_index_full().await?;
                 // 快速释放segments的读锁，防止阻塞读消息的线程
@@ -79,7 +85,7 @@ impl Log for JournalLog {
                 let (_, write_active_seg) = segments
                     .iter()
                     .next_back()
-                    .ok_or(self.no_active_segment_error(self.topic_partition.to_string()))?;
+                    .ok_or(self.no_active_segment_error(&self.topic_partition))?;
 
                 self.flush(write_active_seg).await?;
                 let new_base_offset = self.next_offset.load();
@@ -114,7 +120,7 @@ impl Log for JournalLog {
                 let (_, active_seg) = segments
                     .iter()
                     .next_back()
-                    .ok_or(self.no_active_segment_error(self.topic_partition.to_string()))?;
+                    .ok_or(self.no_active_segment_error(&self.topic_partition))?;
                 let (tx, rx) = oneshot::channel::<AppResult<()>>();
 
                 active_seg
@@ -137,12 +143,15 @@ impl Log for JournalLog {
                 queue_log_next_offset_value = *next_offset;
             }
 
+            // 7. 更新journal log next offset
+            self.next_offset.fetch_add(batch_count as u64);
+
             Ok(LogAppendInfo {
                 base_offset: queue_log_next_offset_value,
                 log_append_time: 0,
             })
 
-            // 7. 释放全局锁
+            // 8. 释放全局锁
         }
     }
     /// 加载`dir`下的所有segment文件
@@ -211,6 +220,7 @@ impl Log for JournalLog {
         mut segments: BTreeMap<u64, LogSegment>,
         log_start_offset: u64,
         log_recovery_point: u64,
+        split_offset: u64,
     ) -> AppResult<Self> {
 
         // 如果log目录不存在，先创建它
@@ -240,6 +250,7 @@ impl Log for JournalLog {
             queue_next_offset_info: DashMap::new(),
             write_lock: RwLock::new(()),
             recover_point: AtomicCell::new(log_recovery_point),
+            split_offset: AtomicCell::new(split_offset),
         })
     }
 
@@ -260,5 +271,29 @@ impl Log for JournalLog {
         active_segment.flush().await?;
         self.recover_point.store(self.next_offset.load());
         Ok(())
+    }
+}
+impl JournalLog {
+    pub async fn get_position_info(&self, offset: u64) -> AppResult<PositionInfo> {
+        // 使用到segments的读锁
+        let segments = self.segments.read().await;
+        let segment = segments
+            .range(..=offset)
+            .next_back()
+            .map(|(_, segment)| segment)
+            .ok_or_else(|| CommonError(format!("No segment found for offset {}", offset)))?;
+        segment.get_position(offset).await
+    }
+    pub async fn current_active_seg_offset(&self) -> u64 {
+        // 获取segments的读锁，快速释放
+        let segments = self.segments.read().await;
+        let (_, active_seg) = segments
+            .iter()
+            .next_back()
+            .ok_or(self.no_active_segment_error(&self.topic_partition)).unwrap();
+        active_seg.base_offset()
+    }
+    pub async fn next_base_offset(&self, base_offset: u64) -> u64 {
+        todo!()
     }
 }
