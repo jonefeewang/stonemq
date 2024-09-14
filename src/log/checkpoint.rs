@@ -13,6 +13,8 @@ pub struct CheckPointFile {
     version: i8,
 }
 
+
+
 impl CheckPointFile {
     pub const CK_FILE_VERSION_1: i8 = 1;
 

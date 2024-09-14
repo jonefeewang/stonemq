@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 
 use dashmap::DashMap;
 
@@ -55,10 +55,16 @@ impl<T: Log> Partition<T> {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TopicPartition {
     pub topic: String,
     pub partition: i32,
+}
+
+impl Hash for TopicPartition {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
 }
 
 

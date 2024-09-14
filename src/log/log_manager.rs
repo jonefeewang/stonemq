@@ -228,13 +228,17 @@ impl LogManager {
         });
         Ok(())
     }
+
     pub async fn start_splitter_task(&self, journal_topic_partition: &TopicPartition,
                                      queue_topic_partition: &HashSet<TopicPartition>) -> AppResult<()> {
         let journal_log = self.journal_logs
             .get(journal_topic_partition).unwrap().value().clone();
-        let queue_logs = queue_topic_partition.iter()
-            .map(|tp| self.queue_logs.get(tp).unwrap().value().clone())
-            .collect::<HashSet<_>>();
+        let queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>> = queue_topic_partition.iter()
+            .map(|tp| {
+                let queue_log = self.queue_logs.get(tp).unwrap().value().clone();
+                (tp.clone(), queue_log)
+            })
+            .collect();
         let splitter = SplitterTask::new(journal_log, queue_logs, journal_topic_partition.clone());
         let ret = tokio::spawn(async move {
             splitter.run().await

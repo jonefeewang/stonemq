@@ -1,10 +1,10 @@
 use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
-use crate::log::{JournalLog, QueueLog};
-use crate::message::TopicPartition;
+use crate::log::{JournalLog, Log, QueueLog};
+use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
-use bytes::BytesMut;
-use std::collections::HashSet;
+use bytes::{Buf, BytesMut};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
@@ -17,13 +17,13 @@ use tokio::io::{AsyncReadExt, BufReader};
 /// .比如最热active segment, 可能有多个BufReader，而其他segment可能只有一个BufReader
 pub struct SplitterTask {
     journal_log: Arc<JournalLog>,
-    queue_logs: HashSet<Arc<QueueLog>>,
+    queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>>,
     topic_partition: TopicPartition,
 }
 impl SplitterTask {
     pub fn new(
         journal_log: Arc<JournalLog>,
-        queue_logs: HashSet<Arc<QueueLog>>,
+        queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>>,
         topic_partition: TopicPartition,
     ) -> Self {
         SplitterTask {
@@ -74,12 +74,26 @@ impl SplitterTask {
                 }
             }
             total_read += bytes_read;
-            self.write_queue_log(&buf).await?;
+            self.write_queue_log(&mut buf).await?;
             buf.clear();
         }
     }
 
-    async fn write_queue_log(&self, buffer: &BytesMut) -> AppResult<()> {
-        todo!()
+    /// journal log 格式 offset / size(topic partition size)/ topic partition /size / memory records
+    async fn write_queue_log(&self, buffer: &mut BytesMut) -> AppResult<()> {
+        while buffer.remaining() > 0 {
+            let journal_offset = buffer.get_u64();
+            let tp_str_size = buffer.get_u32();
+            let tp_str_bytes = buffer.split_to(tp_str_size as usize).to_vec();
+            let tp = String::from_utf8(tp_str_bytes)?;
+            let topic_partition = TopicPartition::new(tp.clone(), 0);
+
+            let records_total_size = buffer.get_u32();
+            let records_bytes = buffer.split_to(records_total_size as usize);
+            let memory_records = MemoryRecords::new(records_bytes);
+            let queue_log = self.queue_logs.get(&topic_partition).unwrap();
+            queue_log.append_records((topic_partition, memory_records)).await?;
+        }
+        Ok(())
     }
 }
