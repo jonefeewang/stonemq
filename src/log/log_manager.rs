@@ -1,4 +1,7 @@
-use crate::log::{CheckPointFile, JournalLog, Log, LogType, QueueLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME};
+use crate::log::{
+    CheckPointFile, JournalLog, Log, LogType, QueueLog, RECOVERY_POINT_FILE_NAME,
+    SPLIT_POINT_FILE_NAME,
+};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::any::type_name;
@@ -16,7 +19,6 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
 use tracing::{error, info, trace, warn};
-
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
 /// 来保护。
@@ -39,9 +41,21 @@ pub struct LogManager {
 
 impl LogManager {
     pub fn new(notify_shutdown: broadcast::Sender<()>, shutdown_complete_tx: Sender<()>) -> Self {
-        let journal_recovery_checkpoint_path = format!("{}/{}", global_config().log.journal_base_dir, RECOVERY_POINT_FILE_NAME);
-        let queue_recovery_checkpoint_path = format!("{}/{}", global_config().log.queue_base_dir, RECOVERY_POINT_FILE_NAME);
-        let split_checkpoint_path = format!("{}/{}", global_config().log.journal_base_dir, SPLIT_POINT_FILE_NAME);
+        let journal_recovery_checkpoint_path = format!(
+            "{}/{}",
+            global_config().log.journal_base_dir,
+            RECOVERY_POINT_FILE_NAME
+        );
+        let queue_recovery_checkpoint_path = format!(
+            "{}/{}",
+            global_config().log.queue_base_dir,
+            RECOVERY_POINT_FILE_NAME
+        );
+        let split_checkpoint_path = format!(
+            "{}/{}",
+            global_config().log.journal_base_dir,
+            SPLIT_POINT_FILE_NAME
+        );
         LogManager {
             journal_logs: DashMap::new(),
             queue_logs: DashMap::new(),
@@ -62,11 +76,12 @@ impl LogManager {
         info!("log manager startup ...");
 
         let log_config = &global_config().log;
-        let journal_logs = self.load_logs::<JournalLog>(&log_config.journal_base_dir, rt, LogType::JournalLog)?;
+        let journal_logs =
+            self.load_logs::<JournalLog>(&log_config.journal_base_dir, rt, LogType::JournalLog)?;
         self.journal_logs.extend(journal_logs);
-        let queue_logs = self.load_logs::<QueueLog>(&log_config.queue_base_dir, rt, LogType::QueueLog)?;
+        let queue_logs =
+            self.load_logs::<QueueLog>(&log_config.queue_base_dir, rt, LogType::QueueLog)?;
         self.queue_logs.extend(queue_logs);
-
 
         // startup background tasks
         let log_manager = Arc::new(self);
@@ -96,9 +111,9 @@ impl LogManager {
 
         // 加载check points file
 
-        let recovery_checkpoints = rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
+        let recovery_checkpoints =
+            rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
         let split_checkpoints = rt.block_on(self.split_checkpoint.read_checkpoints())?;
-
 
         let mut logs = vec![];
         let mut dir = fs::read_dir(logs_dir)?;
@@ -121,9 +136,12 @@ impl LogManager {
     }
     ///
     /// 加载单个topic-partition的日志目录,并加载其中的segment文件
-    fn load_log<T: Log>(topic_partition: &TopicPartition, recovery_offset: u64, split_offset: u64, rt: &Runtime) -> AppResult<T> {
-
-
+    fn load_log<T: Log>(
+        topic_partition: &TopicPartition,
+        recovery_offset: u64,
+        split_offset: u64,
+        rt: &Runtime,
+    ) -> AppResult<T> {
         // 加载log目录下的segment文件
         let log_segments = T::load_segments(topic_partition, recovery_offset, rt)?;
         // 构建Log
@@ -150,8 +168,8 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = JournalLog::new(topic_partition, BTreeMap::new()
-                                                  , 0, 0, 0).await?;
+                let journal_log =
+                    JournalLog::new(topic_partition, BTreeMap::new(), 0, 0, 0).await?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
@@ -172,8 +190,13 @@ impl LogManager {
                     global_config().log.queue_base_dir,
                     topic_partition.id()
                 );
-                let log =
-                    Arc::new(rt.block_on(QueueLog::new(topic_partition, BTreeMap::new(), 0, 0, 0))?);
+                let log = Arc::new(rt.block_on(QueueLog::new(
+                    topic_partition,
+                    BTreeMap::new(),
+                    0,
+                    0,
+                    0,
+                ))?);
                 vacant.insert(log.clone());
                 Ok(log)
             }
@@ -200,7 +223,9 @@ impl LogManager {
                     (tp.clone(), log.recover_point.load())
                 })
                 .collect();
-            self.journal_recovery_checkpoints.write_checkpoints(check_points).await?;
+            self.journal_recovery_checkpoints
+                .write_checkpoints(check_points)
+                .await?;
             if shutdown.is_shutdown() {
                 break;
             }
@@ -208,9 +233,7 @@ impl LogManager {
         Ok(())
     }
     pub async fn start_task(self: Arc<Self>) -> AppResult<()> {
-        let recovery_check_interval = global_config()
-            .log
-            .recovery_checkpoint_interval;
+        let recovery_check_interval = global_config().log.recovery_checkpoint_interval;
         let interval = tokio::time::interval(Duration::from_secs(recovery_check_interval));
         let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
         tokio::spawn(async move {
@@ -229,20 +252,26 @@ impl LogManager {
         Ok(())
     }
 
-    pub async fn start_splitter_task(&self, journal_topic_partition: &TopicPartition,
-                                     queue_topic_partition: &HashSet<TopicPartition>) -> AppResult<()> {
-        let journal_log = self.journal_logs
-            .get(journal_topic_partition).unwrap().value().clone();
-        let queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>> = queue_topic_partition.iter()
+    pub async fn start_splitter_task(
+        &self,
+        journal_topic_partition: &TopicPartition,
+        queue_topic_partition: &HashSet<TopicPartition>,
+    ) -> AppResult<()> {
+        let journal_log = self
+            .journal_logs
+            .get(journal_topic_partition)
+            .unwrap()
+            .value()
+            .clone();
+        let queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>> = queue_topic_partition
+            .iter()
             .map(|tp| {
                 let queue_log = self.queue_logs.get(tp).unwrap().value().clone();
                 (tp.clone(), queue_log)
             })
             .collect();
         let splitter = SplitterTask::new(journal_log, queue_logs, journal_topic_partition.clone());
-        let ret = tokio::spawn(async move {
-            splitter.run().await
-        });
+        let ret = tokio::spawn(async move { splitter.run().await });
         ret.await.unwrap()?;
         Ok(())
     }

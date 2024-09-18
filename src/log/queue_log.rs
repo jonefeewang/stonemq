@@ -1,32 +1,22 @@
 use crate::log::log_segment::LogSegment;
 use crate::log::Log;
-use crate::message::MemoryRecords;
-use crate::message::{LogAppendInfo, TopicPartition};
-use crate::AppError::InvalidValue;
-use crate::{global_config, AppResult};
-use bytes::Buf;
+use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
+use crate::{global_config, AppError, AppResult};
 use crossbeam_utils::atomic::AtomicCell;
 use std::collections::BTreeMap;
-use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
-/// 每个Log代表一个topic-partition的目录及下边的日志文件
-/// 日志文件以segment为单位，每个segment文件大小固定
-/// 这里使用tokio的读写锁来保护并发读写：
-/// 1. 写场景：roll log或delete segment时，需要修改segments，需要写锁，频率相对较低
-/// 2. append message, 读取message时， 都使用的是读锁，频率相对较高
 #[derive(Debug)]
 pub struct QueueLog {
     pub segments: RwLock<BTreeMap<u64, LogSegment>>,
     pub topic_partition: TopicPartition,
     pub log_start_offset: u64,
-    pub recover_point: u64,
+    pub recover_point: AtomicCell<u64>,
     pub next_offset: AtomicCell<u64>,
-    pub split_offset: AtomicCell<u64>,
 }
 
 impl Hash for QueueLog {
@@ -34,83 +24,155 @@ impl Hash for QueueLog {
         self.topic_partition.hash(state);
     }
 }
+
 impl PartialEq for QueueLog {
     fn eq(&self, other: &Self) -> bool {
         self.topic_partition == other.topic_partition
     }
 }
+
 impl Eq for QueueLog {}
 
 impl Log for QueueLog {
+    /// Appends records to the queue log.
+    ///
+    /// # Arguments
+    ///
+    /// * `records` - A tuple containing the topic partition and memory records to append.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing `LogAppendInfo` on success.
+    ///
+    /// # Performance
+    ///
+    /// This method acquires a write lock on the entire log, which may impact concurrent operations.
     async fn append_records(
         &self,
         records: (TopicPartition, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
         let (topic_partition, memory_records) = records;
-        let mut active_seg_size = 0u64;
-        let mut active_base_offset = 0u64;
-        {
-            // get active segment info
+
+        let (active_seg_size, active_segment_offset_index_full) = {
             let segments = self.segments.read().await;
-            let last_seg = segments
+            let active_seg = segments
                 .iter()
                 .next_back()
-                .ok_or(self.no_active_segment_error(&self.topic_partition))?;
-            active_seg_size = last_seg.1.size() as u64;
-            active_base_offset = *last_seg.0;
-            // 使用这个作用域释放读锁
+                .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+            (
+                active_seg.1.size() as u32,
+                active_seg.1.offset_index_full().await?,
+            )
+        };
+
+        let need_roll = self
+            .need_roll(
+                active_seg_size,
+                &memory_records,
+                active_segment_offset_index_full,
+            )
+            .await;
+
+        if need_roll {
+            self.roll_segment().await?;
         }
 
-        let buffer = memory_records.buffer.as_ref().ok_or(InvalidValue(
-            "empty message when append to file",
-            topic_partition.id(),
-        ))?;
-        let msg_len = buffer.remaining();
+        let log_append_info = LogAppendInfo {
+            base_offset: memory_records.base_offset() as i64,
+            log_append_time: -1,
+        };
 
-        // check active segment size, if exceed the segment size, roll the segment
-        if active_seg_size + msg_len as u64 >= global_config().log.journal_segment_size
-        {
-            // 确定需要滚动日之后，进入新的作用域，获取写锁，准备滚动日志
-            // check again to make sure other request has rolled it already
-            let mut segments = self.segments.write().await;
-            let last_seg = segments.iter().next_back().unwrap();
-            if *last_seg.0 == active_base_offset {
-                // other request has not rolled it yet
-                let new_base_offset = last_seg.1.size() as u64;
-                let new_seg =
-                    LogSegment::new_queue_seg(&topic_partition, new_base_offset, true).await?;
-                // close old segment write, release its pipe resource
-                last_seg.1.flush().await?;
-                segments.insert(new_base_offset, new_seg);
-            }
-        }
-
-        let segments = self.segments.read().await;
-        let (active_base_offset, active_seg) = segments.iter().next_back().unwrap();
-        let (tx, rx) = oneshot::channel::<AppResult<()>>();
-
-        active_seg
-            .append_record((topic_partition, memory_records, tx))
+        self.append_to_active_segment(topic_partition, memory_records)
             .await?;
-        rx.await??;
-        Ok(LogAppendInfo {
-            base_offset: *active_base_offset as i64,
-            log_append_time: 0,
+
+        self.next_offset
+            .store(log_append_info.base_offset as u64 + 1);
+
+        Ok(log_append_info)
+    }
+}
+
+impl QueueLog {
+    /// Creates a new QueueLog instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition for this log.
+    /// * `segments` - A BTreeMap of existing log segments.
+    /// * `log_start_offset` - The starting offset for this log.
+    /// * `recovery_offset` - The recovery point offset.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the new `QueueLog` instance on success.
+    pub async fn new(
+        topic_partition: &TopicPartition,
+        mut segments: BTreeMap<u64, LogSegment>,
+        log_start_offset: u64,
+        recovery_offset: u64,
+    ) -> AppResult<Self> {
+        let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
+
+        if !Path::new(&dir).exists() {
+            info!("log dir does not exists, create queue log dir:{}", dir);
+            std::fs::create_dir_all(&dir)?;
+        }
+
+        if segments.is_empty() {
+            warn!("no segment file found in queue log dir:{}", dir);
+            let segment = LogSegment::new_queue_seg(topic_partition, 0, true).await?;
+            segments.insert(0, segment);
+        }
+
+        Ok(QueueLog {
+            topic_partition: topic_partition.clone(),
+            segments: RwLock::new(segments),
+            log_start_offset,
+            recover_point: AtomicCell::new(recovery_offset),
+            next_offset: AtomicCell::new(recovery_offset + 1),
         })
     }
-    /// 加载`dir`下的所有segment文件
-    /// journal log没有index文件
-    /// queue log有time index和offset index文件
-    fn load_segments(topic_partition: &TopicPartition, next_offset: u64, rt: &Runtime) -> AppResult<BTreeMap<u64, LogSegment>> {
+
+    /// Flushes the active segment to disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `active_segment` - The active LogSegment to flush.
+    ///
+    /// # Returns
+    ///
+    /// Returns `AppResult<()>` indicating success or failure.
+    pub async fn flush(&self, active_segment: &LogSegment) -> AppResult<()> {
+        active_segment.flush().await?;
+        self.recover_point.store(self.next_offset.load());
+        Ok(())
+    }
+
+    /// Loads segments for a given topic partition.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition to load segments for.
+    /// * `next_offset` - The next offset to use.
+    /// * `rt` - The runtime to use for blocking operations.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing a `BTreeMap` of base offsets to `LogSegment`s.
+    pub fn load_segments(
+        topic_partition: &TopicPartition,
+        next_offset: u64,
+        rt: &Runtime,
+    ) -> AppResult<BTreeMap<u64, LogSegment>> {
         let mut segments = BTreeMap::new();
         let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
         info!("load segment files from dir:{}", topic_partition);
 
-        if fs::read_dir(&dir)?.next().is_none() {
+        if std::fs::read_dir(&dir)?.next().is_none() {
             info!("queue logs directory is empty: {}", &dir);
             return Ok(segments);
         }
-        let mut read_dir = fs::read_dir(&dir)?;
+        let mut read_dir = std::fs::read_dir(&dir)?;
         while let Some(file) = read_dir.next().transpose()? {
             if file.metadata()?.file_type().is_file() {
                 let file_name = file.file_name().to_string_lossy().to_string();
@@ -156,42 +218,105 @@ impl Log for QueueLog {
         Ok(segments)
     }
 
-    async fn new(
-        topic_partition: &TopicPartition,
-        mut segments: BTreeMap<u64, LogSegment>,
-        log_start_offset: u64,
-        recovery_offset: u64,
-        split_offset: u64,
-    ) -> AppResult<Self> {
-        let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
-
-        // 如果log目录不存在，先创建它
-        if !Path::new::<Path>(dir.as_ref()).exists() {
-            info!("log dir does not exists, create queue log dir:{}", dir);
-            tokio::fs::create_dir_all(&dir).await?;
-        }
-
-        // 如果segments是空的, 默认创建一个
-        // 运行时候，创建topic 不管是journal还是queue，都需要在异步运行时内，因为要做同步，在不同运行时内无法做同步
-        if segments.is_empty() {
-            warn!("no segment file found in queue log dir:{}", dir);
-            //初始化一个空的segment
-            let segment = LogSegment::new_queue_seg(topic_partition, 0, true).await?;
-            segments.insert(0, segment);
-        }
-
-
-        Ok(QueueLog {
-            topic_partition: topic_partition.clone(),
-            segments: RwLock::new(segments),
-            log_start_offset,
-            recover_point: recovery_offset,
-            next_offset: AtomicCell::new(recovery_offset),
-            split_offset: AtomicCell::new(split_offset),
-        })
+    /// Determines if a new segment roll is needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition.
+    /// * `active_seg_size` - The size of the active segment.
+    /// * `memory_records` - The memory records to be appended.
+    /// * `active_segment_offset_index_full` - Whether the active segment's offset index is full.
+    ///
+    /// # Returns
+    ///
+    /// Returns a boolean indicating whether a new segment roll is needed.
+    async fn need_roll(
+        &self,
+        active_seg_size: u32,
+        memory_records: &MemoryRecords,
+        active_segment_offset_index_full: bool,
+    ) -> bool {
+        active_seg_size + memory_records.size() as u32
+            >= global_config().log.queue_segment_size as u32
+            || active_segment_offset_index_full
     }
 
-    async fn flush(&self, active_segment: &LogSegment) -> AppResult<()> {
-        todo!()
+    /// Rolls over to a new log segment.
+    ///
+    /// # Returns
+    ///
+    /// Returns `AppResult<()>` indicating success or failure.
+    ///
+    /// # Performance
+    ///
+    /// This method acquires a write lock on the segments, which may impact concurrent operations.
+    async fn roll_segment(&self) -> AppResult<()> {
+        let mut segments = self.segments.write().await;
+        let (_, active_seg) = segments
+            .iter()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+
+        self.flush(active_seg).await?;
+        let new_base_offset = self.next_offset.load();
+
+        let new_seg =
+            LogSegment::new_queue_seg(&self.topic_partition, new_base_offset, true).await?;
+        segments.insert(new_base_offset, new_seg);
+        trace!(
+            "Rolled queue log segment to new base offset: {}",
+            new_base_offset
+        );
+        Ok(())
+    }
+
+    /// Appends records to the active segment.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition.
+    /// * `memory_records` - The memory records to append.
+    ///
+    /// # Returns
+    ///
+    /// Returns `AppResult<()>` indicating success or failure.
+    ///
+    /// # Performance
+    ///
+    /// This method acquires a read lock on the segments, which may impact concurrent operations.
+    async fn append_to_active_segment(
+        &self,
+        topic_partition: TopicPartition,
+        memory_records: MemoryRecords,
+    ) -> AppResult<()> {
+        let segments = self.segments.read().await;
+        let active_seg = segments
+            .iter()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+
+        let (tx, rx) = oneshot::channel();
+        active_seg
+            .1
+            .append_record((self.next_offset.load(), topic_partition, memory_records, tx))
+            .await?;
+        rx.await??;
+        Ok(())
+    }
+
+    /// Creates an error for when no active segment is found.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition for which no active segment was found.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `AppError` describing the error condition.
+    fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
+        AppError::CommonError(format!(
+            "No active segment for topic partition: {}",
+            topic_partition
+        ))
     }
 }

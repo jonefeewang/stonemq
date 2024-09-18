@@ -2,13 +2,14 @@ use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
 use crate::log::{JournalLog, Log, QueueLog};
 use crate::message::{MemoryRecords, TopicPartition};
-use crate::{global_config, AppResult};
+use crate::{global_config, AppError, AppResult};
 use bytes::{Buf, BytesMut};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs;
-use tokio::io::{AsyncReadExt, BufReader};
+use tokio::fs::{self, File};
+use tokio::io::AsyncReadExt;
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
@@ -32,15 +33,18 @@ impl SplitterTask {
             topic_partition,
         }
     }
+
     pub async fn run(&self) -> AppResult<()> {
         let mut target_offset = self.journal_log.split_offset.load();
         // 循环读取，理论上这个任务不会停止，最多在读取不到active segment的最新消息时暂停一会
         loop {
             //定位到segment内的近似位置
-            let position_info = self.journal_log
-                .get_position_info(target_offset).await?;
+            let position_info = self.journal_log.get_position_info(target_offset).await?;
             self.read_seg(target_offset, &position_info).await?;
-            target_offset = self.journal_log.next_base_offset(position_info.base_offset).await;
+            target_offset = self
+                .journal_log
+                .next_segment_base_offset(position_info.base_offset)
+                .await;
         }
     }
     /// 从这个offset开始读取，直到本段读取结束
@@ -48,52 +52,73 @@ impl SplitterTask {
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
             .join(self.topic_partition.id());
 
-
         let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
         let seg_file = fs::File::open(segment_path).await?;
 
-
         // 定位到segment内的确切位置
-        let journal_seg = FileRecords::seek(seg_file, target_offset, &position_info).await?;
+        let mut journal_seg_file =
+            FileRecords::seek(seg_file, target_offset, &position_info).await?;
 
         //开始读取
-        let mut reader = BufReader::new(journal_seg);
-        let reader_buffer_size = global_config().log.splitter_read_buffer_size;
-        let mut buf = BytesMut::with_capacity(reader_buffer_size as usize);
-        let mut total_read = position_info.position;
         let current_seg_base_offset = position_info.base_offset;
         loop {
-            let bytes_read = reader.read(&mut buf).await? as u32;
-            if bytes_read == 0 {
-                //读不出东西来了, 而且当前段不是active segment
-                if current_seg_base_offset != self.journal_log.current_active_seg_offset().await {
-                    //结束读取，返回，等待读取下一段
-                } else {
-                    //当前段是active的，但是读不出东西，表明已经到最后位置，等待一会继续读取
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let journal_offset = journal_seg_file.read_u64().await; //journal log 的offset
+            match journal_offset {
+                Ok(_) => {
+                    let tp_str = Self::read_topic_partition(&mut journal_seg_file).await;
+                    let topic_partition = TopicPartition::from_string(Cow::Owned(tp_str)).unwrap();
+                    let records_size = journal_seg_file.read_u32().await.unwrap();
+                    let mut buf = BytesMut::with_capacity(records_size as usize);
+                    journal_seg_file.read_exact(&mut buf).await.unwrap();
+                    self.write_queue_log(topic_partition, buf).await?;
+                }
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        //读不出东西来了, 而且当前段不是active segment
+                        let current_active_seg_offset =
+                            self.journal_log.current_active_seg_offset().await?;
+                        if current_seg_base_offset != current_active_seg_offset {
+                            //结束读取，返回，等待读取下一段
+                            break;
+                        } else {
+                            //当前段是active的，但是读不出东西，表明已经到最后位置，等待一会继续读取
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    }
                 }
             }
-            total_read += bytes_read;
-            self.write_queue_log(&mut buf).await?;
-            buf.clear();
-        }
-    }
-
-    /// journal log 格式 offset / size(topic partition size)/ topic partition /size / memory records
-    async fn write_queue_log(&self, buffer: &mut BytesMut) -> AppResult<()> {
-        while buffer.remaining() > 0 {
-            let journal_offset = buffer.get_u64();
-            let tp_str_size = buffer.get_u32();
-            let tp_str_bytes = buffer.split_to(tp_str_size as usize).to_vec();
-            let tp = String::from_utf8(tp_str_bytes)?;
-            let topic_partition = TopicPartition::new(tp.clone(), 0);
-
-            let records_total_size = buffer.get_u32();
-            let records_bytes = buffer.split_to(records_total_size as usize);
-            let memory_records = MemoryRecords::new(records_bytes);
-            let queue_log = self.queue_logs.get(&topic_partition).unwrap();
-            queue_log.append_records((topic_partition, memory_records)).await?;
         }
         Ok(())
+    }
+
+    async fn write_queue_log(
+        &self,
+        topic_partition: TopicPartition,
+        buffer: BytesMut,
+    ) -> AppResult<()> {
+        if let Some(queue_log) = self.queue_logs.get(&topic_partition) {
+            let records = MemoryRecords::new(buffer);
+            queue_log.append_records((topic_partition, records)).await?;
+        } else {
+            return Err(AppError::IllegalStateError(
+                format!(
+                    "Queue log not found for topic partition: {}",
+                    topic_partition
+                )
+                .into(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn read_topic_partition(journal_seg_file: &mut File) -> String {
+        let tp_str_size = journal_seg_file.read_u32().await.unwrap();
+        let mut tp_str_bytes = vec![0; tp_str_size as usize];
+        journal_seg_file
+            .read_exact(&mut tp_str_bytes)
+            .await
+            .unwrap();
+        String::from_utf8(tp_str_bytes).unwrap()
     }
 }

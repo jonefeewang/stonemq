@@ -13,8 +13,6 @@ pub struct CheckPointFile {
     version: i8,
 }
 
-
-
 impl CheckPointFile {
     pub const CK_FILE_VERSION_1: i8 = 1;
 
@@ -33,7 +31,9 @@ impl CheckPointFile {
             .open(&self.file_name)
             .await?;
         let mut buf_writer = BufWriter::new(write_file);
-        buf_writer.write_all(format!("{}\n", self.version).as_bytes()).await?;
+        buf_writer
+            .write_all(format!("{}\n", self.version).as_bytes())
+            .await?;
         for (topic_partition, offset) in points {
             buf_writer
                 .write_all(format!("{} {}\n", topic_partition.id(), offset).as_bytes())
@@ -47,10 +47,7 @@ impl CheckPointFile {
     pub async fn read_checkpoints(&self) -> AppResult<HashMap<TopicPartition, u64>> {
         let error = |line| InvalidValue("checkpoint {}", line);
         trace!("read checkpoints from {}", self.file_name);
-        let open_file = OpenOptions::new()
-            .read(true)
-            .open(&self.file_name)
-            .await;
+        let open_file = OpenOptions::new().read(true).open(&self.file_name).await;
         if open_file.is_err() {
             warn!("The checkpoint file cannot be found; if this is your first time running, please disregard this issue.");
             return Ok(HashMap::new());

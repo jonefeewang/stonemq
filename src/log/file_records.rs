@@ -1,16 +1,18 @@
+use crate::log::calculate_journal_log_overhead;
 use crate::log::log_segment::PositionInfo;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
 use crate::AppError::InvalidValue;
 use crate::AppResult;
-use bytes::{Buf, BytesMut};
+use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
+use tokio::io::AsyncReadExt;
 use std::io::SeekFrom;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, trace};
@@ -29,17 +31,17 @@ pub struct FileRecords {
 /// .比如最热active segment, 可能有多个BufReader，而其他segment可能只有一个BufReader
 impl FileRecords {
     // 未完成，这里应该是消费者读取的位置
-    pub async fn read(&self, pos: usize, read_exact_byte: usize) -> AppResult<BytesMut> {
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&self.file_name)
-            .await?;
-        let mut buf = BytesMut::with_capacity(read_exact_byte);
-        let mut reader = BufReader::new(file);
-        reader.seek(std::io::SeekFrom::Start(pos as u64)).await?;
-        reader.read(&mut buf).await?;
-        todo!()
-    }
+    // pub async fn read(&self, pos: usize, read_exact_byte: usize) -> AppResult<BytesMut> {
+    //     let file = OpenOptions::new()
+    //         .read(true)
+    //         .open(&self.file_name)
+    //         .await?;
+    //     let mut buf = BytesMut::with_capacity(read_exact_byte);
+    //     let mut reader = BufReader::new(file);
+    //     reader.seek(std::io::SeekFrom::Start(pos as u64)).await?;
+    //     reader.read(&mut buf).await?;
+    //     todo!()
+    // }
     pub async fn open<P: AsRef<Path>>(file_name: P) -> AppResult<Self> {
         let file = OpenOptions::new()
             .create(true)
@@ -57,7 +59,6 @@ impl FileRecords {
             file_name,
         };
 
-
         file_records.start_job_task(file, rx, file_records.size.clone());
 
         Ok(file_records)
@@ -73,8 +74,8 @@ impl FileRecords {
             let mut writer = BufWriter::new(file);
             while let Some(message) = rx.recv().await {
                 match message {
-                    FileOp::AppendRecords((topic_partition, records, resp_tx)) => {
-                        match Self::append(&mut writer, (topic_partition, records)).await {
+                    FileOp::AppendRecords((offset, topic_partition, records, resp_tx)) => {
+                        match Self::append(&mut writer, (offset, topic_partition, records)).await {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
                                 total_size.fetch_add(total_write);
@@ -114,40 +115,45 @@ impl FileRecords {
 
     pub async fn append(
         buf_writer: &mut BufWriter<File>,
-        records: (TopicPartition, MemoryRecords),
+        (offset, topic_partition, records): (u64, TopicPartition, MemoryRecords),
     ) -> AppResult<usize> {
-        trace!("append log to file ..");
-        let topic_partition_id = records.0.id();
-        let mut total_write = 0;
-        buf_writer
-            .write_u32(topic_partition_id.len() as u32)
-            .await?;
-        total_write += 4;
+        trace!("正在将日志追加到文件...");
+        
+        let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();
-        buf_writer.write_all(tp_id_bytes).await?;
-        total_write += tp_id_bytes.len();
-        let msg = records.1.buffer.ok_or(InvalidValue(
-            "empty message when append to file ",
-            topic_partition_id,
+        
+        let msg = records.buffer.ok_or_else(|| InvalidValue(
+            "追加到文件时消息为空".into(),
+            topic_partition_id.to_string(),
         ))?;
-        let msg_len = msg.remaining();
+
+        let total_write = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
+        let rest_size =topic_partition.protocol_size() + msg.remaining() as u32;
+
+        buf_writer.write_u64(offset).await?;
+        buf_writer.write_u32(rest_size).await?;
+        buf_writer.write_u32(tp_id_bytes.len() as u32).await?;
+        buf_writer.write_all(tp_id_bytes).await?;
         buf_writer.write_all(msg.as_ref()).await?;
-        total_write += msg_len;
         buf_writer.flush().await?;
-        Ok(total_write)
+
+        Ok(total_write as usize)
     }
     pub fn size(&self) -> usize {
         self.size.load()
     }
     /// 将文件指针移动到指定的offset位置
-    pub async fn seek(mut file: File, target_offset: u64, ref_pos: &PositionInfo) -> AppResult<File> {
+    pub async fn seek(
+        mut file: File,
+        target_offset: u64,
+        ref_pos: &PositionInfo,
+    ) -> AppResult<File> {
         file.seek(SeekFrom::Start(ref_pos.position as u64)).await?;
         let mut cur_offset = ref_pos.offset;
         if cur_offset == target_offset {
             return Ok(file);
         }
         loop {
-
             // skip current offset
             file.seek(SeekFrom::Current(8)).await?;
             let batch_size = file.read_u32().await?;

@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::{AppError, AppResult};
-use crate::protocol::Acks;
 use crate::message::{TopicData, TopicPartition};
+use crate::protocol::Acks;
+use crate::{AppError, AppResult};
 
 #[derive(Debug, Clone)]
 pub struct ProduceRequest {
@@ -60,6 +60,10 @@ pub struct PartitionResponse {
     pub partition: i32,
     pub error_code: i16,
     pub base_offset: i64,
+    // The timestamp returned by broker after appending the messages.
+    // If CreateTime is used for the topic, the timestamp will be -1.
+    // If LogAppendTime is used for the topic, the timestamp will be
+    // the broker local time when the messages are appended
     pub log_append_time: Option<i64>,
 }
 #[derive(Debug)]

@@ -1,106 +1,112 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
 
 use dashmap::DashMap;
 
-use crate::log::Log;
 use crate::message::records::MemoryRecords;
-use crate::message::Replica;
-use crate::AppError::InvalidValue;
 use crate::{global_config, AppResult};
 
-#[derive(Debug)]
-pub struct Partition<T: Log> {
+use super::replica::{JournalReplica, QueueReplica};
+
+#[derive(Debug, Clone)]
+pub struct Partition<R> {
     pub topic_partition: TopicPartition,
-    pub assigned_replicas: DashMap<i32, Replica<T>>,
+    pub assigned_replicas: DashMap<i32, R>,
 }
 
+pub type JournalPartition = Partition<JournalReplica>;
+pub type QueuePartition = Partition<QueueReplica>;
+
+#[derive(Debug, Clone)]
 pub struct LogAppendInfo {
     pub base_offset: i64,
     pub log_append_time: i64,
 }
-impl<T: Log> Partition<T> {
+
+impl<R: Replica> Partition<R> {
     pub fn new(topic_partition: TopicPartition) -> Self {
-        Partition {
+        Self {
             topic_partition,
             assigned_replicas: DashMap::new(),
         }
     }
-    ///
-    /// Append a record to the leader replica of this partition
-    /// # Arguments
-    /// * `record` - The record to append
-    /// * `queue_topic_partition` - The topic partition of the queue log
-    /// # Return
+
     pub async fn append_record_to_leader(
         &self,
         record: MemoryRecords,
         queue_topic_partition: TopicPartition,
     ) -> AppResult<LogAppendInfo> {
-        let local_replica_id = &global_config().general.id;
+        let local_replica_id = global_config().general.id;
 
         let replica = self
             .assigned_replicas
-            .get(local_replica_id)
-            .ok_or(InvalidValue("replica", local_replica_id.to_string()))?;
+            .get(&local_replica_id)
+            .ok_or_else(|| InvalidValue("replica", local_replica_id.to_string()))?;
 
         replica
-            .log
-            .append_records((queue_topic_partition, record))
+            .log()
+            .append_records(queue_topic_partition, record)
             .await
     }
-    pub fn create_replica(&mut self, broker_id: i32, replica: Replica<T>) {
-        self.assigned_replicas.entry(broker_id).or_insert(replica);
+
+    pub fn create_replica(&self, broker_id: i32, replica: R) {
+        self.assigned_replicas.insert(broker_id, replica);
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TopicPartition {
     pub topic: String,
     pub partition: i32,
 }
-
-impl Hash for TopicPartition {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id().hash(state);
-    }
-}
-
 
 impl Display for TopicPartition {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}-{}", self.topic, self.partition)
     }
 }
+
 impl TopicPartition {
     pub fn new(topic: String, partition: i32) -> Self {
-        TopicPartition { topic, partition }
+        Self { topic, partition }
     }
+
     pub fn id(&self) -> String {
         format!("{}-{}", self.topic, self.partition)
     }
-    pub fn from_string(str_name: Cow<str>) -> AppResult<TopicPartition> {
-        let index = str_name
-            .rfind('-')
-            .ok_or(InvalidValue("topic partition name", str_name.to_string()))?;
-        let topic_partition = TopicPartition {
-            topic: str_name.as_ref()[..index].to_string(),
-            partition: str_name.as_ref()[index + 1..]
-                .parse()
-                .map_err(|_| InvalidValue("topic partition id", str_name.as_ref().to_string()))?,
-        };
-        Ok(topic_partition)
+
+    pub fn from_string(str_name: Cow<str>) -> AppResult<Self> {
+        let (topic, partition) = str_name
+            .rsplit_once('-')
+            .ok_or_else(|| InvalidValue("topic partition name", str_name.to_string()))?;
+
+        let partition = partition
+            .parse()
+            .map_err(|_| InvalidValue("topic partition id", partition.to_string()))?;
+
+        Ok(Self::new(topic.to_string(), partition))
+    }
+    pub fn journal_log_dir(&self) -> String {
+        format!(
+            "{}/{}",
+            global_config().log.journal_base_dir,
+            self
+        )
+    }
+    pub fn protocol_size(&self) -> u32 {
+        4+self.id().as_bytes().len() as u32
     }
 }
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PartitionData {
     pub partition: i32,
     pub message_set: MemoryRecords,
 }
+
 impl PartitionData {
-    pub fn new(partition: i32, message_set: MemoryRecords) -> PartitionData {
-        PartitionData {
+    pub fn new(partition: i32, message_set: MemoryRecords) -> Self {
+        Self {
             partition,
             message_set,
         }
@@ -114,8 +120,8 @@ pub struct TopicData {
 }
 
 impl TopicData {
-    pub fn new(topic_name: String, partition_data: Vec<PartitionData>) -> TopicData {
-        TopicData {
+    pub fn new(topic_name: String, partition_data: Vec<PartitionData>) -> Self {
+        Self {
             topic_name,
             partition_data,
         }

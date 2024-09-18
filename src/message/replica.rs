@@ -4,9 +4,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use futures_util::future::try_maybe_done;
 use tokio::runtime::Runtime;
-use tokio::sync::RwLock;
 use tracing::{info, trace};
 
 use crate::log::JournalLog;
@@ -20,20 +18,37 @@ use crate::AppError::{IllegalStateError, InvalidValue};
 use crate::{global_config, AppError, AppResult, KvStore, LogManager};
 
 #[derive(Debug)]
-pub struct Replica<T: Log> {
+pub struct JournalReplica {
     pub broker_id: i32,
     pub topic_partition: TopicPartition,
-    pub log: Arc<T>,
+    pub log: Arc<JournalLog>,
 }
-impl<T: Log> Replica<T> {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<T>) -> Self {
-        Replica {
+impl JournalReplica {
+    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<JournalLog>) -> Self {
+        JournalReplica {
             broker_id,
             topic_partition,
             log,
         }
     }
 }
+
+pub struct QueueReplica {
+    pub broker_id: i32,
+    pub topic_partition: TopicPartition,
+    pub log: Arc<QueueLog>,
+}
+impl QueueReplica {
+    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<QueueLog>) -> Self {
+        QueueReplica {
+            broker_id,
+            topic_partition,
+            log,
+        }
+    }
+}
+
+
 /// replica manager 持有一个all partitions的集合，这个集合是从controller发送的
 /// leaderAndIsrRequest命令里获取的, 所有的replica信息都在partition里。Log里的
 /// topic partition 和 这里的partition没有做一致性的合并，各自管理各自的。replica manager
@@ -89,7 +104,7 @@ impl ReplicaManager {
                     ))))?;
 
                 let LogAppendInfo { base_offset, .. } = journal_partition
-                    .append_record_to_leader(partition.message_set, topic_partition)
+                    .append_records(partition.message_set, topic_partition)
                     .await?;
 
                 tp_response.insert(
