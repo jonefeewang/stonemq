@@ -28,14 +28,14 @@ use tokio::sync::oneshot;
 ///
 /// Returns the calculated overhead as a u32.
 pub fn calculate_journal_log_overhead(topic_partition: &TopicPartition) -> u32 {
-    // offset + size of the rest + tpstr size + tpstr
-    8 + 4 + topic_partition.protocol_size()
+    //  offset + tpstr size + tpstr
+    8 + topic_partition.protocol_size()
 }
 
 pub trait Log: Debug {
     async fn append_records(
         &self,
-        records: (TopicPartition, MemoryRecords),
+        records: (TopicPartition, u64, MemoryRecords),
     ) -> AppResult<LogAppendInfo>;
     fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
         IllegalStateError(Cow::Owned(format!(
@@ -50,7 +50,15 @@ pub(crate) enum LogType {
 }
 
 pub enum FileOp {
-    AppendRecords(
+    AppendJournal(
+        (
+            u64,
+            TopicPartition,
+            MemoryRecords,
+            oneshot::Sender<AppResult<()>>,
+        ),
+    ),
+    AppendQueue(
         (
             u64,
             TopicPartition,
@@ -63,3 +71,4 @@ pub enum FileOp {
 
 const RECOVERY_POINT_FILE_NAME: &str = ".recovery_checkpoints";
 const SPLIT_POINT_FILE_NAME: &str = ".split_checkpoints";
+const NEXT_OFFSET_CHECKPOINT_FILE_NAME: &str = ".next_offset_checkpoints";

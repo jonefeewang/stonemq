@@ -3,19 +3,23 @@ use std::fmt::{Display, Formatter};
 
 use dashmap::DashMap;
 
+use crate::log::Log;
 use crate::message::records::MemoryRecords;
-use crate::{global_config, AppResult};
+use crate::{global_config, AppError, AppResult};
 
-use super::replica::{JournalReplica, QueueReplica};
+use super::replica::JournalReplica;
+use super::QueueReplica;
 
-#[derive(Debug, Clone)]
-pub struct Partition<R> {
+#[derive(Debug)]
+pub struct JournalPartition {
     pub topic_partition: TopicPartition,
-    pub assigned_replicas: DashMap<i32, R>,
+    pub assigned_replicas: DashMap<i32, JournalReplica>,
 }
-
-pub type JournalPartition = Partition<JournalReplica>;
-pub type QueuePartition = Partition<QueueReplica>;
+#[derive(Debug)]
+pub struct QueuePartition {
+    pub topic_partition: TopicPartition,
+    pub assigned_replicas: DashMap<i32, QueueReplica>,
+}
 
 #[derive(Debug, Clone)]
 pub struct LogAppendInfo {
@@ -23,7 +27,7 @@ pub struct LogAppendInfo {
     pub log_append_time: i64,
 }
 
-impl<R: Replica> Partition<R> {
+impl JournalPartition {
     pub fn new(topic_partition: TopicPartition) -> Self {
         Self {
             topic_partition,
@@ -41,15 +45,45 @@ impl<R: Replica> Partition<R> {
         let replica = self
             .assigned_replicas
             .get(&local_replica_id)
-            .ok_or_else(|| InvalidValue("replica", local_replica_id.to_string()))?;
+            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
 
         replica
-            .log()
-            .append_records(queue_topic_partition, record)
+            .log
+            .append_records((queue_topic_partition, 0, record))
             .await
     }
 
-    pub fn create_replica(&self, broker_id: i32, replica: R) {
+    pub fn create_replica(&self, broker_id: i32, replica: JournalReplica) {
+        self.assigned_replicas.insert(broker_id, replica);
+    }
+}
+impl QueuePartition {
+    pub fn new(topic_partition: TopicPartition) -> Self {
+        Self {
+            topic_partition,
+            assigned_replicas: DashMap::new(),
+        }
+    }
+
+    pub async fn append_record_to_leader(
+        &self,
+        record: MemoryRecords,
+        queue_topic_partition: TopicPartition,
+    ) -> AppResult<LogAppendInfo> {
+        let local_replica_id = global_config().general.id;
+
+        let replica = self
+            .assigned_replicas
+            .get(&local_replica_id)
+            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+
+        replica
+            .log
+            .append_records((queue_topic_partition, 0, record))
+            .await
+    }
+
+    pub fn create_replica(&self, broker_id: i32, replica: QueueReplica) {
         self.assigned_replicas.insert(broker_id, replica);
     }
 }
@@ -78,23 +112,22 @@ impl TopicPartition {
     pub fn from_string(str_name: Cow<str>) -> AppResult<Self> {
         let (topic, partition) = str_name
             .rsplit_once('-')
-            .ok_or_else(|| InvalidValue("topic partition name", str_name.to_string()))?;
+            .ok_or_else(|| AppError::InvalidValue("topic partition name", str_name.to_string()))?;
 
         let partition = partition
             .parse()
-            .map_err(|_| InvalidValue("topic partition id", partition.to_string()))?;
+            .map_err(|_| AppError::InvalidValue("topic partition id", partition.to_string()))?;
 
         Ok(Self::new(topic.to_string(), partition))
     }
-    pub fn journal_log_dir(&self) -> String {
-        format!(
-            "{}/{}",
-            global_config().log.journal_base_dir,
-            self
-        )
+    pub fn journal_partition_dir(&self) -> String {
+        format!("{}/{}", global_config().log.journal_base_dir, self)
+    }
+    pub fn queue_partition_dir(&self) -> String {
+        format!("{}/{}", global_config().log.queue_base_dir, self)
     }
     pub fn protocol_size(&self) -> u32 {
-        4+self.id().as_bytes().len() as u32
+        4 + self.id().as_bytes().len() as u32
     }
 }
 

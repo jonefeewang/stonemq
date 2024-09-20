@@ -1,0 +1,83 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'stonemq'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=stonemq"
+                ],
+                "filter": {
+                    "name": "stonemq",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'stonemq'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=stonemq",
+                    "--package=stonemq"
+                ],
+                "filter": {
+                    "name": "stonemq",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'stonemq'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=stonemq",
+                    "--package=stonemq"
+                ],
+                "filter": {
+                    "name": "stonemq",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'config'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=config",
+                    "--package=stonemq"
+                ],
+                "filter": {
+                    "name": "config",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

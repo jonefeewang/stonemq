@@ -59,6 +59,8 @@ pub enum AppError {
     InvalidValue(&'static str, String),
     #[error("{0}")]
     CommonError(String),
+    #[error("{0}")]
+    FileContentUnavailableError(String),
     FormatError(#[from] serde_json::Error),
     Incomplete,
     #[error("I/O {0}")]
@@ -74,6 +76,12 @@ pub enum AppError {
     #[error("Accept error = {0}")]
     Accept(String),
     TracingError(#[from] tracing::dispatcher::SetGlobalDefaultError),
+
+    #[error("无法修改只读索引文件: {0}")]
+    ReadOnlyIndexModification(Cow<'static, str>),
+
+    #[error("索引文件已满")]
+    IndexFileFull,
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}

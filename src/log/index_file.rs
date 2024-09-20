@@ -1,13 +1,11 @@
-use crate::AppError::IllegalStateError;
-use crate::AppResult;
 use crossbeam_utils::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::borrow::Cow;
-use std::path::Path;
-use std::u32;
+use std::{path::Path, u32};
 use tokio::fs::File;
 use tokio::sync::RwLock;
-use tracing::trace;
+use tracing::{debug, trace};
+
+use crate::{AppError, AppResult};
 
 const INDEX_ENTRY_SIZE: usize = 8;
 
@@ -28,9 +26,18 @@ pub struct IndexFile {
     file: File,
 }
 impl IndexFile {
+    /// Creates a new IndexFile with the specified path, size, and mode.
+    ///
+    /// # Arguments
+    /// * `path` - The path to the index file
+    /// * `max_index_file_size` - The maximum size of the index file
+    /// * `read_only` - Whether the file should be opened in read-only mode
+    ///
+    /// # Returns
+    /// A Result containing the new IndexFile or an error
     pub async fn new<P: AsRef<Path>>(
         path: P,
-        max_index_file_size: usize,
+        index_file_max_size: usize,
         read_only: bool,
     ) -> AppResult<Self> {
         let path = path.as_ref();
@@ -51,7 +58,7 @@ impl IndexFile {
         let original_entries = original_len / INDEX_ENTRY_SIZE;
 
         if !read_only {
-            file.set_len(max_index_file_size as u64).await?;
+            file.set_len(index_file_max_size as u64).await?;
         }
 
         let mode = if read_only {
@@ -77,16 +84,24 @@ impl IndexFile {
         })
     }
 
+    /// Adds a new entry to the index file.
+    ///
+    /// # Arguments
+    /// * `relative_offset` - The relative offset of the entry
+    /// * `position` - The position of the entry
+    ///
+    /// # Returns
+    /// A Result indicating success or failure
     pub async fn add_entry(&self, relative_offset: u32, position: u32) -> AppResult<()> {
         let mut mode = self.mode.write().await;
         match &mut *mode {
-            IndexFileMode::ReadOnly(_) => Err(IllegalStateError(Cow::Borrowed(
-                "attempt to add entry to read-only index file",
-            ))),
+            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
+                "尝试向只读索引文件添加条目".into(),
+            )),
             IndexFileMode::ReadWrite(mmap) => {
                 let entries = self.entries.load();
                 if (entries + 1) * INDEX_ENTRY_SIZE > mmap.len() {
-                    return Err(IllegalStateError(Cow::Borrowed(" index file is full")));
+                    return Err(AppError::IndexFileFull);
                 }
 
                 let offset = entries * INDEX_ENTRY_SIZE;
@@ -97,12 +112,20 @@ impl IndexFile {
             }
         }
     }
+
+    /// Resizes the index file to the specified size.
+    ///
+    /// # Arguments
+    /// * `new_size` - The new size of the index file
+    ///
+    /// # Returns
+    /// A Result indicating success or failure
     pub async fn resize(&self, new_size: usize) -> AppResult<()> {
         let mut mode = self.mode.write().await;
         match &mut *mode {
-            IndexFileMode::ReadOnly(_) => Err(IllegalStateError(Cow::Borrowed(
-                "attempt to resize read-only index file",
-            ))),
+            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
+                "尝试调整只读索引文件的大小".into(),
+            )),
             IndexFileMode::ReadWrite(mmap) => {
                 // Flush the existing mmap to ensure all data is written to disk
                 mmap.flush()?;
@@ -120,6 +143,14 @@ impl IndexFile {
             }
         }
     }
+
+    /// Looks up an entry in the index file based on the target offset.
+    ///
+    /// # Arguments
+    /// * `target_offset` - The target offset to search for
+    ///
+    /// # Returns
+    /// An Option containing the entry offset and position if found, or None if not found
     pub async fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
         let entries = self.entries.load();
         if entries == 0 {
@@ -175,11 +206,15 @@ impl IndexFile {
         None
     }
 
+    /// Flushes the index file to disk.
+    ///
+    /// # Returns
+    /// A Result indicating success or failure
     pub async fn flush(&self) -> AppResult<()> {
         let mmap = &*self.mode.write().await;
         match mmap {
-            IndexFileMode::ReadOnly(_) => Err(IllegalStateError(
-                "attempt to flush read-only index file".into(),
+            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
+                "尝试刷新只读索引文件".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
                 mmap.flush()?;
@@ -188,24 +223,54 @@ impl IndexFile {
         }
     }
 
+    /// Checks if the index file is full.
+    ///
+    /// # Returns
+    /// A Result containing a boolean indicating if the index file is full or an error
     pub async fn is_full(&self) -> AppResult<bool> {
         let entries = self.entries.load();
         let file_size = self.file.metadata().await?.len() as usize;
         let is_full = (entries + 1) * INDEX_ENTRY_SIZE > file_size;
         Ok(is_full)
     }
+
+    /// Returns the number of entries in the index file.
     pub fn entry_count(&self) -> usize {
         self.entries.load()
     }
+
+    /// Closes the index file.
+    ///
+    /// # Returns
+    /// A Result indicating success or failure
+    pub async fn close(&self) -> AppResult<()> {
+        self.trim_to_valid_size().await?;
+        let mut mode = self.mode.write().await;
+        match &mut *mode {
+            IndexFileMode::ReadOnly(_) => {
+                debug!("close read-only index file");
+            }
+            IndexFileMode::ReadWrite(mmap) => {
+                mmap.flush()?;
+                debug!("close read-write index file");
+            }
+        }
+        Ok(())
+    }
+
+    /// Trims the index file to the valid size.
+    ///
+    /// # Returns
+    /// A Result indicating success or failure
     pub async fn trim_to_valid_size(&self) -> AppResult<()> {
         // 注意先获得一个读锁，再获取一个写锁，防止死锁
         let new_size = self.entries.load() * INDEX_ENTRY_SIZE;
         {
             let mmap = &*self.mode.read().await;
-            if let IndexFileMode::ReadOnly(mmap) = mmap {
-                return Err(IllegalStateError(Cow::Borrowed(
-                    "attempt to trim read-only index file",
-                )));
+            if let IndexFileMode::ReadOnly(_) = mmap {
+                return Err(AppError::ReadOnlyIndexModification(
+                    "尝试裁剪只读索引文件".into(),
+                ));
             }
             // 释放读锁
         }
@@ -215,6 +280,8 @@ impl IndexFile {
 }
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::service::setup_tracing;
     use rstest::{fixture, rstest};
@@ -228,7 +295,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_new_index_file(setup: ()) {
+    async fn test_new_index_file(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -241,7 +308,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_add_entry(setup: ()) {
+    async fn test_add_entry(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -253,7 +320,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_add_entry_full(setup: ()) {
+    async fn test_add_entry_full(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, INDEX_ENTRY_SIZE, false)
@@ -268,7 +335,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_lookup(setup: ()) {
+    async fn test_lookup(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -285,7 +352,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_resize(setup: ()) {
+    async fn test_resize(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, INDEX_ENTRY_SIZE * 2, false)
@@ -312,7 +379,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_read_only_mode(setup: ()) {
+    async fn test_read_only_mode(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
 
@@ -338,7 +405,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_flush(setup: ()) {
+    async fn test_flush(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -349,7 +416,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_trim_to_valid_size(setup: ()) {
+    async fn test_trim_to_valid_size(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -367,7 +434,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_multiple_lookups(setup: ()) {
+    async fn test_multiple_lookups(_setup: ()) {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("index.idx");
         let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
@@ -387,5 +454,71 @@ mod tests {
                 Some((i * 100, i * 200))
             );
         }
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_concurrent_access(_setup: ()) {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("index.idx");
+        let index_file = Arc::new(IndexFile::new(&file_path, 1024, false).await.unwrap());
+
+        let mut handles = vec![];
+        for i in 0..10 {
+            let index_file = Arc::clone(&index_file);
+            handles.push(tokio::spawn(async move {
+                index_file.add_entry(i * 100, i * 200).await.unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(index_file.entry_count(), 10);
+        for i in 0..10 {
+            assert_eq!(index_file.lookup(i * 100).await, Some((i * 100, i * 200)));
+        }
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_error_handling(_setup: ()) {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("index.idx");
+        let index_file = IndexFile::new(&file_path, INDEX_ENTRY_SIZE, false)
+            .await
+            .unwrap();
+
+        index_file.add_entry(100, 200).await.unwrap();
+        let result = index_file.add_entry(300, 400).await;
+        assert!(matches!(result, Err(AppError::IndexFileFull)));
+
+        let read_only_file = IndexFile::new(&file_path, INDEX_ENTRY_SIZE, true)
+            .await
+            .unwrap();
+        let result = read_only_file.add_entry(500, 600).await;
+        assert!(matches!(
+            result,
+            Err(AppError::ReadOnlyIndexModification(_))
+        ));
+
+        let result = read_only_file.resize(2048).await;
+        assert!(matches!(
+            result,
+            Err(AppError::ReadOnlyIndexModification(_))
+        ));
+
+        let result = read_only_file.flush().await;
+        assert!(matches!(
+            result,
+            Err(AppError::ReadOnlyIndexModification(_))
+        ));
+
+        let result = read_only_file.trim_to_valid_size().await;
+        assert!(matches!(
+            result,
+            Err(AppError::ReadOnlyIndexModification(_))
+        ));
     }
 }

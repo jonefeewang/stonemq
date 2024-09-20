@@ -1,3 +1,5 @@
+use crate::log::file_records::FileRecords;
+use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;
 use crate::log::Log;
 use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
@@ -8,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
-use tracing::{info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 #[derive(Debug)]
 pub struct QueueLog {
@@ -17,6 +19,7 @@ pub struct QueueLog {
     pub log_start_offset: u64,
     pub recover_point: AtomicCell<u64>,
     pub next_offset: AtomicCell<u64>,
+    pub index_file_max_size: u32,
 }
 
 impl Hash for QueueLog {
@@ -49,9 +52,9 @@ impl Log for QueueLog {
     /// This method acquires a write lock on the entire log, which may impact concurrent operations.
     async fn append_records(
         &self,
-        records: (TopicPartition, MemoryRecords),
+        records: (TopicPartition, u64, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
-        let (topic_partition, memory_records) = records;
+        let (topic_partition, offset, memory_records) = records;
 
         let (active_seg_size, active_segment_offset_index_full) = {
             let segments = self.segments.read().await;
@@ -82,7 +85,7 @@ impl Log for QueueLog {
             log_append_time: -1,
         };
 
-        self.append_to_active_segment(topic_partition, memory_records)
+        self.append_to_active_segment(topic_partition, offset, memory_records)
             .await?;
 
         self.next_offset
@@ -110,8 +113,10 @@ impl QueueLog {
         mut segments: BTreeMap<u64, LogSegment>,
         log_start_offset: u64,
         recovery_offset: u64,
+        next_offset: u64,
+        index_file_max_size: u32,
     ) -> AppResult<Self> {
-        let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
+        let dir = topic_partition.queue_partition_dir();
 
         if !Path::new(&dir).exists() {
             info!("log dir does not exists, create queue log dir:{}", dir);
@@ -120,7 +125,7 @@ impl QueueLog {
 
         if segments.is_empty() {
             warn!("no segment file found in queue log dir:{}", dir);
-            let segment = LogSegment::new_queue_seg(topic_partition, 0, true).await?;
+            let segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
             segments.insert(0, segment);
         }
 
@@ -129,7 +134,8 @@ impl QueueLog {
             segments: RwLock::new(segments),
             log_start_offset,
             recover_point: AtomicCell::new(recovery_offset),
-            next_offset: AtomicCell::new(recovery_offset + 1),
+            next_offset: AtomicCell::new(next_offset),
+            index_file_max_size,
         })
     }
 
@@ -161,17 +167,22 @@ impl QueueLog {
     /// Returns a `Result` containing a `BTreeMap` of base offsets to `LogSegment`s.
     pub fn load_segments(
         topic_partition: &TopicPartition,
-        next_offset: u64,
+        _: u64,
+        index_file_max_size: u32,
         rt: &Runtime,
     ) -> AppResult<BTreeMap<u64, LogSegment>> {
         let mut segments = BTreeMap::new();
-        let dir = format!("{}/{}", global_config().log.queue_base_dir, topic_partition);
-        info!("load segment files from dir:{}", topic_partition);
+        let dir = topic_partition.queue_partition_dir();
+        info!("从目录加载段文件：{}", dir);
 
         if std::fs::read_dir(&dir)?.next().is_none() {
-            info!("queue logs directory is empty: {}", &dir);
+            info!("队列日志目录为空：{}", &dir);
             return Ok(segments);
         }
+
+        let mut index_files = BTreeMap::new();
+        let mut log_files = BTreeMap::new();
+
         let mut read_dir = std::fs::read_dir(&dir)?;
         while let Some(file) = read_dir.next().transpose()? {
             if file.metadata()?.file_type().is_file() {
@@ -179,34 +190,39 @@ impl QueueLog {
                 let dot_index = file_name.rfind('.');
                 match dot_index {
                     None => {
-                        warn!("invalid segment file name:{}", file_name);
+                        warn!("无效的段文件名：{}", file_name);
                         continue;
                     }
                     Some(dot_index) => {
                         let file_prefix = &file_name[..dot_index];
                         let file_suffix = &file_name[dot_index..];
                         match file_suffix {
-                            ".timeindex" => {}
-                            ".index" => {}
+                            ".index" => {
+                                let index_file = rt.block_on(IndexFile::new(
+                                    file.path(),
+                                    index_file_max_size as usize,
+                                    false,
+                                ))?;
+                                index_files.insert(file_prefix.parse::<u64>()?, index_file);
+                            }
                             ".log" => {
+                                // TODO: 修复还未flush到磁盘上的数据，就是recovery_point到log最后的一个offset数据
+                                // 这里目前只覆盖优雅关闭的场景
                                 let base_offset = file_prefix.parse::<u64>();
                                 match base_offset {
                                     Ok(base_offset) => {
-                                        let segment = rt.block_on(LogSegment::new_queue_seg(
-                                            topic_partition,
-                                            base_offset,
-                                            false,
-                                        ))?;
-                                        segments.insert(base_offset, segment);
+                                        let file_records =
+                                            rt.block_on(FileRecords::open(file.path()))?;
+                                        log_files.insert(base_offset, file_records);
                                     }
                                     Err(_) => {
-                                        warn!("invalid segment file name:{}", file_prefix);
+                                        warn!("无效的段文件名：{}", file_prefix);
                                         continue;
                                     }
                                 }
                             }
                             other => {
-                                warn!("invalid segment file name:{}", other);
+                                warn!("无效的段文件名：{}", other);
                                 continue;
                             }
                         }
@@ -215,7 +231,61 @@ impl QueueLog {
             }
         }
 
+        for (base_offset, file_records) in log_files {
+            let offset_index = index_files.remove(&base_offset);
+            if let Some(offset_index) = offset_index {
+                let segment = LogSegment::open(
+                    topic_partition.clone(),
+                    base_offset,
+                    file_records,
+                    offset_index,
+                    None,
+                );
+                segments.insert(base_offset, segment);
+            } else {
+                error!("未找到偏移索引文件：{}", base_offset);
+            }
+        }
+
         Ok(segments)
+    }
+
+    /// 从已有的数据加载 `QueueLog`。
+    ///
+    /// # 参数
+    ///
+    /// * `topic_partition` - 主题分区。
+    /// * `recover_point` - 恢复点偏移量。
+    /// * `dir` - 数据目录。
+    /// * `max_index_file_size` - 最大索引文件大小。
+    /// * `rt` - Tokio 运行时。
+    ///
+    /// # 返回
+    ///
+    /// 返回加载的 `QueueLog` 实例。
+    pub fn load_from(
+        topic_partition: &TopicPartition,
+        recover_point: u64,
+        index_file_max_size: u32,
+        rt: &Runtime,
+    ) -> AppResult<Self> {
+        let segments =
+            Self::load_segments(topic_partition, recover_point, index_file_max_size, rt)?;
+
+        let log_start_offset = segments
+            .first_key_value()
+            .map(|(offset, _)| *offset)
+            .unwrap_or(0);
+        let next_offset = recover_point + 1;
+        let log = QueueLog {
+            topic_partition: topic_partition.clone(),
+            segments: RwLock::new(segments),
+            log_start_offset,
+            recover_point: AtomicCell::new(recover_point),
+            next_offset: AtomicCell::new(next_offset),
+            index_file_max_size,
+        };
+        Ok(log)
     }
 
     /// Determines if a new segment roll is needed.
@@ -260,8 +330,13 @@ impl QueueLog {
         self.flush(active_seg).await?;
         let new_base_offset = self.next_offset.load();
 
-        let new_seg =
-            LogSegment::new_queue_seg(&self.topic_partition, new_base_offset, true).await?;
+        let new_seg = LogSegment::new(
+            &self.topic_partition,
+            self.topic_partition.queue_partition_dir(),
+            new_base_offset,
+            self.index_file_max_size,
+        )
+        .await?;
         segments.insert(new_base_offset, new_seg);
         trace!(
             "Rolled queue log segment to new base offset: {}",
@@ -287,6 +362,7 @@ impl QueueLog {
     async fn append_to_active_segment(
         &self,
         topic_partition: TopicPartition,
+        offset: u64,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await;
@@ -298,7 +374,7 @@ impl QueueLog {
         let (tx, rx) = oneshot::channel();
         active_seg
             .1
-            .append_record((self.next_offset.load(), topic_partition, memory_records, tx))
+            .append_record((offset, topic_partition, memory_records, tx))
             .await?;
         rx.await??;
         Ok(())

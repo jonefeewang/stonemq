@@ -7,14 +7,15 @@ use crate::AppError::InvalidValue;
 use crate::AppResult;
 use bytes::Buf;
 use crossbeam_utils::atomic::AtomicCell;
-use tokio::io::AsyncReadExt;
-use std::io::SeekFrom;
+use std::io::{Error, ErrorKind, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
+use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::Duration;
 use tracing::{error, trace};
 
 #[derive(Debug)]
@@ -74,8 +75,13 @@ impl FileRecords {
             let mut writer = BufWriter::new(file);
             while let Some(message) = rx.recv().await {
                 match message {
-                    FileOp::AppendRecords((offset, topic_partition, records, resp_tx)) => {
-                        match Self::append(&mut writer, (offset, topic_partition, records)).await {
+                    FileOp::AppendJournal((offset, topic_partition, records, resp_tx)) => {
+                        match Self::append_journal_recordbatch(
+                            &mut writer,
+                            (offset, topic_partition, records),
+                        )
+                        .await
+                        {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
                                 total_size.fetch_add(total_write);
@@ -91,6 +97,29 @@ impl FileRecords {
                             }
                         }
                     }
+                    FileOp::AppendQueue((offset, topic_partition, records, resp_tx)) => {
+                        match Self::append_queue_recordbatch(
+                            &mut writer,
+                            (offset, topic_partition, records),
+                        )
+                        .await
+                        {
+                            Ok(total_write) => {
+                                trace!("{} file append finished .", &file_name);
+                                total_size.fetch_add(total_write);
+                                resp_tx.send(Ok(())).unwrap_or_else(|_| {
+                                    error!("send success  response error");
+                                });
+                            }
+                            Err(error) => {
+                                error!("append record error:{:?}", error);
+                                resp_tx.send(Err(error)).unwrap_or_else(|_| {
+                                    error!("send error response error");
+                                });
+                            }
+                        }
+                    }
+
                     FileOp::Flush(sender) => match writer.get_ref().sync_all().await {
                         Ok(_) => {
                             sender
@@ -113,60 +142,153 @@ impl FileRecords {
         self.tx.closed().await;
     }
 
-    pub async fn append(
+    /// 将日志记录批次追加到日志文件中
+    ///
+    /// 日志记录格式：
+    /// 4字节：total_size
+    /// 8字节：offset
+    /// 4字节：topic_partition 字符串长度
+    /// 字节：topic_partition 字符串
+    /// 剩余字节：消息内容(MemoryRecords)
+    ///
+    /// # 参数
+    ///
+    /// * `buf_writer` - 文件的缓冲写入器
+    /// * `offset` - 日志记录的偏移量
+    /// * `topic_partition` - 主题分区信息
+    /// * `records` - 要追加的内存记录
+    ///
+    /// # 返回值
+    ///
+    /// 返回写入的总字节数，如果成功的话
+    ///
+    /// # 错误
+    ///
+    /// 如果写入过程中发生错误，将返回一个 `AppError`
+    pub async fn append_journal_recordbatch(
         buf_writer: &mut BufWriter<File>,
         (offset, topic_partition, records): (u64, TopicPartition, MemoryRecords),
     ) -> AppResult<usize> {
         trace!("正在将日志追加到文件...");
-        
+
         let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();
-        
-        let msg = records.buffer.ok_or_else(|| InvalidValue(
-            "追加到文件时消息为空".into(),
-            topic_partition_id.to_string(),
-        ))?;
 
-        let total_write = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
-        let rest_size =topic_partition.protocol_size() + msg.remaining() as u32;
+        let msg = records.buffer.ok_or_else(|| {
+            InvalidValue(
+                "追加到文件时消息为空".into(),
+                topic_partition_id.to_string(),
+            )
+        })?;
 
+        let total_size = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
+
+        buf_writer.write_u32(total_size as u32).await?;
         buf_writer.write_u64(offset).await?;
-        buf_writer.write_u32(rest_size).await?;
         buf_writer.write_u32(tp_id_bytes.len() as u32).await?;
         buf_writer.write_all(tp_id_bytes).await?;
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
 
+        Ok(total_size as usize)
+    }
+
+    pub async fn append_queue_recordbatch(
+        buf_writer: &mut BufWriter<File>,
+        (_, topic_partition, records): (u64, TopicPartition, MemoryRecords),
+    ) -> AppResult<usize> {
+        let topic_partition_id = topic_partition.id();
+        let total_write = records.size();
+
+        let msg = records.buffer.ok_or_else(|| {
+            InvalidValue(
+                "追加到文件时消息为空".into(),
+                topic_partition_id.to_string(),
+            )
+        })?;
+        buf_writer.write_all(msg.as_ref()).await?;
+        buf_writer.flush().await?;
         Ok(total_write as usize)
     }
+
     pub fn size(&self) -> usize {
         self.size.load()
     }
     /// 将文件指针移动到指定的offset位置
-    pub async fn seek(
+    /// 如果报错，很有可能是当前内容还未落盘，所以读取不到，可以sleep一会再读取
+    pub async fn seek_journal(
         mut file: File,
         target_offset: u64,
         ref_pos: &PositionInfo,
-    ) -> AppResult<File> {
-        file.seek(SeekFrom::Start(ref_pos.position as u64)).await?;
-        let mut cur_offset = ref_pos.offset;
-        if cur_offset == target_offset {
+    ) -> std::io::Result<File> {
+        let PositionInfo {
+            offset, position, ..
+        } = ref_pos;
+
+        if *offset == target_offset {
             return Ok(file);
         }
-        loop {
-            // skip current offset
-            file.seek(SeekFrom::Current(8)).await?;
-            let batch_size = file.read_u32().await?;
-            // skip current batch
-            file.seek(SeekFrom::Current(batch_size as i64)).await?;
-            cur_offset = file.read_u64().await?;
 
-            if cur_offset == target_offset {
-                file.seek(SeekFrom::Current(-8)).await?;
+        const MAX_RETRIES: u32 = 5;
+        const RETRY_DELAY: Duration = Duration::from_millis(100);
+
+        for retry in 0..MAX_RETRIES {
+            match file.seek(SeekFrom::Start(*position as u64)).await {
+                Ok(_) => match Self::seek_to_target_offset(&mut file, target_offset).await {
+                    Ok(found) => {
+                        if found {
+                            return Ok(file);
+                        }
+                    }
+                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                        if retry == MAX_RETRIES - 1 {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                },
+                Err(e) => {
+                    if retry == MAX_RETRIES - 1 {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    continue;
+                }
+            }
+
+            // 如果没有找到目标offset,并且已经到达文件末尾,则重试
+            if retry == MAX_RETRIES - 1 {
                 break;
             }
+            tokio::time::sleep(RETRY_DELAY).await;
         }
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            format!("目标偏移量 {} 未找到", target_offset),
+        ));
+    }
 
-        Ok(file)
+    async fn seek_to_target_offset(file: &mut File, target_offset: u64) -> std::io::Result<bool> {
+        let mut buffer = [0u8; 12];
+
+        loop {
+            file.read_exact(&mut buffer).await?;
+            let batch_size = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+            let current_offset = u64::from_be_bytes([
+                buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9], buffer[10],
+                buffer[11],
+            ]);
+
+            if current_offset == target_offset {
+                file.seek(SeekFrom::Current(-12)).await?;
+                return Ok(true);
+            } else if current_offset > target_offset {
+                return Ok(false);
+            } else {
+                file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
+            }
+        }
     }
 }

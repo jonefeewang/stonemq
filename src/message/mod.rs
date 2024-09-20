@@ -1,6 +1,6 @@
-pub use replica::{ReplicaManager, JournalReplica, QueueReplica};
-pub use topic_partition::{TopicPartition,Partition,LogAppendInfo,TopicData,PartitionData};
-pub use records::{MemoryRecords, MemoryRecordBuilder};
+pub use records::{MemoryRecordBuilder, MemoryRecords};
+pub use replica::{JournalReplica, QueueReplica, ReplicaManager};
+pub use topic_partition::{LogAppendInfo, PartitionData, TopicData, TopicPartition};
 mod records;
-mod topic_partition;
 mod replica;
+mod topic_partition;

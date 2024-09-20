@@ -7,25 +7,26 @@ use dashmap::DashMap;
 use tokio::runtime::Runtime;
 use tracing::{info, trace};
 
-use crate::log::JournalLog;
-use crate::log::Log;
-use crate::log::QueueLog;
-use crate::message::{LogAppendInfo, Partition, TopicData, TopicPartition};
+use crate::log::{JournalLog, Log, QueueLog};
+use crate::message::{LogAppendInfo, TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
 use crate::{global_config, AppError, AppResult, KvStore, LogManager};
 
+use super::topic_partition::{JournalPartition, QueuePartition};
+
 #[derive(Debug)]
-pub struct JournalReplica {
+pub struct Replica<L: Log> {
     pub broker_id: i32,
     pub topic_partition: TopicPartition,
-    pub log: Arc<JournalLog>,
+    pub log: Arc<L>,
 }
-impl JournalReplica {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<JournalLog>) -> Self {
-        JournalReplica {
+
+impl<L: Log> Replica<L> {
+    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<L>) -> Self {
+        Replica {
             broker_id,
             topic_partition,
             log,
@@ -33,21 +34,8 @@ impl JournalReplica {
     }
 }
 
-pub struct QueueReplica {
-    pub broker_id: i32,
-    pub topic_partition: TopicPartition,
-    pub log: Arc<QueueLog>,
-}
-impl QueueReplica {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<QueueLog>) -> Self {
-        QueueReplica {
-            broker_id,
-            topic_partition,
-            log,
-        }
-    }
-}
-
+pub type JournalReplica = Replica<JournalLog>;
+pub type QueueReplica = Replica<QueueLog>;
 
 /// replica manager 持有一个all partitions的集合，这个集合是从controller发送的
 /// leaderAndIsrRequest命令里获取的, 所有的replica信息都在partition里。Log里的
@@ -55,8 +43,8 @@ impl QueueReplica {
 /// 通过log manager来管理存储层
 #[derive(Debug)]
 pub struct ReplicaManager {
-    all_journal_partitions: DashMap<TopicPartition, Partition<JournalLog>>,
-    all_queue_partitions: DashMap<TopicPartition, Partition<QueueLog>>,
+    all_journal_partitions: DashMap<TopicPartition, JournalPartition>,
+    all_queue_partitions: DashMap<TopicPartition, QueuePartition>,
     queue_2_journal: DashMap<TopicPartition, TopicPartition>,
     pub(crate) log_manager: Arc<LogManager>,
     journal_metadata_cache: DashMap<String, BTreeSet<i32>>,
@@ -104,7 +92,7 @@ impl ReplicaManager {
                     ))))?;
 
                 let LogAppendInfo { base_offset, .. } = journal_partition
-                    .append_records(partition.message_set, topic_partition)
+                    .append_record_to_leader(partition.message_set, topic_partition)
                     .await?;
 
                 tp_response.insert(
@@ -141,7 +129,7 @@ impl ReplicaManager {
             .get(JOURNAL_TOPICS_LIST)
             .ok_or(InvalidValue("journal_topics_list", String::new()))?;
         let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
-        let mut partitions = rt.block_on(self.create_journal_partitions(broker_id, tp_strs))?;
+        let mut partitions = self.create_journal_partitions(broker_id, tp_strs, rt)?;
         self.all_journal_partitions.extend(partitions.drain(..));
         info!(
             "load journal partitions: {:?}",
@@ -193,7 +181,8 @@ impl ReplicaManager {
 
         // 启动journal log splitter
         // Create a BTreeMap to store the reverse mapping
-        let mut journal_to_queues: BTreeMap<TopicPartition, HashSet<TopicPartition>> = BTreeMap::new();
+        let mut journal_to_queues: BTreeMap<TopicPartition, HashSet<TopicPartition>> =
+            BTreeMap::new();
 
         // Iterate over the DashMap and build the reverse mapping
         for entry in self.queue_2_journal.iter() {
@@ -208,19 +197,23 @@ impl ReplicaManager {
 
         // 启动journal log splitter
         for (journal_tp, queue_tps) in &journal_to_queues {
-            trace!("starting splitter task for journal: {} and queues: {:?}", 
-                journal_tp.id(),queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>());
+            trace!(
+                "starting splitter task for journal: {} and queues: {:?}",
+                journal_tp.id(),
+                queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>()
+            );
             rt.block_on(self.log_manager.start_splitter_task(journal_tp, queue_tps))?;
         }
         info!("ReplicaManager startup completed.");
         Ok(())
     }
 
-    async fn create_journal_partitions(
+    fn create_journal_partitions(
         &mut self,
         broker_id: i32,
         tp_strs: Vec<&str>,
-    ) -> Result<Vec<(TopicPartition, Partition<JournalLog>)>, AppError> {
+        rt: &Runtime,
+    ) -> Result<Vec<(TopicPartition, JournalPartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
             if tp_str.trim().is_empty() {
@@ -236,10 +229,9 @@ impl ReplicaManager {
             // 获取对应的log，没有的话，创建一个
             let log = self
                 .log_manager
-                .get_or_create_journal_log(&topic_partition)
-                .await?;
+                .get_or_create_journal_log(&topic_partition, rt)?;
             let replica = Replica::new(broker_id, topic_partition.clone(), log);
-            let mut partition = Partition::new(topic_partition.clone());
+            let partition = JournalPartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));
         }
@@ -250,7 +242,7 @@ impl ReplicaManager {
         broker_id: i32,
         tp_strs: Vec<&str>,
         rt: &Runtime,
-    ) -> Result<Vec<(TopicPartition, Partition<QueueLog>)>, AppError> {
+    ) -> Result<Vec<(TopicPartition, QueuePartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
             if tp_str.trim().is_empty() {
@@ -267,7 +259,7 @@ impl ReplicaManager {
                 .log_manager
                 .get_or_create_queue_log(&topic_partition, rt)?;
             let replica = Replica::new(broker_id, topic_partition.clone(), log);
-            let mut partition = Partition::new(topic_partition.clone());
+            let partition = QueuePartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));
         }
@@ -317,7 +309,12 @@ impl ReplicaManager {
             }
         }
     }
-    pub fn get_journal_partition(&self, queue_topic_partition: &TopicPartition) -> Option<TopicPartition> {
-        self.queue_2_journal.get(queue_topic_partition).map(|tp| tp.clone())
+    pub fn get_journal_partition(
+        &self,
+        queue_topic_partition: &TopicPartition,
+    ) -> Option<TopicPartition> {
+        self.queue_2_journal
+            .get(queue_topic_partition)
+            .map(|tp| tp.clone())
     }
 }
