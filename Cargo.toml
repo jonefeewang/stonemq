@@ -14,7 +14,17 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 #
 [dependencies]
-tokio = { version = "1.33", features = ["rt", "time", "net", "io-util", "fs", "macros", "signal", "rt-multi-thread", "tracing"] }
+tokio = { version = "1.33", features = [
+    "rt",
+    "time",
+    "net",
+    "io-util",
+    "fs",
+    "macros",
+    "signal",
+    "rt-multi-thread",
+    "tracing",
+] }
 console-subscriber = "0.2.0"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
@@ -45,8 +55,17 @@ flate2 = "1.0"
 lz4 = "1.23"
 snap = "1.0.0"
 memmap2 = "0.9.4"
+chrono = "0.4"
 
 [dev-dependencies]
 fake = "2.9.2"
 tempfile = "3"
 rstest = "0.22.0"
+
+[[bin]]
+name = "stonemq"
+path = "src/bin/stonemq.rs"
+
+[[bin]]
+name = "log-parser"
+path = "src/bin/log_parser.rs"

@@ -44,6 +44,27 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug log-parser",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=log-parser",
+                    "--package=stonemq"
+                ],
+                "filter": {
+                    "name": "log-parser",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "log",
+                "--file=test_data/journal/journal-0/0.log"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in executable 'stonemq'",
             "cargo": {
                 "args": [

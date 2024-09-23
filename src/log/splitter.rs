@@ -75,6 +75,7 @@ impl SplitterTask {
         let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
         let journal_seg_file = fs::File::open(segment_path).await?;
 
+        // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
         let mut journal_seg_file =
             FileRecords::seek_journal(journal_seg_file, target_offset, position_info).await?;
         let mut last_read_offset = target_offset - 1;
@@ -88,7 +89,9 @@ impl SplitterTask {
                     if let Some(io_err) =
                         e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
                     {
-                        if io_err.kind() == ErrorKind::UnexpectedEof {
+                        if io_err.kind() == ErrorKind::UnexpectedEof
+                            || io_err.kind() == ErrorKind::NotFound
+                        {
                             // 如果当前是active的segment的，就一直等待，直到active segment切换
                             if self.is_active_segment(position_info.base_offset).await? {
                                 sleep(Duration::from_millis(100)).await;
@@ -96,11 +99,12 @@ impl SplitterTask {
                             } else {
                                 // 如果当前segment不是active segment，则直接返回, 直到读取到最后一个offset，
                                 // 这里有可能会导致切换到下一个segment，这也是整个读取过程中切换segment的唯一地方
+                                // 这里需要返回，否则会一直循环
                                 return Ok(last_read_offset);
                             }
                         }
                     } else {
-                        return Err(e.into());
+                        return Err(e);
                     }
                 }
             }

@@ -147,10 +147,7 @@ pub struct LogConfig {
     pub kv_store_path: String,
     /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
-    /// the size of the file records communication channel size
-    pub fr_read_chnl_size: usize,
-    pub fr_write_chnl_size: usize,
-    //
+
     pub splitter_read_buffer_size: u32,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]

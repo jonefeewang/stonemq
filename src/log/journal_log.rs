@@ -283,7 +283,7 @@ impl JournalLog {
             self.topic_partition.clone(),
             new_base_offset,
             FileRecords::open(format!(
-                "{}/{}",
+                "{}/{}.log",
                 self.topic_partition.journal_partition_dir(),
                 new_base_offset
             ))

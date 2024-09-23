@@ -289,12 +289,12 @@ impl LogManager {
 
     pub async fn start_splitter_task(
         &self,
-        journal_topic_partition: &TopicPartition,
-        queue_topic_partition: &HashSet<TopicPartition>,
+        journal_topic_partition: TopicPartition,
+        queue_topic_partition: HashSet<TopicPartition>,
     ) -> AppResult<()> {
         let journal_log = self
             .journal_logs
-            .get(journal_topic_partition)
+            .get(&journal_topic_partition)
             .unwrap()
             .value()
             .clone();
@@ -307,8 +307,6 @@ impl LogManager {
             .collect();
         let mut splitter =
             SplitterTask::new(journal_log, queue_logs, journal_topic_partition.clone());
-        let ret = tokio::spawn(async move { splitter.run().await });
-        ret.await.unwrap()?;
-        Ok(())
+        splitter.run().await
     }
 }

@@ -144,7 +144,6 @@ impl MemoryRecords {
         Ok(())
     }
 
-
     // deserialize and validate the record batches
     // currently only support magic 2, other magic will be treated as invalid and return error
     // magic 2 has only one record batch
@@ -299,40 +298,39 @@ impl MemoryRecords {
 
 #[derive(Debug)]
 pub struct Record {
-    length: i32,
-    attributes: i8,
+    pub length: i32,
+    pub attributes: i8,
     //这个字段比较特殊long型
-    timestamp_delta: i64,
-    offset_delta: i32,
-    key_len: i32,
-    key: Option<Vec<u8>>,
-    value_len: i32,
-    value: Option<Vec<u8>>,
-    headers_count: i32,
-    headers: Option<Vec<Header>>,
+    pub timestamp_delta: i64,
+    pub offset_delta: i32,
+    pub key_len: i32,
+    pub key: Option<Vec<u8>>,
+    pub value_len: i32,
+    pub value: Option<Vec<u8>>,
+    pub headers_count: i32,
+    pub headers: Option<Vec<Header>>,
 }
 
 #[derive(Debug)]
 pub struct Header {
-    header_key: String,
-    header_value: Option<Vec<u8>>,
+    pub header_key: String,
+    pub header_value: Option<Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct BatchHeader {
-    first_offset: i64,
-    length: i32,
-    partition_leader_epoch: i32,
-    magic: i8,
-    crc: i32,
-    attributes: i16,
-    last_offset_delta: i32,
-    first_timestamp: i64,
-    max_timestamp: i64,
-    producer_id: i64,
-    producer_epoch: i16,
-    first_sequence: i32,
-    record_count: i32,
+    pub first_offset: i64,
+    pub length: i32,
+    pub partition_leader_epoch: i32,
+    pub magic: i8,
+    pub crc: i32,
+    pub attributes: i16,
+    pub last_offset_delta: i32,
+    pub first_timestamp: i64,
+    pub max_timestamp: i64,
+    pub producer_id: i64,
+    pub producer_epoch: i16,
+    pub first_sequence: i32,
     //下边还有一个record count <i32>并未显式放到这里
 }
 
@@ -567,22 +565,21 @@ impl Header {
 impl MemoryRecords {
     pub fn records(&self) -> Option<Vec<Record>> {
         if let Some(ref buffer) = self.buffer {
-            let mut buffer = buffer.clone();
-            let remaining = buffer.remaining();
-            if remaining == 0 || remaining <= RECORDS_OFFSET as usize {
+            let mut cursor = Cursor::new(buffer.as_ref());
+            let remaining = cursor.remaining();
+            if remaining == 0 || remaining <= RECORDS_COUNT_OFFSET as usize {
                 return None;
             }
-            let _ = buffer.split_to(RECORDS_OFFSET as usize);
-            let record_count = buffer.get_i32();
+            cursor.advance(RECORDS_COUNT_OFFSET as usize);
+            let record_count = cursor.get_i32();
             if record_count > 0 {
-                let mut records: Vec<Record> = vec![];
-                (0..record_count).for_each(|_| {
-                    let record_length = i32::decode_var(buffer.as_ref());
-                    if let Some((record_length, read_size)) = record_length {
-                        buffer.advance(read_size); //跳过刚解析过的record长度字段
-                        Self::decode_record_body(&mut buffer, &mut records, record_length);
+                let mut records: Vec<Record> = Vec::with_capacity(record_count as usize);
+                for _ in 0..record_count {
+                    if let Some(record_length) = i32::decode_var(cursor.chunk()) {
+                        cursor.advance(record_length.1);
+                        Self::decode_record_body(&mut cursor, &mut records, record_length.0);
                     }
-                });
+                }
                 return Some(records);
             }
         }
@@ -595,29 +592,29 @@ impl MemoryRecords {
      record attributes 一直会被写入为0
     */
     fn decode_record_body<'a>(
-        buffer: &mut BytesMut,
-        mut records: &'a mut Vec<Record>,
+        cursor: &mut Cursor<&[u8]>,
+        records: &'a mut Vec<Record>,
         record_length: i32,
     ) -> &'a Vec<Record> {
-        let attributes = buffer.get_i8();
+        let attributes = cursor.get_i8();
 
-        let timestamp_delta = i64::decode_var(buffer.as_ref())
+        let timestamp_delta = i64::decode_var(cursor.chunk())
             .map(|(timestamp_delta, read_size)| {
-                buffer.advance(read_size);
+                cursor.advance(read_size);
                 timestamp_delta
             })
             .unwrap();
 
-        let offset_delta = i64::decode_var(buffer.as_ref())
+        let offset_delta = i64::decode_var(cursor.chunk())
             .map(|(offset_delta, read_size)| {
-                buffer.advance(read_size);
+                cursor.advance(read_size);
                 offset_delta
             })
             .unwrap();
 
-        let key_len = i32::decode_var(buffer.as_ref())
+        let key_len = i32::decode_var(cursor.chunk())
             .map(|(key_len, read_size)| {
-                buffer.advance(read_size);
+                cursor.advance(read_size);
                 key_len
             })
             .unwrap();
@@ -625,54 +622,53 @@ impl MemoryRecords {
         let mut key: Option<Vec<u8>> = None;
         let mut value: Option<Vec<u8>> = None;
         if key_len > 0 {
-            key = Some(buffer.split_to(key_len as usize).into());
+            key = Some(cursor.copy_to_bytes(key_len as usize).to_vec());
         }
-        let value_len = i32::decode_var(buffer.as_ref())
+        let value_len = i32::decode_var(cursor.chunk())
             .map(|(value_len, read_size)| {
-                buffer.advance(read_size);
+                cursor.advance(read_size);
                 value_len
             })
             .unwrap();
         if value_len > 0 {
-            value = Some(buffer.split_to(value_len as usize).into());
+            value = Some(cursor.copy_to_bytes(value_len as usize).to_vec());
         }
-        let headers_count = i32::decode_var(buffer.as_ref())
+        let headers_count = i32::decode_var(cursor.chunk())
             .map(|(header_count, read_size)| {
-                buffer.advance(read_size);
+                cursor.advance(read_size);
                 header_count
             })
             .unwrap();
 
         let mut headers = None;
         if headers_count > 0 {
-            //有header
             headers = Some(vec![]);
-            (0..headers_count).for_each(|_| {
-                let header_key_len = i32::decode_var(buffer.as_ref())
+            for _ in 0..headers_count {
+                let header_key_len = i32::decode_var(cursor.chunk())
                     .map(|(header_key_len, read_size)| {
-                        buffer.advance(read_size);
+                        cursor.advance(read_size);
                         header_key_len
                     })
                     .unwrap();
 
-                let header_key: String =
-                    String::from_utf8(buffer.split_off(header_key_len as usize).as_ref().into())
+                let header_key =
+                    String::from_utf8(cursor.copy_to_bytes(header_key_len as usize).to_vec())
                         .unwrap();
-                let value_len = i32::decode_var(buffer.as_ref())
+                let value_len = i32::decode_var(cursor.chunk())
                     .map(|(value_len, read_size)| {
-                        buffer.advance(read_size);
+                        cursor.advance(read_size);
                         value_len
                     })
                     .unwrap();
                 let mut header_value: Option<Vec<u8>> = None;
                 if value_len > 0 {
-                    header_value = Some(buffer.split_off(value_len as usize).into());
+                    header_value = Some(cursor.copy_to_bytes(value_len as usize).to_vec());
                 }
                 headers.as_mut().unwrap().push(Header {
                     header_key,
                     header_value,
                 })
-            });
+            }
         }
         records.push(Record {
             length: record_length,
@@ -692,21 +688,20 @@ impl MemoryRecords {
 
     pub fn batch_header(&self) -> Option<BatchHeader> {
         if let Some(buffer) = &self.buffer {
-            let mut buffer = buffer.clone();
+            let mut cursor = Cursor::new(buffer.as_ref());
             let batch_header = BatchHeader {
-                first_offset: buffer.get_i64(),
-                length: buffer.get_i32(),
-                partition_leader_epoch: buffer.get_i32(),
-                magic: buffer.get_i8(),
-                crc: buffer.get_i32(),
-                attributes: buffer.get_i16(),
-                last_offset_delta: buffer.get_i32(),
-                first_timestamp: buffer.get_i64(),
-                max_timestamp: buffer.get_i64(),
-                producer_id: buffer.get_i64(),
-                producer_epoch: buffer.get_i16(),
-                first_sequence: buffer.get_i32(),
-                record_count: buffer.get_i32(),
+                first_offset: cursor.get_i64(),
+                length: cursor.get_i32(),
+                partition_leader_epoch: cursor.get_i32(),
+                magic: cursor.get_i8(),
+                crc: cursor.get_i32(),
+                attributes: cursor.get_i16(),
+                last_offset_delta: cursor.get_i32(),
+                first_timestamp: cursor.get_i64(),
+                max_timestamp: cursor.get_i64(),
+                producer_id: cursor.get_i64(),
+                producer_epoch: cursor.get_i16(),
+                first_sequence: cursor.get_i32(),
             };
             Some(batch_header)
         } else {

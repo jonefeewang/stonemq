@@ -46,6 +46,7 @@ impl FileRecords {
     pub async fn open<P: AsRef<Path>>(file_name: P) -> AppResult<Self> {
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&file_name)
             .await?;
@@ -174,16 +175,13 @@ impl FileRecords {
         let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();
 
-        let msg = records.buffer.ok_or_else(|| {
-            InvalidValue(
-                "追加到文件时消息为空".into(),
-                topic_partition_id.to_string(),
-            )
-        })?;
+        let msg = records
+            .buffer
+            .ok_or_else(|| InvalidValue("追加到文件时消息为空", topic_partition_id.to_string()))?;
 
         let total_size = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
 
-        buf_writer.write_u32(total_size as u32).await?;
+        buf_writer.write_u32(total_size).await?;
         buf_writer.write_u64(offset).await?;
         buf_writer.write_u32(tp_id_bytes.len() as u32).await?;
         buf_writer.write_all(tp_id_bytes).await?;
@@ -200,15 +198,12 @@ impl FileRecords {
         let topic_partition_id = topic_partition.id();
         let total_write = records.size();
 
-        let msg = records.buffer.ok_or_else(|| {
-            InvalidValue(
-                "追加到文件时消息为空".into(),
-                topic_partition_id.to_string(),
-            )
-        })?;
+        let msg = records
+            .buffer
+            .ok_or_else(|| InvalidValue("追加到文件时消息为空", topic_partition_id.to_string()))?;
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
-        Ok(total_write as usize)
+        Ok(total_write)
     }
 
     pub fn size(&self) -> usize {
@@ -264,10 +259,10 @@ impl FileRecords {
             }
             tokio::time::sleep(RETRY_DELAY).await;
         }
-        return Err(Error::new(
+        Err(Error::new(
             ErrorKind::NotFound,
             format!("目标偏移量 {} 未找到", target_offset),
-        ));
+        ))
     }
 
     async fn seek_to_target_offset(file: &mut File, target_offset: u64) -> std::io::Result<bool> {
@@ -281,13 +276,15 @@ impl FileRecords {
                 buffer[11],
             ]);
 
-            if current_offset == target_offset {
-                file.seek(SeekFrom::Current(-12)).await?;
-                return Ok(true);
-            } else if current_offset > target_offset {
-                return Ok(false);
-            } else {
-                file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
+            match current_offset.cmp(&target_offset) {
+                std::cmp::Ordering::Equal => {
+                    file.seek(SeekFrom::Current(-12)).await?;
+                    return Ok(true);
+                }
+                std::cmp::Ordering::Greater => return Ok(false),
+                std::cmp::Ordering::Less => {
+                    file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
+                }
             }
         }
     }

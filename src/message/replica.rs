@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::runtime::Runtime;
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 
 use crate::log::{JournalLog, Log, QueueLog};
 use crate::message::{LogAppendInfo, TopicData, TopicPartition};
@@ -196,13 +196,18 @@ impl ReplicaManager {
         }
 
         // 启动journal log splitter
-        for (journal_tp, queue_tps) in &journal_to_queues {
+        for (journal_tp, queue_tps) in journal_to_queues {
             trace!(
                 "starting splitter task for journal: {} and queues: {:?}",
                 journal_tp.id(),
                 queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>()
             );
-            rt.block_on(self.log_manager.start_splitter_task(journal_tp, queue_tps))?;
+            let log_manager = self.log_manager.clone();
+            rt.spawn(async move {
+                if let Err(e) = log_manager.start_splitter_task(journal_tp, queue_tps).await {
+                    error!("Splitter task error: {:?}", e);
+                }
+            });
         }
         info!("ReplicaManager startup completed.");
         Ok(())
