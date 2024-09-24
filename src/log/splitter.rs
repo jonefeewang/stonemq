@@ -11,8 +11,9 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{self, File};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::time::{sleep, Duration};
+use tracing::{debug, trace};
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
@@ -39,9 +40,11 @@ impl SplitterTask {
 
     pub async fn run(&mut self) -> AppResult<()> {
         let mut target_offset = self.journal_log.split_offset.load() + 1;
+        sleep(Duration::from_millis(10000 * 10)).await;
 
         loop {
             let position_info = self.journal_log.get_position_info(target_offset).await?;
+
             match self
                 .read_and_process_segment(target_offset, &position_info)
                 .await
@@ -54,6 +57,8 @@ impl SplitterTask {
                         e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
                     {
                         if std_err.kind() == ErrorKind::UnexpectedEof {
+                            trace!("读取segment时遇到EOF错误， 等待继续重试");
+                            sleep(Duration::from_millis(100)).await;
                             // 如果是EOF错误，则等待继续重试,
                             continue;
                         }
@@ -67,17 +72,27 @@ impl SplitterTask {
     // 返回最后一个读到的offset
     async fn read_and_process_segment(
         &self,
-        target_offset: u64,
+        target_offset: i64,
         position_info: &PositionInfo,
-    ) -> AppResult<u64> {
+    ) -> AppResult<i64> {
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
             .join(self.topic_partition.id());
         let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
-        let journal_seg_file = fs::File::open(segment_path).await?;
+        let journal_seg_file = fs::File::open(&segment_path).await?;
+
+        debug!(
+            "开始读取一个segment{:?} ref:  {:?}, splitter point {}",
+            segment_path, &position_info, target_offset
+        );
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
         let mut journal_seg_file =
             FileRecords::seek_journal(journal_seg_file, target_offset, position_info).await?;
+
+        trace!(
+            "文件内部读指针位置: {}",
+            journal_seg_file.stream_position().await?
+        );
         let mut last_read_offset = target_offset - 1;
 
         loop {
@@ -111,9 +126,9 @@ impl SplitterTask {
         }
     }
 
-    async fn read_and_process_batch(&self, file: &mut File) -> AppResult<u64> {
+    async fn read_and_process_batch(&self, file: &mut File) -> AppResult<i64> {
         let batch_size = file.read_u32().await?;
-        let mut buf = BytesMut::with_capacity(batch_size as usize);
+        let mut buf = BytesMut::zeroed(batch_size as usize);
         // 这里有可能会报读到EOF错误，然后返回
         file.read_exact(&mut buf).await?;
 
@@ -126,7 +141,7 @@ impl SplitterTask {
         Ok(offset)
     }
 
-    async fn is_active_segment(&self, base_offset: u64) -> AppResult<bool> {
+    async fn is_active_segment(&self, base_offset: i64) -> AppResult<bool> {
         let current_active_seg_offset = self.journal_log.current_active_seg_offset().await?;
         Ok(base_offset == current_active_seg_offset)
     }
@@ -134,7 +149,7 @@ impl SplitterTask {
     async fn write_queue_log(
         &self,
         topic_partition: TopicPartition,
-        offset: u64,
+        offset: i64,
         buffer: BytesMut,
     ) -> AppResult<()> {
         if let Some(queue_log) = self.queue_logs.get(&topic_partition) {
@@ -155,8 +170,8 @@ impl SplitterTask {
         Ok(())
     }
 
-    async fn read_topic_partition(buf: &mut BytesMut) -> (u64, String) {
-        let offset = buf.get_u64();
+    async fn read_topic_partition(buf: &mut BytesMut) -> (i64, String) {
+        let offset = buf.get_i64();
         let tp_str_size = buf.get_u32();
         let mut tp_str_bytes = vec![0; tp_str_size as usize];
         buf.copy_to_slice(&mut tp_str_bytes);

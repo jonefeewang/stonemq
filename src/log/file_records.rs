@@ -5,7 +5,10 @@ use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
 use crate::AppError::InvalidValue;
 use crate::AppResult;
+use bytes::buf;
 use bytes::Buf;
+use bytes::BufMut;
+use bytes::BytesMut;
 use crossbeam_utils::atomic::AtomicCell;
 use std::io::{Error, ErrorKind, SeekFrom};
 use std::path::Path;
@@ -168,7 +171,7 @@ impl FileRecords {
     /// 如果写入过程中发生错误，将返回一个 `AppError`
     pub async fn append_journal_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (offset, topic_partition, records): (u64, TopicPartition, MemoryRecords),
+        (offset, topic_partition, records): (i64, TopicPartition, MemoryRecords),
     ) -> AppResult<usize> {
         trace!("正在将日志追加到文件...");
 
@@ -182,7 +185,7 @@ impl FileRecords {
         let total_size = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
 
         buf_writer.write_u32(total_size).await?;
-        buf_writer.write_u64(offset).await?;
+        buf_writer.write_i64(offset).await?;
         buf_writer.write_u32(tp_id_bytes.len() as u32).await?;
         buf_writer.write_all(tp_id_bytes).await?;
         buf_writer.write_all(msg.as_ref()).await?;
@@ -193,7 +196,7 @@ impl FileRecords {
 
     pub async fn append_queue_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (_, topic_partition, records): (u64, TopicPartition, MemoryRecords),
+        (_, topic_partition, records): (i64, TopicPartition, MemoryRecords),
     ) -> AppResult<usize> {
         let topic_partition_id = topic_partition.id();
         let total_write = records.size();
@@ -213,7 +216,7 @@ impl FileRecords {
     /// 如果报错，很有可能是当前内容还未落盘，所以读取不到，可以sleep一会再读取
     pub async fn seek_journal(
         mut file: File,
-        target_offset: u64,
+        target_offset: i64,
         ref_pos: &PositionInfo,
     ) -> std::io::Result<File> {
         let PositionInfo {
@@ -265,13 +268,13 @@ impl FileRecords {
         ))
     }
 
-    async fn seek_to_target_offset(file: &mut File, target_offset: u64) -> std::io::Result<bool> {
+    async fn seek_to_target_offset(file: &mut File, target_offset: i64) -> std::io::Result<bool> {
         let mut buffer = [0u8; 12];
 
         loop {
             file.read_exact(&mut buffer).await?;
             let batch_size = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
-            let current_offset = u64::from_be_bytes([
+            let current_offset = i64::from_be_bytes([
                 buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9], buffer[10],
                 buffer[11],
             ]);

@@ -204,8 +204,8 @@ impl LogManager {
                     topic_partition.clone(),
                     BTreeMap::new(),
                     0,
-                    0,
-                    0,
+                    -1,
+                    -1,
                     index_file_max_size as u32,
                 ))?;
                 let log = Arc::new(journal_log);
@@ -249,7 +249,7 @@ impl LogManager {
                 _ = shutdown.recv() => {trace!("receiving shutdown signal");}
             };
 
-            let check_points: HashMap<TopicPartition, u64> = self
+            let check_points: HashMap<TopicPartition, i64> = self
                 .journal_logs
                 .iter()
                 .map(|entry| {

@@ -35,7 +35,7 @@ pub fn calculate_journal_log_overhead(topic_partition: &TopicPartition) -> u32 {
 pub trait Log: Debug {
     async fn append_records(
         &self,
-        records: (TopicPartition, u64, MemoryRecords),
+        records: (TopicPartition, i64, MemoryRecords),
     ) -> AppResult<LogAppendInfo>;
     fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
         IllegalStateError(Cow::Owned(format!(
@@ -52,7 +52,7 @@ pub(crate) enum LogType {
 pub enum FileOp {
     AppendJournal(
         (
-            u64,
+            i64,
             TopicPartition,
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,
@@ -60,7 +60,7 @@ pub enum FileOp {
     ),
     AppendQueue(
         (
-            u64,
+            i64,
             TopicPartition,
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,

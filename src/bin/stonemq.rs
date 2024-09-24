@@ -1,6 +1,5 @@
 use clap::Parser;
-
-
+use dotenv::dotenv;
 use std::path::PathBuf;
 use stonemq::service::setup_tracing;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
@@ -24,6 +23,9 @@ pub enum Command {
 }
 
 fn main() -> AppResult<()> {
+    // 加载 .env 文件
+    dotenv().ok();
+
     //setup tracing
     setup_tracing()?;
 

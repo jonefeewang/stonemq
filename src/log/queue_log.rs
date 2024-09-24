@@ -14,11 +14,11 @@ use tracing::{error, info, trace, warn};
 
 #[derive(Debug)]
 pub struct QueueLog {
-    pub segments: RwLock<BTreeMap<u64, LogSegment>>,
+    pub segments: RwLock<BTreeMap<i64, LogSegment>>,
     pub topic_partition: TopicPartition,
-    pub log_start_offset: u64,
-    pub recover_point: AtomicCell<u64>,
-    pub next_offset: AtomicCell<u64>,
+    pub log_start_offset: i64,
+    pub recover_point: AtomicCell<i64>,
+    pub next_offset: AtomicCell<i64>,
     pub index_file_max_size: u32,
 }
 
@@ -52,7 +52,7 @@ impl Log for QueueLog {
     /// This method acquires a write lock on the entire log, which may impact concurrent operations.
     async fn append_records(
         &self,
-        records: (TopicPartition, u64, MemoryRecords),
+        records: (TopicPartition, i64, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
         let (topic_partition, offset, memory_records) = records;
 
@@ -89,7 +89,7 @@ impl Log for QueueLog {
             .await?;
 
         self.next_offset
-            .store(log_append_info.base_offset as u64 + 1);
+            .store(log_append_info.base_offset as i64 + 1);
 
         Ok(log_append_info)
     }
@@ -110,10 +110,10 @@ impl QueueLog {
     /// Returns a `Result` containing the new `QueueLog` instance on success.
     pub async fn new(
         topic_partition: &TopicPartition,
-        mut segments: BTreeMap<u64, LogSegment>,
-        log_start_offset: u64,
-        recovery_offset: u64,
-        next_offset: u64,
+        mut segments: BTreeMap<i64, LogSegment>,
+        log_start_offset: i64,
+        recovery_offset: i64,
+        next_offset: i64,
         index_file_max_size: u32,
     ) -> AppResult<Self> {
         let dir = topic_partition.queue_partition_dir();
@@ -167,10 +167,10 @@ impl QueueLog {
     /// Returns a `Result` containing a `BTreeMap` of base offsets to `LogSegment`s.
     pub fn load_segments(
         topic_partition: &TopicPartition,
-        _: u64,
+        _: i64,
         index_file_max_size: u32,
         rt: &Runtime,
-    ) -> AppResult<BTreeMap<u64, LogSegment>> {
+    ) -> AppResult<BTreeMap<i64, LogSegment>> {
         let mut segments = BTreeMap::new();
         let dir = topic_partition.queue_partition_dir();
         info!("从目录加载段文件：{}", dir);
@@ -203,12 +203,12 @@ impl QueueLog {
                                     index_file_max_size as usize,
                                     false,
                                 ))?;
-                                index_files.insert(file_prefix.parse::<u64>()?, index_file);
+                                index_files.insert(file_prefix.parse::<i64>()?, index_file);
                             }
                             ".log" => {
                                 // TODO: 修复还未flush到磁盘上的数据，就是recovery_point到log最后的一个offset数据
                                 // 这里目前只覆盖优雅关闭的场景
-                                let base_offset = file_prefix.parse::<u64>();
+                                let base_offset = file_prefix.parse::<i64>();
                                 match base_offset {
                                     Ok(base_offset) => {
                                         let file_records =
@@ -265,7 +265,7 @@ impl QueueLog {
     /// 返回加载的 `QueueLog` 实例。
     pub fn load_from(
         topic_partition: &TopicPartition,
-        recover_point: u64,
+        recover_point: i64,
         index_file_max_size: u32,
         rt: &Runtime,
     ) -> AppResult<Self> {
@@ -362,7 +362,7 @@ impl QueueLog {
     async fn append_to_active_segment(
         &self,
         topic_partition: TopicPartition,
-        offset: u64,
+        offset: i64,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await;

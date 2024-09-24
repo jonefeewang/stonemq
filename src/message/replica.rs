@@ -37,7 +37,7 @@ impl<L: Log> Replica<L> {
 pub type JournalReplica = Replica<JournalLog>;
 pub type QueueReplica = Replica<QueueLog>;
 
-/// replica manager 持有一个all partitions的集合，这个集合是从controller发送的
+/// replica manager 持有一个all partitions的集合，这个���合是从controller发送的
 /// leaderAndIsrRequest命令里获取的, 所有的replica信息都在partition里。Log里的
 /// topic partition 和 这里的partition没有做一致性的合并，各自管理各自的。replica manager
 /// 通过log manager来管理存储层
@@ -156,14 +156,26 @@ impl ReplicaManager {
         );
 
         // 确定journal和queue的对应关系
-        self.all_queue_partitions.iter().for_each(|entry| {
-            let journal_topic = TopicPartition {
-                topic: "journal".to_string(),
-                partition: entry.topic_partition.partition % 2,
-            };
-            self.queue_2_journal
-                .insert(entry.topic_partition.clone(), journal_topic);
-        });
+        // 获取实际的 JournalLog 数量
+        let journal_log_count = self.all_journal_partitions.len();
+
+        if journal_log_count == 0 {
+            return Err(AppError::IllegalStateError("没有可用的 JournalLog".into()));
+        }
+
+        // 使用迭代器索引来实现轮询
+        self.all_queue_partitions
+            .iter()
+            .enumerate()
+            .for_each(|(index, entry)| {
+                let journal_partition = index % journal_log_count;
+                let journal_topic = TopicPartition {
+                    topic: "journal".to_string(),
+                    partition: journal_partition as i32,
+                };
+                self.queue_2_journal
+                    .insert(entry.topic_partition.clone(), journal_topic);
+            });
 
         info!(
             "queue to journal map:{:?}",

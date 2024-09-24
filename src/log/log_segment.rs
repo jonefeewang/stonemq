@@ -14,22 +14,22 @@ use tokio::sync::oneshot;
 pub struct LogSegment {
     topic_partition: TopicPartition,
     file_records: FileRecords,
-    base_offset: u64,
+    base_offset: i64,
     time_index: Option<IndexFile>,
     offset_index: IndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
-
+#[derive(Debug)]
 pub struct PositionInfo {
-    pub base_offset: u64,
-    pub offset: u64,
+    pub base_offset: i64,
+    pub offset: i64,
     pub position: u32,
 }
 
 impl LogSegment {
     pub fn open(
         topic_partition: TopicPartition,
-        base_offset: u64,
+        base_offset: i64,
         file_records: FileRecords,
         offset_index: IndexFile,
         time_index: Option<IndexFile>,
@@ -43,7 +43,7 @@ impl LogSegment {
             bytes_since_last_index_entry: AtomicCell::new(0),
         }
     }
-    pub async fn get_position(&self, offset: u64) -> AppResult<PositionInfo> {
+    pub async fn get_position(&self, offset: i64) -> AppResult<PositionInfo> {
         let offset_position = self
             .offset_index
             .lookup((offset - self.base_offset) as u32)
@@ -54,7 +54,7 @@ impl LogSegment {
             )))?;
         let pos_info = PositionInfo {
             base_offset: self.base_offset,
-            offset: offset_position.0 as u64 + self.base_offset,
+            offset: offset_position.0 as i64 + self.base_offset,
             position: offset_position.1,
         };
         Ok(pos_info)
@@ -62,7 +62,7 @@ impl LogSegment {
     pub fn size(&self) -> usize {
         self.file_records.size()
     }
-    pub fn base_offset(&self) -> u64 {
+    pub fn base_offset(&self) -> i64 {
         self.base_offset
     }
 
@@ -73,7 +73,7 @@ impl LogSegment {
     pub async fn new(
         topic_partition: &TopicPartition,
         dir: impl AsRef<Path>,
-        base_offset: u64,
+        base_offset: i64,
         index_file_max_size: u32,
     ) -> AppResult<Self> {
         let dir = PathBuf::from(dir.as_ref());
@@ -95,7 +95,7 @@ impl LogSegment {
     pub async fn append_record(
         &self,
         records_package: (
-            u64,
+            i64,
             TopicPartition,
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,

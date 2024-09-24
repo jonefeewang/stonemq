@@ -23,7 +23,7 @@ impl CheckPointFile {
         }
     }
 
-    pub async fn write_checkpoints(&self, points: HashMap<TopicPartition, u64>) -> AppResult<()> {
+    pub async fn write_checkpoints(&self, points: HashMap<TopicPartition, i64>) -> AppResult<()> {
         let write_file = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -44,7 +44,7 @@ impl CheckPointFile {
         Ok(())
     }
 
-    pub async fn read_checkpoints(&self) -> AppResult<HashMap<TopicPartition, u64>> {
+    pub async fn read_checkpoints(&self) -> AppResult<HashMap<TopicPartition, i64>> {
         let error = |line| InvalidValue("checkpoint {}", line);
         trace!("read checkpoints from {}", self.file_name);
         let open_file = OpenOptions::new().read(true).open(&self.file_name).await;

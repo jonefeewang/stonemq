@@ -25,22 +25,22 @@ use crate::{global_config, AppResult};
 #[derive(Debug)]
 pub struct JournalLog {
     /// 日志段的有序映射，使用 `RwLock` 以允许多个并发读取和单一写入。
-    segments: RwLock<BTreeMap<u64, Arc<LogSegment>>>,
+    segments: RwLock<BTreeMap<i64, Arc<LogSegment>>>,
 
     /// 队列下一个偏移信息，使用 `DashMap` 以提供并发安全的哈希映射。
     queue_next_offset_info: DashMap<TopicPartition, i64>,
 
     /// 日志开始偏移量。
-    log_start_offset: AtomicCell<u64>,
+    log_start_offset: AtomicCell<i64>,
 
     /// 下一个偏移量。
-    next_offset: AtomicCell<u64>,
+    next_offset: AtomicCell<i64>,
 
     /// 恢复点偏移量。
-    pub(crate) recover_point: AtomicCell<u64>,
+    pub(crate) recover_point: AtomicCell<i64>,
 
     /// 分割偏移量。
-    pub split_offset: AtomicCell<u64>,
+    pub split_offset: AtomicCell<i64>,
 
     /// 写操作的锁。
     write_lock: RwLock<()>,
@@ -66,9 +66,9 @@ impl Log for JournalLog {
     /// 返回包含追加操作信息的 `AppResult<LogAppendInfo>`。
     async fn append_records(
         &self,
-        records: (TopicPartition, u64, MemoryRecords),
+        records: (TopicPartition, i64, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
-        let (topic_partition, _, mut memory_records) = records;
+        let (queue_topic_partition, _, mut memory_records) = records;
         let _write_guard = self.write_lock.write().await; // 获取写锁以进行原子追加操作
 
         let (active_seg_size, active_segment_offset_index_full) =
@@ -76,7 +76,6 @@ impl Log for JournalLog {
 
         if self
             .need_roll(
-                &topic_partition,
                 active_seg_size,
                 &memory_records,
                 active_segment_offset_index_full,
@@ -88,17 +87,18 @@ impl Log for JournalLog {
 
         let records_count = memory_records.records_count() as u32;
 
-        self.assign_offset(&topic_partition, &mut memory_records)
+        self.assign_offset(&queue_topic_partition, &mut memory_records)
             .await?;
-        self.append_to_active_segment(topic_partition, memory_records)
+        self.append_to_active_segment(queue_topic_partition.clone(), memory_records)
             .await?;
 
         let log_append_info = LogAppendInfo {
-            base_offset: self.next_offset.load() as i64,
+            base_offset: self.next_offset.load(),
             log_append_time: -1,
         };
 
-        self.update_offsets(records_count).await;
+        self.update_offsets(queue_topic_partition.clone(), records_count)
+            .await;
 
         Ok(log_append_info)
     }
@@ -126,10 +126,10 @@ impl JournalLog {
     /// 返回包含新 `JournalLog` 实例的 `AppResult<Self>`。
     pub async fn new(
         topic_partition: TopicPartition,
-        segments: BTreeMap<u64, Arc<LogSegment>>,
-        log_start_offset: u64,
-        log_recovery_point: u64,
-        split_offset: u64,
+        segments: BTreeMap<i64, Arc<LogSegment>>,
+        log_start_offset: i64,
+        log_recovery_point: i64,
+        split_offset: i64,
         index_file_max_size: u32,
     ) -> AppResult<Self> {
         let dir = topic_partition.journal_partition_dir();
@@ -196,7 +196,7 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回包含位置信息的 `AppResult<PositionInfo>`。
-    pub async fn get_position_info(&self, offset: u64) -> AppResult<PositionInfo> {
+    pub async fn get_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
         let segment = segments
             .range(..=offset)
@@ -211,7 +211,7 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回包含活动段偏移量的 `AppResult<u64>`。
-    pub async fn current_active_seg_offset(&self) -> AppResult<u64> {
+    pub async fn current_active_seg_offset(&self) -> AppResult<i64> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
         let active_seg = segments
             .values()
@@ -251,13 +251,12 @@ impl JournalLog {
     /// 返回一个布尔值，指示是否需要滚动。
     async fn need_roll(
         &self,
-        topic_partition: &TopicPartition,
         active_seg_size: u32,
         memory_records: &MemoryRecords,
         active_segment_offset_index_full: bool,
     ) -> bool {
         let config = &global_config().log;
-        let total_size = calculate_journal_log_overhead(topic_partition)
+        let total_size = calculate_journal_log_overhead(&self.topic_partition)
             + memory_records.size() as u32
             + active_seg_size;
 
@@ -317,14 +316,15 @@ impl JournalLog {
     /// 返回 `AppResult<()>` 表示成功或失败。
     async fn assign_offset(
         &self,
-        topic_partition: &TopicPartition,
+        queue_topic_partition: &TopicPartition,
         memory_records: &mut MemoryRecords,
     ) -> AppResult<()> {
         let queue_log_next_offset = self
             .queue_next_offset_info
-            .entry(topic_partition.clone())
+            .entry(queue_topic_partition.clone())
             .or_insert(0);
         let offset = *queue_log_next_offset;
+        trace!("分配偏移量: {}", offset);
         memory_records.set_base_offset(offset)?;
         Ok(())
     }
@@ -341,7 +341,7 @@ impl JournalLog {
     /// 返回 `AppResult<()>` 表示成功或失败。
     async fn append_to_active_segment(
         &self,
-        topic_partition: TopicPartition,
+        queue_topic_partition: TopicPartition,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
@@ -352,7 +352,12 @@ impl JournalLog {
 
         let (tx, rx) = oneshot::channel();
         active_seg
-            .append_record((self.next_offset.load(), topic_partition, memory_records, tx))
+            .append_record((
+                self.next_offset.load(),
+                queue_topic_partition,
+                memory_records,
+                tx,
+            ))
             .await?;
         rx.await??;
         Ok(())
@@ -362,15 +367,18 @@ impl JournalLog {
     ///
     /// # 参数
     ///
+    /// * `queue_topic_partition` - 主题分区。
     /// * `record_count` - 追加的记录数。
-    async fn update_offsets(&self, record_count: u32) {
+    async fn update_offsets(&self, queue_topic_partition: TopicPartition, record_count: u32) {
         let mut queue_next_offset = self
             .queue_next_offset_info
-            .entry(self.topic_partition.clone())
+            .entry(queue_topic_partition.clone())
             .or_insert(0);
         *queue_next_offset += record_count as i64;
 
-        self.next_offset.fetch_add(record_count as u64);
+        self.next_offset.fetch_add(record_count as i64);
+        trace!("更新journal log偏移量: {}", self.next_offset.load());
+        trace!("更新queue next offset: {}", *queue_next_offset);
     }
 
     /// 确定下一个段的基准偏移量。
@@ -382,7 +390,7 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回下一个段的基准偏移量。如果没有下一个段，则返回日志的下一个偏移量。
-    async fn next_segment_base_offset(&self, current_base_offset: u64) -> u64 {
+    async fn next_segment_base_offset(&self, current_base_offset: i64) -> i64 {
         let segments = self.segments.read().await;
         segments
             .range((current_base_offset + 1)..)
@@ -416,8 +424,8 @@ impl JournalLog {
     /// 返回加载的 `JournalLog` 实例。
     pub fn load_from(
         topic_partition: &TopicPartition,
-        recover_point: u64,
-        split_offset: u64,
+        recover_point: i64,
+        split_offset: i64,
         dir: impl AsRef<Path>,
         index_file_max_size: u32,
 
@@ -475,7 +483,7 @@ impl JournalLog {
         dir: impl AsRef<Path>,
         max_index_file_size: usize,
         rt: &Runtime,
-    ) -> AppResult<BTreeMap<u64, Arc<LogSegment>>> {
+    ) -> AppResult<BTreeMap<i64, Arc<LogSegment>>> {
         let mut index_files = BTreeMap::new();
         let mut log_files = BTreeMap::new();
 
@@ -504,10 +512,10 @@ impl JournalLog {
                                     max_index_file_size,
                                     false,
                                 ))?;
-                                index_files.insert(file_prefix.parse::<u64>().unwrap(), index_file);
+                                index_files.insert(file_prefix.parse::<i64>().unwrap(), index_file);
                             }
                             ".log" => {
-                                let base_offset = file_prefix.parse::<u64>();
+                                let base_offset = file_prefix.parse::<i64>();
                                 match base_offset {
                                     Ok(base_offset) => {
                                         let file_records =

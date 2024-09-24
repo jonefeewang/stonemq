@@ -69,7 +69,7 @@ fn parse_log(file: &PathBuf) -> AppResult<()> {
         reader.read_exact(&mut buffer)?;
 
         // 解析batch内容
-        let journal_offset = buffer.get_u64();
+        let journal_offset: i64 = buffer.get_i64();
 
         let str_len = buffer.get_u32();
         let queue_topic_name = String::from_utf8(buffer[..str_len as usize].to_vec())?;
@@ -80,49 +80,53 @@ fn parse_log(file: &PathBuf) -> AppResult<()> {
             buffer: Some(buffer.clone()),
         };
 
+        // println!("Journal Batch size: {}", batch_size);
+        println!("Journal Offset: {}", journal_offset);
+        println!("Queue Topic Name: {}", queue_topic_name);
+
         // 解析batch header
         if let Some(batch_header) = memory_records.batch_header() {
-            println!("Batch Header:");
-            println!("  First Offset: {}", batch_header.first_offset);
-            println!("  Last Offset Delta: {}", batch_header.last_offset_delta);
+            // println!("Batch Header:");
+            println!("Queue baseoffset: {}", batch_header.first_offset);
             println!(
-                "  First Timestamp: {}",
-                format_timestamp(batch_header.first_timestamp)
+                "Queue last offset delta: {}",
+                batch_header.last_offset_delta
             );
-            println!(
-                "  Max Timestamp: {}",
-                format_timestamp(batch_header.max_timestamp)
-            );
+            // println!(
+            //     "  First Timestamp: {}",
+            //     format_timestamp(batch_header.first_timestamp)
+            // );
+            // println!(
+            //     "  Max Timestamp: {}",
+            //     format_timestamp(batch_header.max_timestamp)
+            // );
         }
 
         // 解析records
         if let Some(records) = memory_records.records() {
-            println!("Records:");
-            for (i, record) in records.iter().enumerate() {
-                println!("  Record {}:", i + 1);
-                println!("    Offset Delta: {}", record.offset_delta);
-                println!("    Timestamp Delta: {}", record.timestamp_delta);
-                if let Some(key) = &record.key {
-                    println!("    Key: {:?}", key);
-                }
+            print!("Records:");
+            for (_i, record) in records.iter().enumerate() {
+                // println!("  Record {}:", i + 1);
+                // println!("    Offset Delta: {}", record.offset_delta);
+                // println!("    Timestamp Delta: {}", record.timestamp_delta);
+                // if let Some(key) = &record.key {
+                //     println!("    Key: {}", String::from_utf8_lossy(key));
+                // }
                 if let Some(value) = &record.value {
-                    println!("    Value: {:?}", value);
+                    print!("    Value: {}", String::from_utf8_lossy(value));
                 }
-                if let Some(headers) = &record.headers {
-                    println!("    Headers:");
-                    for header in headers {
-                        println!("      {}: {:?}", header.header_key, header.header_value);
-                    }
-                }
+                // if let Some(headers) = &record.headers {
+                //     println!("    Headers:");
+                //     for header in headers {
+                //         println!("      {}: {:?}", header.header_key, header.header_value);
+                //     }
+                // }
             }
         }
 
         // 输出解析结果
-        println!("Journal Batch size: {}", batch_size);
-        println!("Journal Offset: {}", journal_offset);
-        println!("Queue Topic Name: {}", queue_topic_name);
-        println!("剩余的memory records长度: {}", buffer.remaining());
-        println!("---");
+
+        println!("\n---");
     }
 
     Ok(())

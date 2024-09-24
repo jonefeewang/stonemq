@@ -57,6 +57,8 @@ snap = "1.0.0"
 memmap2 = "0.9.4"
 chrono = "0.4"
 
+dotenv = "0.15.0"
+
 [dev-dependencies]
 fake = "2.9.2"
 tempfile = "3"
