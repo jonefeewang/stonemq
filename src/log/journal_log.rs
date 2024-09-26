@@ -12,7 +12,7 @@ use super::file_records::FileRecords;
 use super::index_file::IndexFile;
 use super::log_segment::PositionInfo;
 use super::{
-    calculate_journal_log_overhead, CheckPointFile, Log, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
+    calculate_journal_log_overhead, CheckPointFile, Log, LogType, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
 };
 use crate::log::log_segment::LogSegment;
 use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
@@ -181,9 +181,19 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回 `AppResult<()>` 表示成功或失败。
-    pub async fn flush(&self, active_segment: &LogSegment) -> AppResult<()> {
-        active_segment.flush().await?;
-        self.recover_point.store(self.next_offset.load());
+    pub async fn flush(&self) -> AppResult<()> {
+        let segments = self.segments.read().await; // 获取读锁以进行并发读取
+        let active_seg = segments
+            .values()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error())?;
+        self.flush_segment(active_seg).await?;
+        Ok(())
+    }
+
+    async fn flush_segment(&self, active_seg: &Arc<LogSegment>) -> AppResult<()> {
+        active_seg.flush().await?;
+        self.recover_point.store(self.next_offset.load() - 1);
         Ok(())
     }
 
@@ -202,7 +212,12 @@ impl JournalLog {
             .range(..=offset)
             .next_back()
             .map(|(_, segment)| segment)
-            .ok_or_else(|| CommonError(format!("未找到偏移量 {} 的段", offset)))?;
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("未找到偏移量 {} 的段", offset),
+                )
+            })?;
         segment.get_position(offset).await
     }
 
@@ -275,7 +290,8 @@ impl JournalLog {
             .next_back()
             .ok_or_else(|| self.no_active_segment_error())?;
 
-        self.flush(active_seg).await?;
+        self.flush_segment(active_seg).await?;
+
         let new_base_offset = self.next_offset.load();
 
         let new_seg = Arc::new(LogSegment::open(
@@ -352,12 +368,15 @@ impl JournalLog {
 
         let (tx, rx) = oneshot::channel();
         active_seg
-            .append_record((
-                self.next_offset.load(),
-                queue_topic_partition,
-                memory_records,
-                tx,
-            ))
+            .append_record(
+                LogType::Journal,
+                (
+                    self.next_offset.load(),
+                    queue_topic_partition,
+                    memory_records,
+                    tx,
+                ),
+            )
             .await?;
         rx.await??;
         Ok(())

@@ -3,6 +3,7 @@ use dotenv::dotenv;
 use std::path::PathBuf;
 use stonemq::service::setup_tracing;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
+use tokio::runtime;
 
 #[derive(Parser)]
 #[command(version)]
@@ -26,8 +27,11 @@ fn main() -> AppResult<()> {
     // 加载 .env 文件
     dotenv().ok();
 
+    // startup tokio runtime
+    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
+
     //setup tracing
-    setup_tracing()?;
+    rt.block_on(setup_tracing())?;
 
     //setup config
     let commandline: CommandLine = CommandLine::parse();
@@ -46,7 +50,7 @@ fn main() -> AppResult<()> {
         .expect("set broker config failed");
 
     let mut broker = Broker::new();
-    broker.start()?;
+    broker.start(rt)?;
 
     Ok(())
 }

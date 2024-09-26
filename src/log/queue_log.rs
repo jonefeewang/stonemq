@@ -12,13 +12,15 @@ use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{error, info, trace, warn};
 
+use super::LogType;
+
 #[derive(Debug)]
 pub struct QueueLog {
     pub segments: RwLock<BTreeMap<i64, LogSegment>>,
     pub topic_partition: TopicPartition,
     pub log_start_offset: i64,
     pub recover_point: AtomicCell<i64>,
-    pub next_offset: AtomicCell<i64>,
+    pub last_offset: AtomicCell<i64>,
     pub index_file_max_size: u32,
 }
 
@@ -56,6 +58,13 @@ impl Log for QueueLog {
     ) -> AppResult<LogAppendInfo> {
         let (topic_partition, offset, memory_records) = records;
 
+        trace!(
+            "append records to queue log:{}, offset:{}, records_count:{}",
+            &topic_partition,
+            offset,
+            memory_records.records_count()
+        );
+
         let (active_seg_size, active_segment_offset_index_full) = {
             let segments = self.segments.read().await;
             let active_seg = segments
@@ -81,15 +90,20 @@ impl Log for QueueLog {
         }
 
         let log_append_info = LogAppendInfo {
-            base_offset: memory_records.base_offset() as i64,
+            base_offset: memory_records.base_offset(),
             log_append_time: -1,
         };
+        let last_offset_delta = memory_records.last_offset_delta();
 
         self.append_to_active_segment(topic_partition, offset, memory_records)
             .await?;
 
-        self.next_offset
-            .store(log_append_info.base_offset as i64 + 1);
+        self.last_offset
+            .store(log_append_info.base_offset + last_offset_delta as i64);
+        trace!(
+            "append records to queue log success, update last offset:{}",
+            self.last_offset.load()
+        );
 
         Ok(log_append_info)
     }
@@ -134,7 +148,7 @@ impl QueueLog {
             segments: RwLock::new(segments),
             log_start_offset,
             recover_point: AtomicCell::new(recovery_offset),
-            next_offset: AtomicCell::new(next_offset),
+            last_offset: AtomicCell::new(next_offset),
             index_file_max_size,
         })
     }
@@ -148,9 +162,14 @@ impl QueueLog {
     /// # Returns
     ///
     /// Returns `AppResult<()>` indicating success or failure.
-    pub async fn flush(&self, active_segment: &LogSegment) -> AppResult<()> {
-        active_segment.flush().await?;
-        self.recover_point.store(self.next_offset.load());
+    pub async fn flush(&self) -> AppResult<()> {
+        let segments = self.segments.write().await;
+        let active_seg = segments
+            .iter()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+        active_seg.1.flush().await?;
+        self.recover_point.store(self.last_offset.load());
         Ok(())
     }
 
@@ -276,13 +295,13 @@ impl QueueLog {
             .first_key_value()
             .map(|(offset, _)| *offset)
             .unwrap_or(0);
-        let next_offset = recover_point + 1;
+
         let log = QueueLog {
             topic_partition: topic_partition.clone(),
             segments: RwLock::new(segments),
             log_start_offset,
             recover_point: AtomicCell::new(recover_point),
-            next_offset: AtomicCell::new(next_offset),
+            last_offset: AtomicCell::new(recover_point),
             index_file_max_size,
         };
         Ok(log)
@@ -327,8 +346,10 @@ impl QueueLog {
             .next_back()
             .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
 
-        self.flush(active_seg).await?;
-        let new_base_offset = self.next_offset.load();
+        active_seg.flush().await?;
+        self.recover_point.store(self.last_offset.load());
+
+        let new_base_offset = self.last_offset.load() + 1;
 
         let new_seg = LogSegment::new(
             &self.topic_partition,
@@ -374,7 +395,10 @@ impl QueueLog {
         let (tx, rx) = oneshot::channel();
         active_seg
             .1
-            .append_record((offset, topic_partition, memory_records, tx))
+            .append_record(
+                LogType::Queue,
+                (offset, topic_partition, memory_records, tx),
+            )
             .await?;
         rx.await??;
         Ok(())

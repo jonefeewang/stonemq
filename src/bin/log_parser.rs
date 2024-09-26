@@ -17,10 +17,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Log {
+    Journal {
         #[arg(short, long)]
         file: PathBuf,
     },
+    Queue {
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+
     Index {
         #[arg(short, long)]
         file: PathBuf,
@@ -31,19 +36,21 @@ enum Commands {
     },
 }
 
-fn main() -> AppResult<()> {
-    setup_tracing()?;
+#[tokio::main]
+async fn main() -> AppResult<()> {
+    setup_tracing().await?;
 
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Log { file } => parse_log(file),
+        Commands::Journal { file } => parse_journal_log(file),
+        Commands::Queue { file } => parse_queue_log(file),
         Commands::Index { file } => parse_index(file),
         Commands::Checkpoint { file } => parse_checkpoint(file),
     }
 }
 
-fn parse_log(file: &PathBuf) -> AppResult<()> {
+fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
     let file = File::open(file)?;
     let mut reader = BufReader::new(file);
     let mut buffer = BytesMut::with_capacity(1024);
@@ -132,9 +139,64 @@ fn parse_log(file: &PathBuf) -> AppResult<()> {
     Ok(())
 }
 
+fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
+    let file = File::open(file)?;
+    let mut reader = BufReader::new(file);
+    let mut buffer = BytesMut::with_capacity(1024);
+    let mut offset_and_length = [0; 12];
+
+    loop {
+        // 读取batch大小
+
+        match reader.read_exact(&mut offset_and_length) {
+            Ok(_) => {
+                let _ = i64::from_be_bytes(offset_and_length[0..8].try_into().unwrap());
+                let length = i32::from_be_bytes(offset_and_length[8..12].try_into().unwrap());
+                let _ = reader.seek_relative(-12);
+                buffer.resize(12 + length as usize, 0);
+                reader.read_exact(&mut buffer)?;
+
+                let memory_records = MemoryRecords {
+                    buffer: Some(buffer.clone()),
+                };
+
+                let batch_header = memory_records.batch_header().unwrap();
+                println!("batch_header: {}", batch_header);
+                let records = memory_records.records();
+                println!("records: {:?}", records);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                println!("读取到文件末尾");
+                break;
+            }
+            Err(e) => {
+                println!("读取文件失败: {}", e);
+                return Err(e.into());
+            }
+        }
+    }
+    Ok(())
+}
+// 读取batch大小
+
 fn parse_index(file: &PathBuf) -> AppResult<()> {
     println!("解析索引文件: {:?}", file);
     // 实现索引文件解析逻辑
+
+    let mut file = File::open(file)?;
+    let mut buffer = BytesMut::zeroed(4);
+
+    while let Ok(_) = file.read_exact(&mut buffer) {
+        let relative_offset = buffer.get_u32();
+        buffer.resize(4, 0);
+        file.read_exact(&mut buffer)?;
+        let position = buffer.get_u32();
+        println!(
+            "Relative Offset: {}, Position: {}\n",
+            relative_offset, position
+        );
+        buffer.resize(4, 0);
+    }
     Ok(())
 }
 

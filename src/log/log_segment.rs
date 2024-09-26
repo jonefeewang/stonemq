@@ -9,6 +9,9 @@ use crossbeam_utils::atomic::AtomicCell;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
+use tracing::trace;
+
+use super::LogType;
 
 #[derive(Debug)]
 pub struct LogSegment {
@@ -43,15 +46,37 @@ impl LogSegment {
             bytes_since_last_index_entry: AtomicCell::new(0),
         }
     }
+    // 如果未找到的话，offset_index内容为空
+    /// Retrieves the position information for a given offset.
+    ///
+    /// This function looks up the position in the offset index file for the specified offset.
+    /// If the offset is not found, it returns an error.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The offset to look up.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `PositionInfo` if successful, or an error if the offset is not found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the offset cannot be found in the index file.In this case, the content of offset_index should be empty.
+    ///
+    ///
     pub async fn get_position(&self, offset: i64) -> AppResult<PositionInfo> {
         let offset_position = self
             .offset_index
             .lookup((offset - self.base_offset) as u32)
             .await
-            .ok_or(CommonError(format!(
-                "can not find offset:{} in index file: {}",
-                offset, self.base_offset
-            )))?;
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "can not find offset:{} in index file: {}",
+                    offset, self.base_offset
+                ),
+            ))?;
         let pos_info = PositionInfo {
             base_offset: self.base_offset,
             offset: offset_position.0 as i64 + self.base_offset,
@@ -94,6 +119,7 @@ impl LogSegment {
     }
     pub async fn append_record(
         &self,
+        log_type: LogType,
         records_package: (
             i64,
             TopicPartition,
@@ -105,16 +131,19 @@ impl LogSegment {
         let memory_records = &records_package.2;
         let records_size = memory_records.size();
         self.bytes_since_last_index_entry.fetch_add(records_size);
+        let relative_offset = memory_records.base_offset() - self.base_offset;
         if self.bytes_since_last_index_entry.load()
             >= global_config().log.journal_index_interval_bytes
         {
             // 正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
-                .add_entry(
-                    memory_records.base_offset() as u32,
-                    self.file_records.size() as u32,
-                )
+                .add_entry(relative_offset as u32, self.file_records.size() as u32)
                 .await?;
+            trace!(
+                "write index entry: {},{}",
+                relative_offset,
+                self.file_records.size()
+            );
             if self.time_index.is_some() {
                 // TODO 时间索引
                 self.time_index
@@ -130,10 +159,21 @@ impl LogSegment {
             self.bytes_since_last_index_entry.store(0);
         }
         // 写入消息
-        self.file_records
-            .tx
-            .send(FileOp::AppendJournal(records_package))
-            .await?;
+        match log_type {
+            LogType::Journal => {
+                self.file_records
+                    .tx
+                    .send(FileOp::AppendJournal(records_package))
+                    .await?;
+            }
+            LogType::Queue => {
+                self.file_records
+                    .tx
+                    .send(FileOp::AppendQueue(records_package))
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -142,6 +182,7 @@ impl LogSegment {
         self.file_records.tx.send(FileOp::Flush(tx)).await?;
         let size = rx.await??;
         self.offset_index.trim_to_valid_size().await?;
+        self.offset_index.flush().await?;
         Ok(size)
     }
 }

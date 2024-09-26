@@ -44,11 +44,10 @@ pub trait Log: Debug {
         )))
     }
 }
-pub(crate) enum LogType {
-    JournalLog,
-    QueueLog,
+enum LogType {
+    Journal,
+    Queue,
 }
-
 pub enum FileOp {
     AppendJournal(
         (

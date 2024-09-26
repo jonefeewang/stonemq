@@ -127,6 +127,7 @@ impl IndexFile {
                 "尝试调整只读索引文件的大小".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
+                debug!("resizing index file:{:?} to size: {}", self.file, new_size);
                 // Flush the existing mmap to ensure all data is written to disk
                 mmap.flush()?;
 
@@ -258,7 +259,7 @@ impl IndexFile {
         Ok(())
     }
 
-    /// Trims the index file to the valid size.
+    /// Trims is the index file to the valid size.
     ///
     /// # Returns
     /// A Result indicating success or failure
@@ -275,7 +276,10 @@ impl IndexFile {
             // 释放读锁
         }
         // 获取写锁
-        self.resize(new_size).await
+        if new_size > 0 {
+            self.resize(new_size).await?;
+        }
+        Ok(())
     }
 }
 #[cfg(test)]
@@ -290,7 +294,7 @@ mod tests {
     #[fixture]
     #[once]
     fn setup() {
-        setup_tracing().expect("failed to setup tracing");
+        // setup_tracing().await.expect("failed to setup tracing");
     }
 
     #[rstest]

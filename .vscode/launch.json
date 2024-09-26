@@ -39,7 +39,13 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "postRunCommands": [
+                "process handle SIGINT -p true -s false -n true",
+                "process handle SIGTERM -p true -s false -n true",
+                "process handle SIGQUIT -p true -s false -n true"
+            ],
+            // "console": "externalTerminal"
         },
         {
             "type": "lldb",
@@ -57,8 +63,8 @@
                 }
             },
             "args": [
-                "log",
-                "--file=test_data/journal/journal-0/0.log"
+                "queue",
+                "--file=test_data/queue/topic_a-0/0.log"
             ],
             "cwd": "${workspaceFolder}"
         },

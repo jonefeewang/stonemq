@@ -1,6 +1,5 @@
 use crate::log::{
-    CheckPointFile, JournalLog, Log, LogType, QueueLog, RECOVERY_POINT_FILE_NAME,
-    SPLIT_POINT_FILE_NAME,
+    CheckPointFile, JournalLog, QueueLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME,
 };
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -20,7 +19,6 @@ use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
 use tracing::{error, info, trace, warn};
 
-use super::NEXT_OFFSET_CHECKPOINT_FILE_NAME;
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
 /// 来保护。
@@ -118,7 +116,7 @@ impl LogManager {
             let file_type = dir.metadata()?.file_type();
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
-                let split_offset = split_checkpoints.get(&tp).unwrap_or(&0).to_owned();
+                let split_offset = split_checkpoints.get(&tp).unwrap_or(&-1).to_owned();
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
                 let log = JournalLog::load_from(
                     &tp,
@@ -246,8 +244,26 @@ impl LogManager {
             tokio::select! {
                 // 第一次运行定时任务，会马上结束
                 _ = interval.tick() => {trace!("tick complete .")},
-                _ = shutdown.recv() => {trace!("receiving shutdown signal");}
+                _ = shutdown.recv() => {trace!("recovery checkpoint task receiving shutdown signal");}
             };
+            if shutdown.is_shutdown() {
+                for entry in self.journal_logs.iter() {
+                    info!(
+                        "log manager is shutting down, flush journal log for topic-partition:{}",
+                        entry.key().id()
+                    );
+                    let log = entry.value();
+                    log.flush().await.unwrap();
+                }
+                for entry in self.queue_logs.iter() {
+                    info!(
+                        "log manager is shutting down, flush queue log for topic-partition:{}",
+                        entry.key().id()
+                    );
+                    let log = entry.value();
+                    log.flush().await.unwrap();
+                }
+            }
 
             let check_points: HashMap<TopicPartition, i64> = self
                 .journal_logs
@@ -291,6 +307,7 @@ impl LogManager {
         &self,
         journal_topic_partition: TopicPartition,
         queue_topic_partition: HashSet<TopicPartition>,
+        shutdown: Shutdown,
     ) -> AppResult<()> {
         let journal_log = self
             .journal_logs
@@ -305,8 +322,15 @@ impl LogManager {
                 (tp.clone(), queue_log)
             })
             .collect();
-        let mut splitter =
-            SplitterTask::new(journal_log, queue_logs, journal_topic_partition.clone());
-        splitter.run().await
+        let read_wait_interval = global_config().log.splitter_wait_interval;
+        let read_wait_interval =
+            tokio::time::interval(Duration::from_millis(read_wait_interval as u64));
+        let mut splitter = SplitterTask::new(
+            journal_log,
+            queue_logs,
+            journal_topic_partition.clone(),
+            read_wait_interval,
+        );
+        splitter.run(shutdown).await
     }
 }

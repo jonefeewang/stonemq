@@ -1,4 +1,4 @@
-extern crate config as rs_config;
+extern crate config as _;
 
 use std::borrow::Cow;
 use std::io;
@@ -8,32 +8,62 @@ use std::string::FromUtf8Error;
 
 use crate::log::FileOp;
 use crate::AppError::InvalidValue;
+
 use getset::{CopyGetters, Getters};
 use once_cell::sync::OnceCell;
+
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::trace::Config;
+use opentelemetry_sdk::Resource;
 use serde::{Deserialize, Serialize};
+
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::runtime::Runtime;
 use tokio::sync::broadcast::error::SendError as BroadcastSendError;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
 use tracing_subscriber::fmt::time::ChronoLocal;
+use tracing_subscriber::layer::SubscriberExt;
+
+use opentelemetry::trace::TracerProvider as _;
+use tracing_subscriber::util::SubscriberInitExt;
 
 pub type AppResult<T> = Result<T, AppError>;
 pub fn global_config() -> &'static BrokerConfig {
     GLOBAL_CONFIG.get().unwrap()
 }
 
-pub fn setup_tracing() -> AppResult<()> {
+pub async fn setup_tracing() -> AppResult<()> {
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
-    let subscriber = tracing_subscriber::fmt()
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_timer(timer)
-        .with_max_level(tracing::Level::TRACE) // 设置最大日志级别
         .with_target(true) // 是否显示日志目标
         .with_thread_names(true) // 是否显示线程名称
         .with_thread_ids(true) // 是否显示线程ID
-        .with_line_number(true)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+        .with_line_number(true);
+
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_trace_config(
+            Config::default().with_resource(Resource::new(vec![KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                "stonemq",
+            )])),
+        )
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
+        .install_batch(opentelemetry_sdk::runtime::Tokio)
+        .expect("Couldn't create OTLP tracer")
+        .tracer("stonemq");
+
+    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(telemetry_layer)
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     Ok(())
 }
 pub static GLOBAL_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
@@ -70,12 +100,13 @@ pub enum AppError {
     #[error("socket channel flag send error")]
     SendLogMsg(#[from] SendError<FileOp>),
     SendToken(#[from] SendError<()>),
+    // #[error("tracing error")]
+    // TracingError(#[from] tracing::dispatcher::SetGlobalDefaultError),
     BroadcastSendToken(#[from] BroadcastSendError<()>),
     #[error("receive error")]
     Recv(#[from] RecvError),
     #[error("Accept error = {0}")]
     Accept(String),
-    TracingError(#[from] tracing::dispatcher::SetGlobalDefaultError),
 
     #[error("无法修改只读索引文件: {0}")]
     ReadOnlyIndexModification(Cow<'static, str>),
@@ -149,6 +180,8 @@ pub struct LogConfig {
     pub recovery_checkpoint_interval: u64,
 
     pub splitter_read_buffer_size: u32,
+
+    pub splitter_wait_interval: u32,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
@@ -163,8 +196,8 @@ impl BrokerConfig {
             .as_ref()
             .to_str()
             .ok_or(InvalidValue("config file path", String::new()))?;
-        let config = rs_config::Config::builder()
-            .add_source(rs_config::File::with_name(path_str))
+        let config = config::Config::builder()
+            .add_source(config::File::with_name(path_str))
             .build()
             // .expect("error in reading config files:");
             .unwrap_or_else(|err| {

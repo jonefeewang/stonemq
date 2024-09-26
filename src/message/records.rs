@@ -1,11 +1,12 @@
 use std::borrow::Cow;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::i64;
 use std::io::Cursor;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::{Buf, BufMut, BytesMut};
+use chrono::{DateTime, Local, TimeZone};
 use integer_encoding::VarInt;
 
 use crate::AppError::RequestError;
@@ -121,6 +122,9 @@ impl MemoryRecords {
 
     pub fn base_offset(&self) -> i64 {
         self.get_field(BASE_OFFSET_OFFSET, |c| c.get_i64(), 0)
+    }
+    pub fn last_offset_delta(&self) -> i32 {
+        self.get_field(LAST_OFFSET_DELTA_OFFSET, |c| c.get_i32(), 0)
     }
 
     fn get_field<T>(&self, offset: i32, getter: impl Fn(&mut Cursor<&[u8]>) -> T, default: T) -> T {
@@ -332,6 +336,26 @@ pub struct BatchHeader {
     pub producer_epoch: i16,
     pub first_sequence: i32,
     //下边还有一个record count <i32>并未显式放到这里
+}
+impl Display for BatchHeader {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let chrono_first_timestamp = Local.timestamp_millis_opt(self.first_timestamp).unwrap();
+        let chrono_max_timestamp = Local.timestamp_millis_opt(self.max_timestamp).unwrap();
+        f.debug_struct("BatchHeader")
+            .field("first_offset", &self.first_offset)
+            .field("length", &self.length)
+            .field("partition_leader_epoch", &self.partition_leader_epoch)
+            .field("magic", &self.magic)
+            .field("crc", &self.crc)
+            .field("attributes", &self.attributes)
+            .field("last_offset_delta", &self.last_offset_delta)
+            .field("first_timestamp", &chrono_first_timestamp)
+            .field("max_timestamp", &chrono_max_timestamp)
+            .field("producer_id", &self.producer_id)
+            .field("producer_epoch", &self.producer_epoch)
+            .field("first_sequence", &self.first_sequence)
+            .finish()
+    }
 }
 
 pub struct MemoryRecordBuilder {

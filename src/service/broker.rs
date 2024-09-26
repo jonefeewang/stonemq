@@ -5,6 +5,7 @@ use crate::{global_config, AppResult, LogManager, ReplicaManager};
 use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
 use tokio::{runtime, signal};
@@ -47,19 +48,20 @@ impl Broker {
             dynamic_config: Arc::new(RwLock::new(DynamicConfig::new())),
         }
     }
-    pub fn start(&mut self) -> AppResult<()> {
+    pub fn start(&mut self, rt: Runtime) -> AppResult<()> {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
-
-        // startup tokio runtime
-        let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
 
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
         let log_manager = log_manager.startup(&rt)?;
 
         // startup replica manager
-        let mut replica_manager = ReplicaManager::new(log_manager.clone());
+        let mut replica_manager = ReplicaManager::new(
+            log_manager.clone(),
+            notify_shutdown.clone(),
+            shutdown_complete_tx.clone(),
+        );
         replica_manager.startup(&rt)?;
         let replica_manager = Arc::new(replica_manager);
 

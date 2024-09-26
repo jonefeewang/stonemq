@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::Sender;
 use tracing::{error, info, trace};
 
 use crate::log::{JournalLog, Log, QueueLog};
@@ -13,7 +15,7 @@ use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
-use crate::{global_config, AppError, AppResult, KvStore, LogManager};
+use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
 
 use super::topic_partition::{JournalPartition, QueuePartition};
 
@@ -49,10 +51,16 @@ pub struct ReplicaManager {
     pub(crate) log_manager: Arc<LogManager>,
     journal_metadata_cache: DashMap<String, BTreeSet<i32>>,
     queue_metadata_cache: DashMap<String, BTreeSet<i32>>,
+    notify_shutdown: broadcast::Sender<()>,
+    shutdown_complete_tx: Sender<()>,
 }
 
 impl ReplicaManager {
-    pub fn new(log_manager: Arc<LogManager>) -> Self {
+    pub fn new(
+        log_manager: Arc<LogManager>,
+        notify_shutdown: broadcast::Sender<()>,
+        shutdown_complete_tx: Sender<()>,
+    ) -> Self {
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -60,6 +68,8 @@ impl ReplicaManager {
             queue_2_journal: DashMap::new(),
             journal_metadata_cache: DashMap::new(),
             queue_metadata_cache: DashMap::new(),
+            notify_shutdown,
+            shutdown_complete_tx,
         }
     }
     pub async fn append_records(
@@ -214,9 +224,13 @@ impl ReplicaManager {
                 journal_tp.id(),
                 queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>()
             );
+            let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
             let log_manager = self.log_manager.clone();
             rt.spawn(async move {
-                if let Err(e) = log_manager.start_splitter_task(journal_tp, queue_tps).await {
+                if let Err(e) = log_manager
+                    .start_splitter_task(journal_tp, queue_tps, shutdown)
+                    .await
+                {
                     error!("Splitter task error: {:?}", e);
                 }
             });
