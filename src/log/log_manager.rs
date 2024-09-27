@@ -277,6 +277,21 @@ impl LogManager {
             self.journal_recovery_checkpoints
                 .write_checkpoints(check_points)
                 .await?;
+
+            // 写入queue的recovery_checkpoint
+            let queue_check_points: HashMap<TopicPartition, i64> = self
+                .queue_logs
+                .iter()
+                .map(|entry| {
+                    let tp = entry.key();
+                    let log = entry.value();
+                    (tp.clone(), log.recover_point.load())
+                })
+                .collect();
+            self.queue_recovery_checkpoints
+                .write_checkpoints(queue_check_points)
+                .await?;
+
             if shutdown.is_shutdown() {
                 break;
             }
@@ -331,6 +346,8 @@ impl LogManager {
             journal_topic_partition.clone(),
             read_wait_interval,
         );
-        splitter.run(shutdown).await
+        splitter.run(shutdown).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        Ok(())
     }
 }

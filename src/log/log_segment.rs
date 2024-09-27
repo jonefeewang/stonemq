@@ -140,9 +140,10 @@ impl LogSegment {
                 .add_entry(relative_offset as u32, self.file_records.size() as u32)
                 .await?;
             trace!(
-                "write index entry: {},{}",
+                "write index entry: {},{},{:?}",
                 relative_offset,
-                self.file_records.size()
+                self.file_records.size(),
+                self.offset_index
             );
             if self.time_index.is_some() {
                 // TODO 时间索引

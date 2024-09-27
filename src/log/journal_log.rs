@@ -305,7 +305,7 @@ impl JournalLog {
             .await?,
             IndexFile::new(
                 format!(
-                    "{}/{}",
+                    "{}/{}.index",
                     self.topic_partition.journal_partition_dir(),
                     new_base_offset
                 ),

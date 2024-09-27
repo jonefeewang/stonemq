@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use stonemq::log::CheckPointFile;
 use stonemq::message::MemoryRecords;
 use stonemq::service::setup_tracing;
 use stonemq::AppResult;
@@ -46,7 +47,7 @@ async fn main() -> AppResult<()> {
         Commands::Journal { file } => parse_journal_log(file),
         Commands::Queue { file } => parse_queue_log(file),
         Commands::Index { file } => parse_index(file),
-        Commands::Checkpoint { file } => parse_checkpoint(file),
+        Commands::Checkpoint { file } => parse_checkpoint(file).await,
     }
 }
 
@@ -122,12 +123,6 @@ fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
                 if let Some(value) = &record.value {
                     print!("    Value: {}", String::from_utf8_lossy(value));
                 }
-                // if let Some(headers) = &record.headers {
-                //     println!("    Headers:");
-                //     for header in headers {
-                //         println!("      {}: {:?}", header.header_key, header.header_value);
-                //     }
-                // }
             }
         }
 
@@ -162,8 +157,8 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
 
                 let batch_header = memory_records.batch_header().unwrap();
                 println!("batch_header: {}", batch_header);
-                let records = memory_records.records();
-                println!("records: {:?}", records);
+                let records = memory_records.records().unwrap();
+                println!("records: {:?}", records.len());
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 println!("读取到文件末尾");
@@ -200,15 +195,12 @@ fn parse_index(file: &PathBuf) -> AppResult<()> {
     Ok(())
 }
 
-fn parse_checkpoint(file: &PathBuf) -> AppResult<()> {
+async fn parse_checkpoint(file: &PathBuf) -> AppResult<()> {
     println!("解析检查点文件: {:?}", file);
-    // 实现检查点文件解析逻辑
-    Ok(())
-}
-fn format_timestamp(timestamp: i64) -> String {
-    // 将时间戳转换为 Local 日期时间
-    let datetime = chrono::Local.timestamp_millis_opt(timestamp).unwrap();
 
-    // 格式化日期时间为可读格式
-    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+    let checkpoint = CheckPointFile::new(file.to_str().unwrap());
+    let points = checkpoint.read_checkpoints().await?;
+    println!("检查点文件解析结果: {:?}", points);
+
+    Ok(())
 }

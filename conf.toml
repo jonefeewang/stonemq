@@ -21,7 +21,7 @@ file_records_comm_channel_size = 100
 ## default 8192(8kb)
 splitter_read_buffer_size = 8192
 # default 100ms
-splitter_wait_interval = 100
+splitter_wait_interval = 1000
 
 ###### journal config
 # default segment size 10M

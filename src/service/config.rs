@@ -12,21 +12,19 @@ use crate::AppError::InvalidValue;
 use getset::{CopyGetters, Getters};
 use once_cell::sync::OnceCell;
 
-use opentelemetry::KeyValue;
+use opentelemetry::{global, KeyValue};
 use opentelemetry_sdk::trace::Config;
 use opentelemetry_sdk::Resource;
 use serde::{Deserialize, Serialize};
 
+use opentelemetry::trace::TracerProvider as _;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::runtime::Runtime;
 use tokio::sync::broadcast::error::SendError as BroadcastSendError;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
 use tracing_subscriber::fmt::time::ChronoLocal;
 use tracing_subscriber::layer::SubscriberExt;
-
-use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::util::SubscriberInitExt;
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -43,7 +41,7 @@ pub async fn setup_tracing() -> AppResult<()> {
         .with_thread_ids(true) // 是否显示线程ID
         .with_line_number(true);
 
-    let tracer = opentelemetry_otlp::new_pipeline()
+    let tracer_provider = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_trace_config(
             Config::default().with_resource(Resource::new(vec![KeyValue::new(
@@ -53,8 +51,10 @@ pub async fn setup_tracing() -> AppResult<()> {
         )
         .with_exporter(opentelemetry_otlp::new_exporter().tonic())
         .install_batch(opentelemetry_sdk::runtime::Tokio)
-        .expect("Couldn't create OTLP tracer")
-        .tracer("stonemq");
+        .expect("Couldn't create OTLP tracer");
+    let tracer = tracer_provider.tracer("stonemq");
+
+    global::set_tracer_provider(tracer_provider);
 
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 

@@ -16,7 +16,6 @@ use crate::DynamicConfig;
 use crate::LogManager;
 use crate::{AppResult, ReplicaManager, Shutdown};
 
-
 struct ConnectionHandler {
     connection: Connection,
     shutdown: Shutdown,
@@ -41,7 +40,8 @@ impl Server {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
-        dynamic_config: Arc<RwLock<DynamicConfig>>) -> Self {
+        dynamic_config: Arc<RwLock<DynamicConfig>>,
+    ) -> Self {
         Server {
             listener,
             limit_connections,
@@ -51,7 +51,7 @@ impl Server {
             dynamic_config,
         }
     }
-
+    #[tracing::instrument(name = "tcp_server_run", skip(self), level = "trace")]
     pub async fn run(&mut self) -> AppResult<()> {
         info!("tcp server accepting inbound connections");
         loop {
@@ -109,7 +109,7 @@ impl Server {
 }
 
 impl ConnectionHandler {
-    #[instrument(skip(self))]
+    #[instrument(skip(self), level = "trace", name = "connection_handler_run")]
     async fn run(&mut self) -> AppResult<()> {
         self.socket_read_ch_tx.send(()).await?;
         while !self.shutdown.is_shutdown() {

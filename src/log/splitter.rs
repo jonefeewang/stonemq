@@ -13,13 +13,14 @@ use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::time::{sleep, Duration, Interval};
-use tracing::{debug, span, trace, Level};
+use tracing::{debug, instrument, span, trace, trace_span, Instrument, Level};
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
 /// 而不需要通过FileRecord来读取，自己只要知道从哪个segment开始读取即可，然后读取到哪个位置，然后读取下一个segment
 /// 2.消费的读取是多个并发读取者，而且不连续的数据.可以维护一个BufReader pool，然后读取者从pool中获取一个BufReader
 /// .比如最热active segment, 可能有多个BufReader，而其他segment可能只有一个BufReader
+#[derive(Debug)]
 pub struct SplitterTask {
     journal_log: Arc<JournalLog>,
     queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>>,
@@ -40,78 +41,57 @@ impl SplitterTask {
             read_wait_interval,
         }
     }
-
-    #[tracing::instrument(level = "trace", skip(self, shutdown), fields(topic_partition = self.topic_partition.to_string()))]
+    #[instrument(name = "splitter_run", skip_all, fields(target_offset))]
     pub async fn run(&mut self, mut shutdown: Shutdown) -> AppResult<()> {
-        // sleep(Duration::from_millis(1000 * 1000)).await;
-
-        loop {
-            trace!(
-                "splitter 进入循环，split offset: {}",
-                self.journal_log.split_offset.load()
-            );
-            // split offset 初始值为-1， 表示还没有初始化
+        while !shutdown.is_shutdown() {
             let target_offset = self.journal_log.split_offset.load() + 1;
-            if shutdown.is_shutdown() {
-                return Ok(());
-            }
-
-            let position_info = self.journal_log.get_position_info(target_offset).await;
-            let position_info = match position_info {
-                Ok(position_info) => position_info,
-                Err(e) => {
-                    if let Some(std_err) =
-                        e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
-                    {
-                        if std_err.kind() == ErrorKind::NotFound {
-                            trace!(
-                                "未能找到offset:{} 的position信息， 等待继续重试",
-                                target_offset
-                            );
-                            if shutdown.is_shutdown() {
-                                return Ok(());
-                            }
-                            self.read_wait_interval.tick().await;
-
-                            continue;
-                        }
-                    }
-                    return Err(e);
-                }
-            };
 
             match self
-                .read_and_process_segment(target_offset, &position_info, &mut shutdown)
+                .process_target_offset(target_offset, &mut shutdown)
                 .await
             {
-                Ok(_) => {}
-                Err(e) => {
-                    if let Some(std_err) =
-                        e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
-                    {
-                        if std_err.kind() == ErrorKind::UnexpectedEof
-                        // 尝试读取下一个offset，但是找不到，因为已到达active segment的最后一个offset
-                            || std_err.kind() == ErrorKind::NotFound
-                        {
-                            if shutdown.is_shutdown() {
-                                return Ok(());
-                            }
-                            trace!("读取segment时遇到EOF错误， 等待继续重试");
-                            tokio::select! {
-                                _ = self.read_wait_interval.tick() => {},
-                                _ = shutdown.recv() => {
-                                    return Ok(());
-                                }
-                            };
-
-                            // 如果是EOF错误，则等待继续重试,
-                            continue;
-                        }
+                Ok(()) => continue,
+                Err(e) if self.is_retrievable_error(&e) => {
+                    if shutdown.is_shutdown() {
+                        return Ok(());
                     }
-                    return Err(e);
+                    tokio::select! {
+                        _ = self.read_wait_interval.tick() => {},
+                        _ = shutdown.recv() => return Ok(()),
+                    }
+                    continue;
                 }
+                Err(e) => return Err(e),
             }
         }
+        Ok(())
+    }
+
+    async fn process_target_offset(
+        &mut self,
+        target_offset: i64,
+        shutdown: &mut Shutdown,
+    ) -> AppResult<()> {
+        trace!(
+            "splitter 进入循环，split offset: {}",
+            self.journal_log.split_offset.load()
+        );
+        let position_info = self.journal_log.get_position_info(target_offset).await?;
+
+        self.read_and_process_segment(target_offset, &position_info, shutdown)
+            .await
+    }
+
+    fn is_retrievable_error(&self, e: &AppError) -> bool {
+        trace!("is_retrievable_error: {:?}", e);
+        e.source()
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .map_or(false, |std_err| {
+                matches!(
+                    std_err.kind(),
+                    ErrorKind::NotFound | ErrorKind::UnexpectedEof
+                )
+            })
     }
 
     async fn read_and_process_segment(
@@ -144,32 +124,34 @@ impl SplitterTask {
                 return Ok(());
             }
             let ret = tokio::select! {
-                read_result = self.read_batch(&mut journal_seg_file) => read_result?,
+                read_result = self.read_batch(&mut journal_seg_file) => read_result,
                 _ = shutdown.recv() => {
                     return Ok(());
                 }
             };
 
-            let (journal_offset, topic_partition, buf) = ret;
-
-            let ret = self
-                .process_batch(journal_offset, topic_partition, buf)
-                .await;
-
             match ret {
-                Ok(_) => {}
+                Ok((journal_offset, topic_partition, buf)) => {
+                    // 写入queue log失败怎么办？
+                    self.process_batch(journal_offset, topic_partition, buf)
+                        .await?;
+                }
                 Err(e) => {
                     if let Some(io_err) =
                         e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
                     {
+                        trace!("io_err: {:?}", io_err);
                         if io_err.kind() == ErrorKind::UnexpectedEof {
                             // 如果当前是active的segment的，就一直等待，直到active segment切换
                             if self.is_active_segment(position_info.base_offset).await? {
                                 if shutdown.is_shutdown() {
                                     return Ok(());
                                 }
-                                trace!("当前segment是active segment，等待继续重试");
-                                self.read_wait_interval.tick().await;
+                                trace!("当前segment是active segment,等待继续重试");
+                                tokio::select! {
+                                    _ = self.read_wait_interval.tick() => {},
+                                    _ = shutdown.recv() => return Ok(()),
+                                }
                                 continue;
                             } else {
                                 // 如果当前segment不是active segment，则直接返回, 直到读取到最后一个offset，
@@ -210,7 +192,7 @@ impl SplitterTask {
             .split_offset
             .store(journal_offset + record_count as i64 - 1);
         trace!(
-            "写入queue log成功， {},更新split offset: {}",
+            "写入queue log成功,{}, 更新split offset: {}",
             record_count,
             self.journal_log.split_offset.load()
         );

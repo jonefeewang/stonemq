@@ -224,6 +224,7 @@ impl FileRecords {
         } = ref_pos;
 
         if *offset == target_offset {
+            file.seek(SeekFrom::Start(*position as u64)).await?;
             return Ok(file);
         }
 

@@ -2,6 +2,7 @@ use crate::service::Server;
 use crate::AppError::IllegalStateError;
 use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
+use opentelemetry::global;
 use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -48,13 +49,13 @@ impl Broker {
             dynamic_config: Arc::new(RwLock::new(DynamicConfig::new())),
         }
     }
-    pub fn start(&mut self, rt: Runtime) -> AppResult<()> {
+    pub fn start(&mut self, rt: &Runtime) -> AppResult<()> {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
-        let log_manager = log_manager.startup(&rt)?;
+        let log_manager = log_manager.startup(rt)?;
 
         // startup replica manager
         let mut replica_manager = ReplicaManager::new(
@@ -62,7 +63,7 @@ impl Broker {
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
         );
-        replica_manager.startup(&rt)?;
+        replica_manager.startup(rt)?;
         let replica_manager = Arc::new(replica_manager);
 
         let dynamic_config = self.dynamic_config.clone();
@@ -81,7 +82,12 @@ impl Broker {
         drop(replica_manager);
         // wait for shutdown complete
         trace!("waiting for shutdown complete...");
-        rt.block_on(shutdown_complete_rx.recv());
+        rt.block_on(async {
+            shutdown_complete_rx.recv().await;
+            // close tracer provider, flush telemetry data
+            global::shutdown_tracer_provider();
+        });
+
         info!("broker shutdown complete");
         Ok(())
     }

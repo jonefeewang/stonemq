@@ -21,7 +21,8 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
         },
         {
             "type": "lldb",
@@ -45,7 +46,7 @@
                 "process handle SIGTERM -p true -s false -n true",
                 "process handle SIGQUIT -p true -s false -n true"
             ],
-            // "console": "externalTerminal"
+            "preLaunchTask": "rust: cargo build"
         },
         {
             "type": "lldb",
@@ -66,7 +67,8 @@
                 "queue",
                 "--file=test_data/queue/topic_a-0/0.log"
             ],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
         },
         {
             "type": "lldb",
@@ -85,7 +87,8 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
         },
         {
             "type": "lldb",
@@ -104,7 +107,8 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "rust: cargo build"
         }
     ]
 }
