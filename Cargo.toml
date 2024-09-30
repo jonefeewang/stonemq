@@ -59,13 +59,26 @@ chrono = "0.4"
 
 dotenv = "0.15.0"
 
-opentelemetry = { version = "=0.25.0" }
-opentelemetry-semantic-conventions = "=0.25.0"
-opentelemetry-otlp = { version = "=0.25.0" }
-tracing-opentelemetry = "=0.26.0"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "chrono"] }
-opentelemetry_sdk = { version = "=0.25.0", features = ["rt-tokio"] }
 
+opentelemetry = { version = "0.23", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.23", default-features = false, features = [
+    "trace",
+    "rt-tokio",
+] }
+opentelemetry-stdout = { version = "0.4.0", features = ["trace", "metrics"] }
+opentelemetry-otlp = { version = "0.16", features = ["metrics"] }
+opentelemetry-semantic-conventions = "0.15"
+tracing-subscriber = { version = "0.3.0", default-features = false, features = [
+    "registry",
+    "std",
+    "fmt",
+    "chrono",
+    "env-filter",
+    "ansi",
+    "tracing-log",
+] }
+tracing-opentelemetry = "=0.24.0"
+tracing-core = "0.1.28"
 
 [dev-dependencies]
 fake = "2.9.2"

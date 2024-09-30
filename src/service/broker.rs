@@ -1,4 +1,4 @@
-use crate::service::Server;
+use crate::service::{setup_tracing, Server};
 use crate::AppError::IllegalStateError;
 use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
@@ -11,6 +11,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
 use tokio::{runtime, signal};
 use tracing::{error, info, trace};
+
+use super::config::OtelGuard;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -50,6 +52,8 @@ impl Broker {
         }
     }
     pub fn start(&mut self, rt: &Runtime) -> AppResult<()> {
+        //setup tracing
+
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
@@ -73,19 +77,17 @@ impl Broker {
             dynamic_config,
             notify_shutdown.clone(),
             shutdown_complete_tx,
-            &mut shutdown_complete_rx,
         ))?;
 
         // tcp server has been shutdown, send shutdown signal
         notify_shutdown.send(())?;
         drop(log_manager);
         drop(replica_manager);
+        // rt.block_on(async { drop(_otel_guard) });
         // wait for shutdown complete
         trace!("waiting for shutdown complete...");
         rt.block_on(async {
             shutdown_complete_rx.recv().await;
-            // close tracer provider, flush telemetry data
-            global::shutdown_tracer_provider();
         });
 
         info!("broker shutdown complete");
@@ -97,7 +99,6 @@ impl Broker {
         dynamic_config: Arc<RwLock<DynamicConfig>>,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
-        shutdown_complete_rx: &mut Receiver<()>,
     ) -> AppResult<()> {
         let network_conf = &global_config().network;
         let listen_address = format!("{}:{}", network_conf.ip, network_conf.port);

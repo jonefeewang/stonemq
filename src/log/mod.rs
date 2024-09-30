@@ -44,7 +44,7 @@ pub trait Log: Debug {
         )))
     }
 }
-enum LogType {
+pub enum LogType {
     Journal,
     Queue,
 }

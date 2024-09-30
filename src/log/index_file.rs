@@ -144,6 +144,20 @@ impl IndexFile {
             }
         }
     }
+    /// 读取索引文件中的第一个条目
+    ///
+    /// # 参数
+    /// * `mmap` - 内存映射的引用
+    ///
+    /// # 返回值
+    /// 返回第一个条目的偏移量，如果文件为空则返回0
+    async fn read_first_entry(&self, mmap: &[u8]) -> u32 {
+        if self.entries.load() == 0 {
+            return 0;
+        }
+
+        u32::from_be_bytes([mmap[0], mmap[1], mmap[2], mmap[3]])
+    }
 
     /// Looks up an entry in the index file based on the target offset.
     ///
@@ -153,17 +167,16 @@ impl IndexFile {
     /// # Returns
     /// An Option containing the entry offset and position if found, or None if not found
     pub async fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
-        let entries = self.entries.load();
-        if entries == 0 {
-            return None;
-        }
-
         // 获取读锁
         let mode = self.mode.read().await;
         let mmap = match &*mode {
             IndexFileMode::ReadOnly(mmap) => mmap,
             IndexFileMode::ReadWrite(mmap) => mmap.as_ref(),
         };
+        let entries = self.entries.load();
+        if entries == 0 || target_offset < self.read_first_entry(mmap).await {
+            return Some((0, 0));
+        }
 
         let mut left = 0;
         let mut right = entries - 1;
@@ -287,14 +300,14 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::service::setup_tracing;
+    use crate::service::setup_local_tracing;
     use rstest::{fixture, rstest};
     use tempfile::tempdir;
 
     #[fixture]
     #[once]
     fn setup() {
-        // setup_tracing().await.expect("failed to setup tracing");
+        setup_local_tracing().expect("failed to setup tracing");
     }
 
     #[rstest]
@@ -347,11 +360,12 @@ mod tests {
         index_file.add_entry(100, 200).await.unwrap();
         index_file.add_entry(300, 400).await.unwrap();
 
+        assert_eq!(index_file.lookup(0).await, Some((0, 0)));
         assert_eq!(index_file.lookup(100).await, Some((100, 200)));
         assert_eq!(index_file.lookup(300).await, Some((300, 400)));
         assert_eq!(index_file.lookup(200).await, Some((100, 200)));
         assert_eq!(index_file.lookup(400).await, Some((300, 400)));
-        assert_eq!(index_file.lookup(50).await, None);
+        assert_eq!(index_file.lookup(50).await, Some((0, 0)));
     }
 
     #[rstest]
@@ -447,11 +461,12 @@ mod tests {
             index_file.add_entry(i * 100, i * 200).await.unwrap();
         }
 
-        for i in 0..100 {
+        assert_eq!(index_file.lookup(0).await, Some((0, 0)));
+        for i in 1..100 {
             assert_eq!(index_file.lookup(i * 100).await, Some((i * 100, i * 200)));
         }
 
-        // Test lookup for values between entries
+        // 测试查找位于条目之间的值
         for i in 0..99 {
             assert_eq!(
                 index_file.lookup(i * 100 + 50).await,
@@ -524,5 +539,30 @@ mod tests {
             result,
             Err(AppError::ReadOnlyIndexModification(_))
         ));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_edge_cases(_setup: ()) {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("index.idx");
+        let index_file = IndexFile::new(&file_path, 1024, false).await.unwrap();
+
+        // 测试空索引文件
+        assert_eq!(index_file.lookup(0).await, Some((0, 0)));
+        assert_eq!(index_file.lookup(100).await, Some((0, 0)));
+
+        // 添加一个条目
+        index_file.add_entry(100, 200).await.unwrap();
+
+        // 测试小于第一个条目的查找
+        assert_eq!(index_file.lookup(0).await, Some((0, 0)));
+        assert_eq!(index_file.lookup(50).await, Some((0, 0)));
+
+        // 测试等于第一个条目的查找
+        assert_eq!(index_file.lookup(100).await, Some((100, 200)));
+
+        // 测试大于第一个条目的查找
+        assert_eq!(index_file.lookup(150).await, Some((100, 200)));
     }
 }

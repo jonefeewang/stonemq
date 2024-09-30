@@ -39,7 +39,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
-    setup_tracing().await?;
+    // let _guard = setup_tracing();
 
     let cli = Cli::parse();
 

@@ -31,8 +31,7 @@ fn main() -> AppResult<()> {
     // startup tokio runtime
     let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
 
-    //setup tracing
-    rt.block_on(setup_tracing())?;
+    let _otel_guard = rt.block_on(setup_tracing());
 
     //setup config
     let commandline: CommandLine = CommandLine::parse();

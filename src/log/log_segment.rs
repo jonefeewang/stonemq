@@ -130,12 +130,13 @@ impl LogSegment {
         // 计算是否更新index file
         let memory_records = &records_package.2;
         let records_size = memory_records.size();
-        self.bytes_since_last_index_entry.fetch_add(records_size);
-        let relative_offset = memory_records.base_offset() - self.base_offset;
-        if self.bytes_since_last_index_entry.load()
-            >= global_config().log.journal_index_interval_bytes
-        {
-            // 正常情况下是不会满的，因为在写入之前会判断是否满了
+        let relative_offset = records_package.0 - self.base_offset;
+        let index_interval = match log_type {
+            LogType::Journal => global_config().log.journal_index_interval_bytes,
+            LogType::Queue => global_config().log.queue_index_interval_bytes,
+        };
+        if self.bytes_since_last_index_entry.load() >= index_interval {
+            //正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
                 .add_entry(relative_offset as u32, self.file_records.size() as u32)
                 .await?;
@@ -159,6 +160,8 @@ impl LogSegment {
 
             self.bytes_since_last_index_entry.store(0);
         }
+        self.bytes_since_last_index_entry.fetch_add(records_size);
+
         // 写入消息
         match log_type {
             LogType::Journal => {

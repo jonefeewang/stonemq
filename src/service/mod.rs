@@ -1,9 +1,12 @@
-pub use broker::{Broker,Node};
-pub use config::{BrokerConfig,AppError,AppResult,global_config,DynamicConfig,GLOBAL_CONFIG,setup_tracing};
-pub use shutdown::Shutdown;
+pub use broker::{Broker, Node};
+pub use config::{
+    global_config, setup_local_tracing, setup_tracing, AppError, AppResult, BrokerConfig,
+    DynamicConfig, GLOBAL_CONFIG,
+};
 pub use server::Server;
+pub use shutdown::Shutdown;
 
 mod broker;
-mod server;
 mod config;
+mod server;
 mod shutdown;

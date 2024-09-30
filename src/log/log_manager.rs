@@ -292,6 +292,19 @@ impl LogManager {
                 .write_checkpoints(queue_check_points)
                 .await?;
 
+            let split_checkpoints: HashMap<TopicPartition, i64> = self
+                .journal_logs
+                .iter()
+                .map(|entry| {
+                    let tp = entry.key();
+                    let log = entry.value();
+                    (tp.clone(), log.split_offset.load())
+                })
+                .collect();
+            self.split_checkpoint
+                .write_checkpoints(split_checkpoints)
+                .await?;
+
             if shutdown.is_shutdown() {
                 break;
             }
@@ -347,7 +360,7 @@ impl LogManager {
             read_wait_interval,
         );
         splitter.run(shutdown).await?;
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        // tokio::time::sleep(Duration::from_secs(10)).await;
         Ok(())
     }
 }

@@ -340,7 +340,7 @@ impl JournalLog {
             .entry(queue_topic_partition.clone())
             .or_insert(0);
         let offset = *queue_log_next_offset;
-        trace!("分配偏移量: {}", offset);
+        trace!("assign offset: {}", offset);
         memory_records.set_base_offset(offset)?;
         Ok(())
     }

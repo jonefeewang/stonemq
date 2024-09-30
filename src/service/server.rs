@@ -16,6 +16,8 @@ use crate::DynamicConfig;
 use crate::LogManager;
 use crate::{AppResult, ReplicaManager, Shutdown};
 
+use super::config::OtelGuard;
+
 struct ConnectionHandler {
     connection: Connection,
     shutdown: Shutdown,
