@@ -1,3 +1,5 @@
+mod read;
+
 use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;

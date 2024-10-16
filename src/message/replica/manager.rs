@@ -1,59 +1,20 @@
-use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::ops::Deref;
-use std::sync::Arc;
-
-use dashmap::DashMap;
-use tokio::runtime::Runtime;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc::Sender;
-use tracing::{error, info, trace};
-
-use crate::log::{JournalLog, Log, QueueLog};
+use crate::message::replica::Replica;
+use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{LogAppendInfo, TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
-use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
-
-use super::topic_partition::{JournalPartition, QueuePartition};
-
-#[derive(Debug)]
-pub struct Replica<L: Log> {
-    pub broker_id: i32,
-    pub topic_partition: TopicPartition,
-    pub log: Arc<L>,
-}
-
-impl<L: Log> Replica<L> {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<L>) -> Self {
-        Replica {
-            broker_id,
-            topic_partition,
-            log,
-        }
-    }
-}
-
-pub type JournalReplica = Replica<JournalLog>;
-pub type QueueReplica = Replica<QueueLog>;
-
-/// replica manager 持有一个all partitions的集合，这个���合是从controller发送的
-/// leaderAndIsrRequest命令里获取的, 所有的replica信息都在partition里。Log里的
-/// topic partition 和 这里的partition没有做一致性的合并，各自管理各自的。replica manager
-/// 通过log manager来管理存储层
-#[derive(Debug)]
-pub struct ReplicaManager {
-    all_journal_partitions: DashMap<TopicPartition, JournalPartition>,
-    all_queue_partitions: DashMap<TopicPartition, QueuePartition>,
-    queue_2_journal: DashMap<TopicPartition, TopicPartition>,
-    pub(crate) log_manager: Arc<LogManager>,
-    journal_metadata_cache: DashMap<String, BTreeSet<i32>>,
-    queue_metadata_cache: DashMap<String, BTreeSet<i32>>,
-    notify_shutdown: broadcast::Sender<()>,
-    shutdown_complete_tx: Sender<()>,
-}
+use crate::{global_config, AppError, AppResult, KvStore, LogManager, ReplicaManager, Shutdown};
+use dashmap::DashMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashSet};
+use std::ops::Deref;
+use std::sync::Arc;
+use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::Sender;
+use tracing::{error, info, trace};
 
 impl ReplicaManager {
     pub fn new(

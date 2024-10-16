@@ -19,6 +19,7 @@ mod create_topic;
 
 pub mod metadata;
 pub mod produce;
+pub mod fetch;
 
 #[derive(Debug)]
 pub enum ApiRequest {

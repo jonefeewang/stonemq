@@ -1,6 +1,6 @@
 use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
-use crate::log::{JournalLog, Log, QueueLog};
+use crate::log::{JournalLog, Log, LogType, QueueLog};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};
 use bytes::{Buf, BytesMut};
@@ -112,7 +112,7 @@ impl SplitterTask {
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
         let mut journal_seg_file =
-            FileRecords::seek_journal(journal_seg_file, target_offset, position_info).await?;
+            FileRecords::seek(journal_seg_file, target_offset, position_info,LogType::Journal).await?;
 
         trace!(
             "文件内部读指针位置: {}",

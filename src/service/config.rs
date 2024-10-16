@@ -254,6 +254,11 @@ pub enum AppError {
 
     #[error("索引文件已满")]
     IndexFileFull,
+
+
+    #[error("InsufficientData")]
+    InsufficientData,
+
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}

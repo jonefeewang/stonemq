@@ -1,14 +1,14 @@
 pub use checkpoint::CheckPointFile;
 pub use journal_log::JournalLog;
 pub use log_manager::LogManager;
-pub use queue_log::QueueLog;
+pub use queue::QueueLog;
 mod checkpoint;
 mod file_records;
 mod index_file;
 mod journal_log;
 mod log_manager;
 mod log_segment;
-mod queue_log;
+mod queue;
 mod splitter;
 
 use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};

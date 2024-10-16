@@ -4,3 +4,4 @@ pub use topic_partition::{LogAppendInfo, PartitionData, TopicData, TopicPartitio
 mod records;
 mod replica;
 mod topic_partition;
+mod batch_records;

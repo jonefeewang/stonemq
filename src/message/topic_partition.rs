@@ -82,6 +82,26 @@ impl QueuePartition {
             .append_records((queue_topic_partition, 0, record))
             .await
     }
+    pub async fn read_records(
+        &self,
+        offset: i64,
+        max_bytes: i32,
+    ) -> AppResult<(MemoryRecords, i64, i64)> {
+        if max_bytes <= 0 {
+            return Ok((MemoryRecords::empty(), 0, 0));
+        }
+        let local_replica_id = global_config().general.id;
+
+        let replica = self
+            .assigned_replicas
+            .get(&local_replica_id)
+            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+
+        replica
+            .log
+            .read_records(&self.topic_partition, offset, max_bytes)
+            .await
+    }
 
     pub fn create_replica(&self, broker_id: i32, replica: QueueReplica) {
         self.assigned_replicas.insert(broker_id, replica);

@@ -1,5 +1,5 @@
 use crate::log::calculate_journal_log_overhead;
-use crate::log::log_segment::PositionInfo;
+
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
@@ -19,7 +19,10 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Duration;
+use tokio_util::codec::length_delimited;
 use tracing::{error, trace};
+use crate::log::log_segment::PositionInfo;
+use super::LogType;
 
 #[derive(Debug)]
 pub struct FileRecords {
@@ -84,7 +87,7 @@ impl FileRecords {
                             &mut writer,
                             (offset, topic_partition, records),
                         )
-                        .await
+                            .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -106,7 +109,7 @@ impl FileRecords {
                             &mut writer,
                             (offset, topic_partition, records),
                         )
-                        .await
+                            .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -214,10 +217,11 @@ impl FileRecords {
     }
     /// 将文件指针移动到指定的offset位置
     /// 如果报错，很有可能是当前内容还未落盘，所以读取不到，可以sleep一会再读取
-    pub async fn seek_journal(
+    pub async fn seek(
         mut file: File,
         target_offset: i64,
         ref_pos: &PositionInfo,
+        log_type: LogType,
     ) -> std::io::Result<File> {
         let PositionInfo {
             offset, position, ..
@@ -233,21 +237,51 @@ impl FileRecords {
 
         for retry in 0..MAX_RETRIES {
             match file.seek(SeekFrom::Start(*position as u64)).await {
-                Ok(_) => match Self::seek_to_target_offset(&mut file, target_offset).await {
-                    Ok(found) => {
-                        if found {
-                            return Ok(file);
+                Ok(_) => match log_type {
+                    LogType::Journal => {
+                        match Self::seek_to_target_offset_journal(&mut file, target_offset).await {
+                            Ok(found) => {
+                                if found {
+                                    return Ok(file);
+                                } else {
+                                    //当前offset已经大于目标offset，则退出，（不应该出现的情况）
+                                    error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
+                                    break;
+                                }
+                            }
+                            Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                                if retry == MAX_RETRIES - 1 {
+                                    return Err(e);
+                                }
+                                tokio::time::sleep(RETRY_DELAY).await;
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         }
                     }
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
-                        if retry == MAX_RETRIES - 1 {
-                            return Err(e);
+                    LogType::Queue => {
+                        match Self::seek_to_target_offset_queue(&mut file, target_offset).await {
+                            Ok(found) => {
+                                if found {
+                                    return Ok(file);
+                                } else {
+                                    //当前offset已经大于目标offset，则退出，（不应该出现的情况）
+                                    error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
+                                    break;
+                                }
+                            }
+                            Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                                if retry == MAX_RETRIES - 1 {
+                                    return Err(e);
+                                }
+                                tokio::time::sleep(RETRY_DELAY).await;
+                                continue;
+                            }
+                            Err(e) => return Err(e),
                         }
-                        tokio::time::sleep(RETRY_DELAY).await;
-                        continue;
                     }
-                    Err(e) => return Err(e),
                 },
+
                 Err(e) => {
                     if retry == MAX_RETRIES - 1 {
                         return Err(e);
@@ -256,12 +290,6 @@ impl FileRecords {
                     continue;
                 }
             }
-
-            // 如果没有找到目标offset,并且已经到达文件末尾,则重试
-            if retry == MAX_RETRIES - 1 {
-                break;
-            }
-            tokio::time::sleep(RETRY_DELAY).await;
         }
         Err(Error::new(
             ErrorKind::NotFound,
@@ -269,7 +297,10 @@ impl FileRecords {
         ))
     }
 
-    async fn seek_to_target_offset(file: &mut File, target_offset: i64) -> std::io::Result<bool> {
+    async fn seek_to_target_offset_journal(
+        file: &mut File,
+        target_offset: i64,
+    ) -> std::io::Result<bool> {
         let mut buffer = [0u8; 12];
 
         loop {
@@ -288,6 +319,32 @@ impl FileRecords {
                 std::cmp::Ordering::Greater => return Ok(false),
                 std::cmp::Ordering::Less => {
                     file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
+                }
+            }
+        }
+    }
+    async fn seek_to_target_offset_queue(
+        file: &mut File,
+        target_offset: i64,
+    ) -> std::io::Result<bool> {
+        let mut buffer = [0u8; 12];
+
+        loop {
+            file.read_exact(&mut buffer).await?;
+            let length = u32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
+            let current_offset = i64::from_be_bytes([
+                buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6],
+                buffer[7],
+            ]);
+
+            match current_offset.cmp(&target_offset) {
+                std::cmp::Ordering::Equal => {
+                    file.seek(SeekFrom::Current(-8)).await?;
+                    return Ok(true);
+                }
+                std::cmp::Ordering::Greater => return Ok(false),
+                std::cmp::Ordering::Less => {
+                    file.seek(SeekFrom::Current(length as i64)).await?;
                 }
             }
         }
