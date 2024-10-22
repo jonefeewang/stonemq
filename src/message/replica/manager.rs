@@ -2,6 +2,7 @@ use crate::message::replica::Replica;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{LogAppendInfo, TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
+use crate::request::delayed_operation::DelayedOperationPurgatory;
 use crate::request::produce::PartitionResponse;
 use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
@@ -22,6 +23,11 @@ impl ReplicaManager {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
     ) -> Self {
+        let delayed_fetch_purgatory = DelayedOperationPurgatory::new(
+            "delayed_fetch_purgatory".to_string(),
+            notify_shutdown.clone(),
+            shutdown_complete_tx.clone(),
+        );
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -31,6 +37,7 @@ impl ReplicaManager {
             queue_metadata_cache: DashMap::new(),
             notify_shutdown,
             shutdown_complete_tx,
+            delayed_fetch_purgatory,
         }
     }
     pub async fn append_records(

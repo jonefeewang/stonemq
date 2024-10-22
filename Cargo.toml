@@ -24,15 +24,19 @@ tokio = { version = "1.33", features = [
     "signal",
     "rt-multi-thread",
     "tracing",
+    "test-util",
+
 ] }
+tokio-stream = "0.1.11"
+futures-util = { version = "0.3.28" }
 
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 bytes = { version = "1", features = ["serde"] }
 slab = "0.4.9"
 thiserror = "1.0.49"
-tokio-util = { version = "0.7", features = ["codec"] }
-futures-util = { version = "0.3.28" }
+tokio-util = { version = "0.7", features = ["codec", "time"] }
+
 # concurrency lib
 dashmap = "6.0.0"
 crossbeam-utils = "0.8.5"

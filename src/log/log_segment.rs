@@ -26,7 +26,7 @@ pub struct LogSegment {
 pub struct PositionInfo {
     pub base_offset: i64,
     pub offset: i64,
-    pub position: u32,
+    pub position: u64,
 }
 
 impl LogSegment {

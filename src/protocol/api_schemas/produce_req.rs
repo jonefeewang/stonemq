@@ -7,15 +7,15 @@ use once_cell::sync::Lazy;
 use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
+use crate::message::TopicData;
+use crate::message::{MemoryRecords, PartitionData};
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::{NPString, PString, I16, I32, I8};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
 use crate::protocol::{Acks, ApiKey, ApiVersion, ProtocolCodec};
-use crate::message::{MemoryRecords, PartitionData};
 use crate::request::produce::ProduceRequest;
-use crate::message::{TopicData};
 use crate::AppError::ProtocolError;
 use crate::AppResult;
 

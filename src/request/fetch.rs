@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 
 use crate::message::{MemoryRecords, TopicPartition};
 
+#[derive(Debug)]
 pub enum IsolationLevel {
     ReadUncommitted,
     ReadCommitted,
 }
 
+#[derive(Debug)]
 pub struct FetchRequest {
     pub replica_id: i32,
     pub max_wait: i32,
@@ -33,6 +35,7 @@ impl FetchRequest {
     pub const INVALID_LOG_START_OFFSET: i64 = -1;
 }
 
+#[derive(Debug)]
 pub struct PartitionDataReq {
     pub fetch_offset: i64,
     pub log_start_offset: i64,

@@ -1,6 +1,7 @@
 pub use checkpoint::CheckPointFile;
 pub use journal_log::JournalLog;
 pub use log_manager::LogManager;
+pub use log_segment::PositionInfo;
 pub use queue::QueueLog;
 mod checkpoint;
 mod file_records;

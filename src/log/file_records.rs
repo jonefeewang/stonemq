@@ -1,5 +1,7 @@
 use crate::log::calculate_journal_log_overhead;
 
+use super::LogType;
+use crate::log::log_segment::PositionInfo;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
@@ -21,8 +23,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Duration;
 use tokio_util::codec::length_delimited;
 use tracing::{error, trace};
-use crate::log::log_segment::PositionInfo;
-use super::LogType;
 
 #[derive(Debug)]
 pub struct FileRecords {
@@ -66,6 +66,7 @@ impl FileRecords {
             size: Arc::new(AtomicCell::new(metadata.len() as usize)),
             file_name,
         };
+        // 这里使用消息通知模式，是为了避免使用锁
 
         file_records.start_job_task(file, rx, file_records.size.clone());
 
@@ -87,7 +88,7 @@ impl FileRecords {
                             &mut writer,
                             (offset, topic_partition, records),
                         )
-                            .await
+                        .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -109,7 +110,7 @@ impl FileRecords {
                             &mut writer,
                             (offset, topic_partition, records),
                         )
-                            .await
+                        .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -222,14 +223,14 @@ impl FileRecords {
         target_offset: i64,
         ref_pos: &PositionInfo,
         log_type: LogType,
-    ) -> std::io::Result<File> {
+    ) -> std::io::Result<(File, i64)> {
         let PositionInfo {
             offset, position, ..
         } = ref_pos;
 
         if *offset == target_offset {
             file.seek(SeekFrom::Start(*position as u64)).await?;
-            return Ok(file);
+            return Ok((file, *position as i64));
         }
 
         const MAX_RETRIES: u32 = 5;
@@ -240,9 +241,9 @@ impl FileRecords {
                 Ok(_) => match log_type {
                     LogType::Journal => {
                         match Self::seek_to_target_offset_journal(&mut file, target_offset).await {
-                            Ok(found) => {
-                                if found {
-                                    return Ok(file);
+                            Ok(position) => {
+                                if position > 0 {
+                                    return Ok((file, position));
                                 } else {
                                     //当前offset已经大于目标offset，则退出，（不应该出现的情况）
                                     error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
@@ -261,9 +262,9 @@ impl FileRecords {
                     }
                     LogType::Queue => {
                         match Self::seek_to_target_offset_queue(&mut file, target_offset).await {
-                            Ok(found) => {
-                                if found {
-                                    return Ok(file);
+                            Ok(position) => {
+                                if position > 0 {
+                                    return Ok((file, position));
                                 } else {
                                     //当前offset已经大于目标offset，则退出，（不应该出现的情况）
                                     error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
@@ -300,7 +301,7 @@ impl FileRecords {
     async fn seek_to_target_offset_journal(
         file: &mut File,
         target_offset: i64,
-    ) -> std::io::Result<bool> {
+    ) -> std::io::Result<i64> {
         let mut buffer = [0u8; 12];
 
         loop {
@@ -313,10 +314,10 @@ impl FileRecords {
 
             match current_offset.cmp(&target_offset) {
                 std::cmp::Ordering::Equal => {
-                    file.seek(SeekFrom::Current(-12)).await?;
-                    return Ok(true);
+                    let current_position = file.seek(SeekFrom::Current(-12)).await?;
+                    return Ok(current_position as i64);
                 }
-                std::cmp::Ordering::Greater => return Ok(false),
+                std::cmp::Ordering::Greater => return Ok(-1),
                 std::cmp::Ordering::Less => {
                     file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
                 }
@@ -326,7 +327,7 @@ impl FileRecords {
     async fn seek_to_target_offset_queue(
         file: &mut File,
         target_offset: i64,
-    ) -> std::io::Result<bool> {
+    ) -> std::io::Result<i64> {
         let mut buffer = [0u8; 12];
 
         loop {
@@ -339,10 +340,10 @@ impl FileRecords {
 
             match current_offset.cmp(&target_offset) {
                 std::cmp::Ordering::Equal => {
-                    file.seek(SeekFrom::Current(-8)).await?;
-                    return Ok(true);
+                    let current_position = file.seek(SeekFrom::Current(-8)).await?;
+                    return Ok(current_position as i64);
                 }
-                std::cmp::Ordering::Greater => return Ok(false),
+                std::cmp::Ordering::Greater => return Ok(-1),
                 std::cmp::Ordering::Less => {
                     file.seek(SeekFrom::Current(length as i64)).await?;
                 }

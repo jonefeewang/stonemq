@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 
 use dashmap::DashMap;
 
+use crate::log::log_segment::PositionInfo;
 use crate::log::Log;
 use crate::message::records::MemoryRecords;
 use crate::{global_config, AppError, AppResult};
@@ -86,7 +87,7 @@ impl QueuePartition {
         &self,
         offset: i64,
         max_bytes: i32,
-    ) -> AppResult<(MemoryRecords, i64, i64)> {
+    ) -> AppResult<(MemoryRecords, i64, i64, PositionInfo)> {
         if max_bytes <= 0 {
             return Ok((MemoryRecords::empty(), 0, 0));
         }

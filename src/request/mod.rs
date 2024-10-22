@@ -17,9 +17,10 @@ use crate::{AppError, AppResult, LogManager};
 
 mod create_topic;
 
+pub mod consumer_group;
+pub mod fetch;
 pub mod metadata;
 pub mod produce;
-pub mod fetch;
 
 #[derive(Debug)]
 pub enum ApiRequest {
@@ -210,6 +211,7 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+
     pub(crate) async fn respond_invalid_request(
         error: AppError,
         request_context: &RequestContext<'_>,
