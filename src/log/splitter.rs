@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::time::{sleep, Duration, Interval};
-use tracing::{debug, instrument, span, trace, trace_span, Instrument, Level};
+use tokio::time::Interval;
+use tracing::{debug, instrument, trace};
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
@@ -76,9 +76,12 @@ impl SplitterTask {
             "splitter 进入循环，split offset: {}",
             self.journal_log.split_offset.load()
         );
-        let position_info = self.journal_log.get_position_info(target_offset).await?;
+        let position_info = self
+            .journal_log
+            .get_relative_position_info(target_offset)
+            .await?;
 
-        self.read_and_process_segment(target_offset, &position_info, shutdown)
+        self.read_and_process_segment(target_offset, position_info, shutdown)
             .await
     }
 
@@ -97,7 +100,7 @@ impl SplitterTask {
     async fn read_and_process_segment(
         &mut self,
         target_offset: i64,
-        position_info: &PositionInfo,
+        position_info: PositionInfo,
         shutdown: &mut Shutdown,
     ) -> AppResult<()> {
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
@@ -111,13 +114,15 @@ impl SplitterTask {
         );
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
-        let mut journal_seg_file =
-            FileRecords::seek(journal_seg_file, target_offset, position_info,LogType::Journal).await?;
+        let (mut journal_seg_file, current_position) = FileRecords::seek(
+            journal_seg_file,
+            target_offset,
+            position_info,
+            LogType::Journal,
+        )
+        .await?;
 
-        trace!(
-            "文件内部读指针位置: {}",
-            journal_seg_file.stream_position().await?
-        );
+        trace!("文件内部读指针位置: {}", current_position.position);
 
         loop {
             if shutdown.is_shutdown() {

@@ -206,7 +206,7 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回包含位置信息的 `AppResult<PositionInfo>`。
-    pub async fn get_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
+    pub async fn get_relative_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
         let segment = segments
             .range(..=offset)
@@ -218,7 +218,7 @@ impl JournalLog {
                     format!("未找到偏移量 {} 的段", offset),
                 )
             })?;
-        segment.get_position(offset).await
+        segment.get_relative_position(offset).await
     }
 
     /// 获取当前活动段的偏移量。

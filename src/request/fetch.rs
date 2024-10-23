@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::message::{MemoryRecords, TopicPartition};
+use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
 
 #[derive(Debug)]
 pub enum IsolationLevel {
@@ -10,6 +10,8 @@ pub enum IsolationLevel {
 
 #[derive(Debug)]
 pub struct FetchRequest {
+    pub client_ip: String,
+    pub correlation_id: i32,
     pub replica_id: i32,
     pub max_wait: i32,
     pub min_bytes: i32,
@@ -152,19 +154,19 @@ pub struct AbortedTransaction {
     pub first_offset: i64,
 }
 
-impl From<BTreeMap<TopicPartition, (MemoryRecords, i64, i64)>> for FetchResponse {
-    fn from(value: BTreeMap<TopicPartition, (MemoryRecords, i64, i64)>) -> Self {
+impl From<BTreeMap<TopicPartition, LogFetchInfo>> for FetchResponse {
+    fn from(value: BTreeMap<TopicPartition, LogFetchInfo>) -> Self {
         let mut responses = BTreeMap::new();
-        for (topic_partition, (records, log_start_offset, log_end_offset)) in value {
+        for (topic_partition, log_fetch_info) in value {
             responses.insert(
                 topic_partition,
                 PartitionDataRep {
                     error_code: 0,
-                    high_watermark: log_end_offset,
-                    last_stable_offset: log_end_offset,
-                    log_start_offset,
+                    high_watermark: log_fetch_info.log_end_offset,
+                    last_stable_offset: log_fetch_info.log_end_offset,
+                    log_start_offset: log_fetch_info.log_start_offset,
                     aborted_transactions: None,
-                    records,
+                    records: log_fetch_info.records,
                 },
             );
         }

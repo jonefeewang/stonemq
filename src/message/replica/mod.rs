@@ -2,13 +2,12 @@ mod manager;
 mod read;
 
 use std::collections::BTreeSet;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::log::{JournalLog, Log, QueueLog};
+use crate::message::delayed_fetch::DelayedFetch;
+use crate::message::delayed_operation::{DelayedOperation, DelayedOperationPurgatory};
 use crate::message::TopicPartition;
-use crate::request::delayed_fetch::DelayedFetch;
-use crate::request::delayed_operation::{DelayedOperation, DelayedOperationPurgatory};
 use crate::LogManager;
 use dashmap::DashMap;
 use tokio::sync::broadcast;

@@ -6,7 +6,7 @@ use crate::log::file_records::FileRecords;
 
 use crate::log::log_segment::PositionInfo;
 use crate::log::LogType;
-use crate::message::{MemoryRecords, TopicPartition};
+use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
 use bytes::BytesMut;
 use tokio::fs;
@@ -34,7 +34,7 @@ impl QueueLog {
                     format!("未找到偏移量 {} 的段", offset),
                 )
             })?;
-        segment.get_position(offset).await
+        segment.get_relative_position(offset).await
     }
 
     pub async fn read_records(
@@ -42,29 +42,24 @@ impl QueueLog {
         topic_partition: &TopicPartition,
         start_offset: i64,
         max_size: i32,
-    ) -> AppResult<(MemoryRecords, i64, i64, PositionInfo)> {
-        let mut ref_position_info = self.get_reference_position_info(start_offset).await?;
+    ) -> AppResult<LogFetchInfo> {
+        let ref_position_info = self.get_reference_position_info(start_offset).await?;
         let queue_topic_dir =
             PathBuf::from(global_config().log.queue_base_dir.clone()).join(topic_partition.id());
         let segment_path = queue_topic_dir.join(format!("{}.log", ref_position_info.base_offset));
         let queue_seg_file = fs::File::open(&segment_path).await?;
 
         // 这里会报UnexpectedEof，其他io错误,以及not found，总之无法继续读取消息了，下游需要重试
-        let (segment_file, current_position) = FileRecords::seek(
+        let (mut segment_file, current_position) = FileRecords::seek(
             queue_seg_file,
             start_offset,
-            &ref_position_info,
+            ref_position_info,
             LogType::Queue,
         )
         .await?;
 
-        // 校准ref_position_info为准确的文件指针位置
-        let mut read_position_info = ref_position_info;
-        read_position_info.position = current_position as u64;
-        read_position_info.offset = start_offset;
-
         let total_len = segment_file.metadata().await?.len();
-        let left_len = total_len - current_position as u64;
+        let left_len = total_len - current_position.position as u64;
 
         if left_len < max_size as u64 {
             // 剩余长度小于max_size，则直接读取剩余所有消息,
@@ -73,22 +68,22 @@ impl QueueLog {
             let _ = segment_file.read(&mut buffer).await?;
 
             let records = MemoryRecords::new(buffer);
-            return Ok((
+            return Ok(LogFetchInfo {
                 records,
-                self.log_start_offset,
-                self.last_offset.load(),
-                read_position_info,
-            ));
+                log_start_offset: self.log_start_offset,
+                log_end_offset: self.last_offset.load(),
+                position_info: current_position,
+            });
         }
 
         let mut buffer = BytesMut::zeroed(max_size as usize);
         let _ = segment_file.read(&mut buffer).await?;
         let records = MemoryRecords::new(buffer);
-        Ok((
+        Ok(LogFetchInfo {
             records,
-            self.log_start_offset,
-            self.last_offset.load(),
-            read_position_info,
-        ))
+            log_start_offset: self.log_start_offset,
+            log_end_offset: self.last_offset.load(),
+            position_info: current_position,
+        })
     }
 }

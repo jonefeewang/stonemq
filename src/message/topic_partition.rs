@@ -3,13 +3,12 @@ use std::fmt::{Display, Formatter};
 
 use dashmap::DashMap;
 
-use crate::log::log_segment::PositionInfo;
-use crate::log::Log;
+use crate::log::{Log, PositionInfo};
 use crate::message::records::MemoryRecords;
 use crate::{global_config, AppError, AppResult};
 
 use super::replica::JournalReplica;
-use super::QueueReplica;
+use super::{LogFetchInfo, QueueReplica};
 
 #[derive(Debug)]
 pub struct JournalPartition {
@@ -83,13 +82,14 @@ impl QueuePartition {
             .append_records((queue_topic_partition, 0, record))
             .await
     }
-    pub async fn read_records(
-        &self,
-        offset: i64,
-        max_bytes: i32,
-    ) -> AppResult<(MemoryRecords, i64, i64, PositionInfo)> {
+    pub async fn read_records(&self, offset: i64, max_bytes: i32) -> AppResult<LogFetchInfo> {
         if max_bytes <= 0 {
-            return Ok((MemoryRecords::empty(), 0, 0));
+            return Ok(LogFetchInfo {
+                records: MemoryRecords::empty(),
+                log_start_offset: 0,
+                log_end_offset: 0,
+                position_info: PositionInfo::default(),
+            });
         }
         let local_replica_id = global_config().general.id;
 

@@ -7,10 +7,8 @@ use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
 use crate::AppError::InvalidValue;
 use crate::AppResult;
-use bytes::buf;
+
 use bytes::Buf;
-use bytes::BufMut;
-use bytes::BytesMut;
 use crossbeam_utils::atomic::AtomicCell;
 use std::io::{Error, ErrorKind, SeekFrom};
 use std::path::Path;
@@ -21,7 +19,6 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Duration;
-use tokio_util::codec::length_delimited;
 use tracing::{error, trace};
 
 #[derive(Debug)]
@@ -221,29 +218,32 @@ impl FileRecords {
     pub async fn seek(
         mut file: File,
         target_offset: i64,
-        ref_pos: &PositionInfo,
+        ref_pos: PositionInfo,
         log_type: LogType,
-    ) -> std::io::Result<(File, i64)> {
+    ) -> std::io::Result<(File, PositionInfo)> {
         let PositionInfo {
             offset, position, ..
         } = ref_pos;
 
-        if *offset == target_offset {
-            file.seek(SeekFrom::Start(*position as u64)).await?;
-            return Ok((file, *position as i64));
+        if offset == target_offset {
+            file.seek(SeekFrom::Start(position as u64)).await?;
+            return Ok((file, ref_pos));
         }
 
         const MAX_RETRIES: u32 = 5;
         const RETRY_DELAY: Duration = Duration::from_millis(100);
 
         for retry in 0..MAX_RETRIES {
-            match file.seek(SeekFrom::Start(*position as u64)).await {
+            match file.seek(SeekFrom::Start(position as u64)).await {
                 Ok(_) => match log_type {
                     LogType::Journal => {
                         match Self::seek_to_target_offset_journal(&mut file, target_offset).await {
                             Ok(position) => {
                                 if position > 0 {
-                                    return Ok((file, position));
+                                    let mut new_pos = ref_pos;
+                                    new_pos.position = position;
+                                    new_pos.offset = target_offset;
+                                    return Ok((file, new_pos));
                                 } else {
                                     //当前offset已经大于目标offset，则退出，（不应该出现的情况）
                                     error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
@@ -264,7 +264,10 @@ impl FileRecords {
                         match Self::seek_to_target_offset_queue(&mut file, target_offset).await {
                             Ok(position) => {
                                 if position > 0 {
-                                    return Ok((file, position));
+                                    let mut new_pos = ref_pos;
+                                    new_pos.position = position;
+                                    new_pos.offset = target_offset;
+                                    return Ok((file, new_pos));
                                 } else {
                                     //当前offset已经大于目标offset，则退出，（不应该出现的情况）
                                     error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");

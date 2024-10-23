@@ -22,11 +22,11 @@ pub struct LogSegment {
     offset_index: IndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct PositionInfo {
     pub base_offset: i64,
     pub offset: i64,
-    pub position: u64,
+    pub position: i64,
 }
 
 impl LogSegment {
@@ -65,7 +65,7 @@ impl LogSegment {
     /// Returns an error if the offset cannot be found in the index file.In this case, the content of offset_index should be empty.
     ///
     ///
-    pub async fn get_position(&self, offset: i64) -> AppResult<PositionInfo> {
+    pub async fn get_relative_position(&self, offset: i64) -> AppResult<PositionInfo> {
         let offset_position = self
             .offset_index
             .lookup((offset - self.base_offset) as u32)
@@ -80,7 +80,7 @@ impl LogSegment {
         let pos_info = PositionInfo {
             base_offset: self.base_offset,
             offset: offset_position.0 as i64 + self.base_offset,
-            position: offset_position.1,
+            position: offset_position.1 as i64,
         };
         Ok(pos_info)
     }

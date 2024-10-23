@@ -4,9 +4,9 @@ use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, BufWriter};
 use tokio::net::TcpStream;
 
+use crate::network::RequestFrame;
 use crate::AppResult;
 use crate::DynamicConfig;
-use crate::network::RequestFrame;
 
 /// Represents a connection to a client.
 ///
@@ -18,6 +18,7 @@ pub struct Connection {
     pub buffer: BytesMut,
     pub compression_buffer: BytesMut,
     dynamic_config: DynamicConfig,
+    pub client_ip: String,
 }
 
 impl Connection {
@@ -26,11 +27,14 @@ impl Connection {
     /// The `TcpStream` is wrapped in a `BufWriter` for efficient writing, and a `BytesMut` buffer
     /// is created with an initial capacity of 4KB for reading data from the stream.
     pub fn new(socket: TcpStream, dynamic_config: DynamicConfig) -> Connection {
+        let peer_addr = socket.peer_addr().unwrap();
+        let client_ip = peer_addr.ip().to_string();
         Connection {
             writer: BufWriter::new(socket),
             buffer: BytesMut::with_capacity(4 * 1024),
             compression_buffer: BytesMut::with_capacity(4 * 1024),
             dynamic_config,
+            client_ip,
         }
     }
     /// Reads a `RequestFrame` from the connection.
