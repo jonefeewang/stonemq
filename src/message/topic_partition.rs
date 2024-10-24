@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 
@@ -13,12 +14,12 @@ use super::{LogFetchInfo, QueueReplica};
 #[derive(Debug)]
 pub struct JournalPartition {
     pub topic_partition: TopicPartition,
-    pub assigned_replicas: DashMap<i32, JournalReplica>,
+    pub assigned_replicas: DashMap<i32, Arc<JournalReplica>>,
 }
 #[derive(Debug)]
 pub struct QueuePartition {
     pub topic_partition: TopicPartition,
-    pub assigned_replicas: DashMap<i32, QueueReplica>,
+    pub assigned_replicas: DashMap<i32, Arc<QueueReplica>>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,15 +47,17 @@ impl JournalPartition {
             .assigned_replicas
             .get(&local_replica_id)
             .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+        let log_clone = replica.log.clone();
+        // 释放dashmap的读锁
+        drop(replica);
 
-        replica
-            .log
+        log_clone
             .append_records((queue_topic_partition, 0, record))
             .await
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: JournalReplica) {
-        self.assigned_replicas.insert(broker_id, replica);
+        self.assigned_replicas.insert(broker_id, Arc::new(replica));
     }
 }
 impl QueuePartition {
@@ -105,7 +108,20 @@ impl QueuePartition {
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: QueueReplica) {
-        self.assigned_replicas.insert(broker_id, replica);
+        self.assigned_replicas.insert(broker_id, Arc::new(replica));
+    }
+
+    pub async fn get_leo_info(&self) -> AppResult<PositionInfo> {
+        let local_replica_id = global_config().general.id;
+        let replica = self
+            .assigned_replicas
+            .get(&local_replica_id)
+            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+
+        let log_clone = replica.log.clone();
+        drop(replica);
+
+        log_clone.get_leo_info().await
     }
 }
 

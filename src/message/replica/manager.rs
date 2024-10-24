@@ -54,21 +54,24 @@ impl ReplicaManager {
                 };
 
                 // 一次循环形成一个dashmap的entry value的作用域，尽快释放读锁
-                let journal_partition =
+                let journal_tp =
                     self.queue_2_journal
                         .get(&topic_partition)
                         .ok_or(IllegalStateError(Cow::Owned(format!(
                             "No corresponding journal partition.:{}",
                             topic_partition
                         ))))?;
-                let journal_partition = self
-                    .all_journal_partitions
-                    .get(journal_partition.deref())
-                    .ok_or(IllegalStateError(Cow::Owned(format!(
-                        "corresponding journal partition not found.:{}",
-                        *journal_partition
-                    ))))?;
-
+                let journal_tp_clone = journal_tp.clone();
+                drop(journal_tp);
+                let journal_partition =
+                    self.all_journal_partitions
+                        .get(&journal_tp_clone)
+                        .ok_or(IllegalStateError(Cow::Owned(format!(
+                            "corresponding journal partition not found.:{}",
+                            journal_tp_clone
+                        ))))?;
+                // 这里没做journal_partition的复制，占用了一下dashmap的锁，不过问题不大，因为你真正的底层耗时操作log.append之前已经
+                // 释放了读锁
                 let LogAppendInfo { base_offset, .. } = journal_partition
                     .append_record_to_leader(partition.message_set, topic_partition)
                     .await?;
@@ -108,7 +111,11 @@ impl ReplicaManager {
             .ok_or(InvalidValue("journal_topics_list", String::new()))?;
         let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
         let mut partitions = self.create_journal_partitions(broker_id, tp_strs, rt)?;
-        self.all_journal_partitions.extend(partitions.drain(..));
+        self.all_journal_partitions.extend(
+            partitions
+                .drain(..)
+                .map(|(tp, partition)| (tp, Arc::new(partition))),
+        );
         info!(
             "load journal partitions: {:?}",
             self.all_journal_partitions
@@ -124,7 +131,11 @@ impl ReplicaManager {
             .ok_or(InvalidValue("queue_topics_list", String::new()))?;
         let tp_strs: Vec<&str> = queue_tps.split(',').collect();
         let mut partitions = self.create_queue_partitions(broker_id, tp_strs, rt)?;
-        self.all_queue_partitions.extend(partitions.drain(..));
+        self.all_queue_partitions.extend(
+            partitions
+                .drain(..)
+                .map(|(tp, partition)| (tp, Arc::new(partition))),
+        );
         info!(
             "load queue partitions: {:?}",
             self.all_queue_partitions

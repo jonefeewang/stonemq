@@ -41,8 +41,8 @@ pub type QueueReplica = Replica<QueueLog>;
 /// 通过log manager来管理存储层
 #[derive(Debug)]
 pub struct ReplicaManager {
-    all_journal_partitions: DashMap<TopicPartition, JournalPartition>,
-    all_queue_partitions: DashMap<TopicPartition, QueuePartition>,
+    all_journal_partitions: DashMap<TopicPartition, Arc<JournalPartition>>,
+    all_queue_partitions: DashMap<TopicPartition, Arc<QueuePartition>>,
     queue_2_journal: DashMap<TopicPartition, TopicPartition>,
     pub(crate) log_manager: Arc<LogManager>,
     journal_metadata_cache: DashMap<String, BTreeSet<i32>>,

@@ -14,7 +14,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{error, info, trace, warn};
 
-use super::LogType;
+use super::{LogType, PositionInfo};
 
 #[derive(Debug)]
 pub struct QueueLog {
@@ -420,5 +420,19 @@ impl QueueLog {
             "No active segment for topic partition: {}",
             topic_partition
         ))
+    }
+
+    pub async fn get_leo_info(&self) -> AppResult<PositionInfo> {
+        let segments = self.segments.read().await;
+        let (base_offset, active_seg) = segments
+            .iter()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+        let leo_info = PositionInfo {
+            base_offset: *base_offset,
+            offset: self.last_offset.load(),
+            position: active_seg.size() as i64,
+        };
+        Ok(leo_info)
     }
 }

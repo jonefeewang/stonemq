@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::ReplicaManager;
+use crate::log::PositionInfo;
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::{LogFetchInfo, TopicPartition};
 use crate::request::fetch::{FetchRequest, FetchResponse};
@@ -37,7 +38,7 @@ impl ReplicaManager {
                 .collect();
             let delayed_fetch = DelayedFetch {
                 position_infos,
-                tx,
+                tx: Some(tx),
                 request,
                 replica_manager: self.clone(),
             };
@@ -51,7 +52,7 @@ impl ReplicaManager {
         }
     }
 
-    async fn do_fetch(
+    pub async fn do_fetch(
         &self,
         request: &FetchRequest,
     ) -> AppResult<BTreeMap<TopicPartition, LogFetchInfo>> {
@@ -68,5 +69,13 @@ impl ReplicaManager {
         }
 
         Ok(read_result)
+    }
+
+    pub async fn get_leo_info(&self, tp: &TopicPartition) -> AppResult<PositionInfo> {
+        let queue_partition = self.all_queue_partitions.get(tp).unwrap();
+        let queue_partition_clone = queue_partition.clone();
+        drop(queue_partition);
+        let leo_info = queue_partition_clone.get_leo_info().await?;
+        Ok(leo_info)
     }
 }

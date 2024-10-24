@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
+use futures_util::lock::Mutex;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{error, info, trace, warn};
@@ -25,6 +26,8 @@ use crate::{global_config, AppResult};
 #[derive(Debug)]
 pub struct JournalLog {
     /// 日志段的有序映射，使用 `RwLock` 以允许多个并发读取和单一写入。
+    /// 写入： roll的时候才会用到
+    /// 读取： 很多地方会用到,相对于读取的频率，write的频率确实不高
     segments: RwLock<BTreeMap<i64, Arc<LogSegment>>>,
 
     /// 队列下一个偏移信息，使用 `DashMap` 以提供并发安全的哈希映射。
@@ -43,7 +46,8 @@ pub struct JournalLog {
     pub split_offset: AtomicCell<i64>,
 
     /// 写操作的锁。
-    write_lock: RwLock<()>,
+    /// 控制写入文件/更新segments/更新offset等系列复合操作，无法使用channel，只能使用锁
+    write_lock: Mutex<()>,
 
     /// 主题分区信息。
     topic_partition: TopicPartition,
@@ -69,7 +73,7 @@ impl Log for JournalLog {
         records: (TopicPartition, i64, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
         let (queue_topic_partition, _, mut memory_records) = records;
-        let _write_guard = self.write_lock.write().await; // 获取写锁以进行原子追加操作
+        let _write_guard = self.write_lock.lock().await; // 获取写锁以进行原子追加操作
 
         let (active_seg_size, active_segment_offset_index_full) =
             self.get_active_segment_info().await?;
@@ -166,7 +170,7 @@ impl JournalLog {
             next_offset: AtomicCell::new(log_recovery_point + 1),
             recover_point: AtomicCell::new(log_recovery_point),
             split_offset: AtomicCell::new(split_offset),
-            write_lock: RwLock::new(()),
+            write_lock: Mutex::new(()),
             topic_partition,
             index_file_max_size,
         })
@@ -477,7 +481,7 @@ impl JournalLog {
             next_offset: AtomicCell::new(next_offset),
             recover_point: AtomicCell::new(recover_point),
             split_offset: AtomicCell::new(split_offset),
-            write_lock: RwLock::new(()),
+            write_lock: Mutex::new(()),
             topic_partition: topic_partition.clone(),
             index_file_max_size,
         };

@@ -7,14 +7,12 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 use tokio_stream::{Stream, StreamExt};
 use tokio_util::time::DelayQueue;
 
 use tokio::sync::{broadcast, RwLock};
-use tokio::time::{sleep, Duration};
-
-use crate::Shutdown;
+use tokio::time::Duration;
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -31,14 +29,14 @@ pub trait DelayedOperation: Send + Sync + Debug + Eq + Hash {
     /// # 异步
     ///
     /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    async fn try_complete(&self) -> bool;
+    async fn try_complete(&mut self) -> bool;
     /// 当延迟操作完成时调用此方法，这个方法在具体的延迟操作中实现
     /// 这个方法只会在force_complete中调用一次
     ///
     /// # 异步
     ///
     /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    async fn on_complete(&self);
+    async fn on_complete(&mut self);
 
     /// 当延迟操作过期时调用此方法，这个方法在具体的延迟操作中实现
     /// 这个方法只会在操作过期后，系统调用完force_complete后调用
@@ -51,7 +49,7 @@ pub trait DelayedOperation: Send + Sync + Debug + Eq + Hash {
     /// 获取延迟操作的延迟时间
     fn delay_ms(&self) -> u64;
 
-    fn is_completed(&self) -> &AtomicCell<bool>;
+    fn is_completed(&mut self) -> &AtomicCell<bool>;
 
     fn cancel(&self);
 
@@ -81,7 +79,7 @@ pub trait DelayedOperation: Send + Sync + Debug + Eq + Hash {
     /// # 异步
     ///
     /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    async fn force_complete(&self, cancel_timeout: bool) -> bool {
+    async fn force_complete(&mut self, cancel_timeout: bool) -> bool {
         if self.is_completed().compare_exchange(false, true).is_ok() {
             if cancel_timeout {
                 self.cancel();
@@ -92,29 +90,8 @@ pub trait DelayedOperation: Send + Sync + Debug + Eq + Hash {
             false
         }
     }
-    /// try_complete的线程安全版本
-    /// 尝试完成延迟操作，如果有锁则先获取锁
-    ///
-    /// 此方法会尝试完成延迟操作，如果操作有关联的锁，会先获取写锁再执行完成操作。
-    ///
-    /// # 返回值
-    ///
-    /// - 如果操作成功完成，返回 `true`
-    /// - 如果操作未能完成或没有锁，返回 `false`
-    ///
-    /// # 异步
-    ///
-    /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    async fn maybe_try_complete(&self) -> bool {
-        if let Some(lock) = self.lock() {
-            let _guard = lock.write().await;
-            self.try_complete().await
-        } else {
-            false
-        }
-    }
 
-    async fn timeout(&self) {
+    async fn timeout(&mut self) {
         if self.force_complete(false).await {
             self.on_expiration().await;
         }
@@ -161,7 +138,7 @@ impl<T: DelayedOperation + Send + Sync + 'static> DelayedOperationPurgatory<T> {
             self.watch_for_operation(key, operation.clone()).await;
         }
 
-        if operation.maybe_try_complete().await {
+        if operation.try_complete().await {
             return true;
         }
 
