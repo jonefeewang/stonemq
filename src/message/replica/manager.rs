@@ -90,6 +90,11 @@ impl ReplicaManager {
                 );
             }
         }
+        for (tp, _) in tp_response.iter() {
+            self.delayed_fetch_purgatory
+                .check_and_complete(tp.to_string())
+                .await;
+        }
         Ok(tp_response)
     }
     ///

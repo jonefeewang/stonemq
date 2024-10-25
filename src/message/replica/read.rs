@@ -16,8 +16,8 @@ impl ReplicaManager {
         let read_result = self.do_fetch(&request).await?;
 
         let total_size = read_result
-            .iter()
-            .map(|(_, log_fetch_info)| log_fetch_info.records.size() as i32)
+            .values()
+            .map(|log_fetch_info| log_fetch_info.records.size() as i32)
             .sum::<i32>();
 
         if total_size > request.min_bytes {
@@ -36,15 +36,16 @@ impl ReplicaManager {
                 .keys()
                 .map(|topic_partition| topic_partition.to_string())
                 .collect();
-            let delayed_fetch = DelayedFetch {
-                position_infos,
-                tx: Some(tx),
+            let delayed_fetch = DelayedFetch::new(
                 request,
-                replica_manager: self.clone(),
-            };
+                self.clone(),
+                position_infos,
+                tx,
+                self.delayed_fetch_purgatory.timer(),
+            );
 
             self.delayed_fetch_purgatory
-                .try_complete_else_watch(&Arc::new(delayed_fetch), delay_fetch_keys)
+                .try_complete_else_watch(delayed_fetch, delay_fetch_keys)
                 .await;
             let result = rx.await.unwrap();
 
