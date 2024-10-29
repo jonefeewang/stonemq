@@ -36,15 +36,11 @@ impl ReplicaManager {
                 .keys()
                 .map(|topic_partition| topic_partition.to_string())
                 .collect();
-            let delayed_fetch = DelayedFetch::new(
-                request,
-                self.clone(),
-                position_infos,
-                tx,
-                self.delayed_fetch_purgatory.timer(),
-            );
+            let delayed_fetch = DelayedFetch::new(request, self.clone(), position_infos, tx);
 
             self.delayed_fetch_purgatory
+                .as_ref()
+                .unwrap()
                 .try_complete_else_watch(delayed_fetch, delay_fetch_keys)
                 .await;
             let result = rx.await.unwrap();

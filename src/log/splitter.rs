@@ -11,7 +11,7 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{self, File};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::AsyncReadExt;
 use tokio::time::Interval;
 use tracing::{debug, instrument, trace};
 

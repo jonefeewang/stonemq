@@ -1,3 +1,4 @@
+use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::delayed_operation::DelayedOperationPurgatory;
 use crate::message::replica::Replica;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
@@ -23,11 +24,6 @@ impl ReplicaManager {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
     ) -> Self {
-        let delayed_fetch_purgatory = DelayedOperationPurgatory::new(
-            "delayed_fetch_purgatory".to_string(),
-            notify_shutdown.clone(),
-            shutdown_complete_tx.clone(),
-        );
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -37,7 +33,7 @@ impl ReplicaManager {
             queue_metadata_cache: DashMap::new(),
             notify_shutdown,
             shutdown_complete_tx,
-            delayed_fetch_purgatory,
+            delayed_fetch_purgatory: None,
         }
     }
     pub async fn append_records(
@@ -92,7 +88,9 @@ impl ReplicaManager {
         }
         for (tp, _) in tp_response.iter() {
             self.delayed_fetch_purgatory
-                .check_and_complete(tp.to_string())
+                .as_ref()
+                .unwrap()
+                .check_and_complete(tp.to_string().as_str())
                 .await;
         }
         Ok(tp_response)
@@ -184,6 +182,22 @@ impl ReplicaManager {
                 })
                 .collect::<Vec<String>>()
         );
+
+        // 创建delayed_fetch_purgatory
+        let (delayed_fetch_purgatory, delay_queue_rx, shutdown) =
+            DelayedOperationPurgatory::<DelayedFetch>::new(
+                "delayed_fetch_purgatory",
+                self.notify_shutdown.clone(),
+                self.shutdown_complete_tx.clone(),
+            );
+        let delayed_fetch_purgatory = Arc::new(delayed_fetch_purgatory);
+        let delayed_fetch_purgatory_clone = delayed_fetch_purgatory.clone();
+        rt.block_on(async move {
+            delayed_fetch_purgatory_clone
+                .start(delay_queue_rx, shutdown)
+                .await
+        });
+        self.delayed_fetch_purgatory = Some(delayed_fetch_purgatory);
 
         // 启动journal log splitter
         // Create a BTreeMap to store the reverse mapping

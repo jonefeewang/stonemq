@@ -13,7 +13,7 @@ use crate::request::produce::{ProduceRequest, ProduceResponse};
 use crate::service::Node;
 use crate::AppError::IllegalStateError;
 use crate::ReplicaManager;
-use crate::{AppError, AppResult, LogManager};
+use crate::{AppError, AppResult};
 
 mod create_topic;
 

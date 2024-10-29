@@ -18,6 +18,7 @@ pub mod metadata_reps;
 pub mod metadata_req;
 pub mod produce_reps;
 pub mod produce_req;
+pub mod consumer_protocol;
 
 // Constants for key names used in the request header
 static API_KEY: &str = "api_key";

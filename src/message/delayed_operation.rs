@@ -1,321 +1,256 @@
 use crossbeam_utils::atomic::AtomicCell;
-use dashmap::{DashMap, DashSet};
-use futures_util::ready;
-use tracing::{error, info};
-
-use std::fmt::Debug;
+use dashmap::DashMap;
+use futures_util::StreamExt;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::sync::mpsc::{self, Sender};
-use tokio_stream::{Stream, StreamExt};
-use tokio_util::time::DelayQueue;
-
 use tokio::sync::broadcast;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::time::sleep;
 use tokio::time::Duration;
-
-use std::collections::HashMap;
-use std::hash::Hash;
-use tokio::time::interval;
+use tokio_util::time::{delay_queue, DelayQueue};
 
 use crate::Shutdown;
 
-pub trait DelayedOperation: Send + Sync + Debug + Eq + Hash {
-    /// 尝试是否可以马上完成延迟操作，如果可以,则调用force_complete,
-    /// 并返回force_complete的返回值, 否则返回false
-    ///
-    /// # 返回值
-    ///
-    /// 如果可以马上执行，这返回force_complete的返回值, 否则返回false
-    ///
-    /// # 异步
-    ///
-    /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    async fn try_complete(&self) -> bool;
-    /// 当延迟操作完成时调用此方法，这个方法在具体的延迟操作中实现
-    /// 这个方法只会在force_complete中调用一次
-    ///
-    /// # 异步
-    ///
-    /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    fn on_complete(&self) -> impl Future<Output = ()> + Send;
-
-    /// 当延迟操作过期时调用此方法，这个方法在具体的延迟操作中实现
-    /// 这个方法只会在操作过期后，系统调用完force_complete后调用
-    ///
-    /// # 异步
-    ///
-    /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    fn on_expiration(&self) -> impl Future<Output = ()> + Send;
-
-    fn cancel(&self) -> impl Future<Output = ()> + Send;
-
-    /// 获取延迟操作的延迟时间
+// 异步的DelayedOperation trait
+pub trait DelayedOperation: Send + Sync {
     fn delay_ms(&self) -> u64;
 
-    fn is_completed(&self) -> &AtomicCell<bool>;
+    async fn try_complete(&self) -> bool;
 
-    fn op_id(&self) -> String;
+    fn on_complete(&self) -> impl Future<Output = ()> + Send;
+    fn on_expiration(&self) -> impl Future<Output = ()> + Send;
+}
 
-    /// 强制完成延迟操作
-    ///
-    /// 此方法尝试将操作标记为已完成，并执行相关的完成操作。
-    ///
-    /// 1. 操作在tryComplete()中被验证为可完成
-    /// 2. 操作已过期，因此需要立即完成
-    ///
-    /// # 返回值
-    ///
-    /// - 如果操作成功标记为已完成，返回 `true`，表示操作由当前线程完成
-    /// - 返回 `false`，表示操作已经由其他线程完成
-    ///
-    /// # 行为
-    ///
-    /// 1. 尝试将 `completed` 状态从 `false` 更改为 `true`
-    /// 2. 如果更改成功：
-    ///    - 调用 `cancel()` 方法
-    ///    - 调用 `on_complete()` 方法
-    ///    - 返回 `true`
-    /// 3. 如果更改失败（即操作已经完成），返回 `false`
-    ///
-    /// # 异步
-    ///
-    /// 此方法是异步的，需要使用 `.await` 来等待其完成。
-    fn force_complete(&self, cancel_timeout: bool) -> impl Future<Output = bool> + Send {
-        async move {
-            if self.is_completed().compare_exchange(false, true).is_ok() {
-                if cancel_timeout {
-                    self.cancel().await;
-                }
-                self.on_complete().await;
-                true
-            } else {
-                false
-            }
+// 包装DelayedOperation的状态管理
+#[derive(Debug)]
+pub struct DelayedOperationState<T: DelayedOperation> {
+    operation: Arc<T>,
+    completed: AtomicCell<bool>,
+    delay_key: AtomicCell<Option<delay_queue::Key>>,
+}
+
+impl<T: DelayedOperation> DelayedOperationState<T> {
+    pub fn new(operation: T) -> Self {
+        Self {
+            operation: Arc::new(operation),
+            completed: AtomicCell::new(false),
+            delay_key: AtomicCell::new(None),
         }
     }
 
-    fn timeout(&self) -> impl Future<Output = ()> + Send {
-        // 修改这里
-        async move {
-            if self.force_complete(false).await {
-                self.on_expiration().await;
-            }
+    pub fn is_completed(&self) -> bool {
+        self.completed.load()
+    }
+
+    pub async fn force_complete(&self) -> bool {
+        if !self.completed.swap(true) {
+            self.operation.on_complete().await;
+            true
+        } else {
+            false
         }
     }
 }
 
+// 定义 DelayQueue 的操作枚举
+pub(crate) enum DelayQueueOp<T: DelayedOperation> {
+    Insert(Arc<DelayedOperationState<T>>, Duration),
+    Remove(tokio_util::time::delay_queue::Key),
+}
+
+// 管理延迟操作的Purgatory
 #[derive(Debug)]
 pub struct DelayedOperationPurgatory<T: DelayedOperation + 'static> {
     name: String,
-    watchers: DashMap<String, Arc<Watchers<T>>>,
-    shutdown_complete_tx: Sender<()>,
-    timer: Arc<Timer<T>>,
+    watchers: DashMap<String, Vec<Arc<DelayedOperationState<T>>>>,
+    delay_queue_tx: Sender<DelayQueueOp<T>>,
 }
 
-impl<T: DelayedOperation + Send + Sync + 'static> DelayedOperationPurgatory<T> {
+impl<T: DelayedOperation> DelayedOperationPurgatory<T> {
     pub fn new(
-        name: String,
+        name: &str,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
-    ) -> Arc<Self> {
+    ) -> (Self, Receiver<DelayQueueOp<T>>, Shutdown) {
         let shutdown = Shutdown::new(notify_shutdown.subscribe());
-        let purgatory = Arc::new(DelayedOperationPurgatory {
-            name,
-            watchers: DashMap::new(),
-            shutdown_complete_tx,
-            timer: Arc::new(Timer::new(shutdown)),
-        });
+        let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000); // 适当的缓冲大小
 
-        purgatory
+        let purgatory = DelayedOperationPurgatory {
+            name: name.to_string(),
+            watchers: DashMap::new(),
+            delay_queue_tx: tx,
+        };
+        (purgatory, rx, shutdown)
     }
 
     pub async fn try_complete_else_watch(&self, operation: T, watch_keys: Vec<String>) -> bool {
-        if operation.try_complete().await {
+        let op_state = Arc::new(DelayedOperationState::new(operation));
+
+        if op_state.operation.try_complete().await && op_state.force_complete().await {
             return true;
         }
-
-        let op = Arc::new(operation);
 
         for key in watch_keys {
-            self.watch_for_operation(key, op.clone()).await;
-        }
-
-        if op.try_complete().await {
-            return true;
-        }
-
-        if !op.is_completed().load() {
-            self.timer
-                .add(op.op_id(), op.clone(), Duration::from_millis(op.delay_ms()))
-                .await;
-            if op.is_completed().load() {
-                self.cancel_timeout(op).await;
+            if op_state.is_completed() {
+                break;
             }
+
+            self.watchers
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(Arc::clone(&op_state));
+        }
+
+        if !op_state.is_completed() {
+            let delay = Duration::from_millis(op_state.operation.delay_ms());
+            self.delay_queue_tx
+                .send(DelayQueueOp::Insert(Arc::clone(&op_state), delay))
+                .await
+                .expect("delay queue sender should be alive");
         }
 
         false
     }
 
-    // 检查某个key是否可以完成
-    pub async fn check_and_complete(&self, key: String) -> usize {
-        let watcher = self.watchers.get(&key);
-        if let Some(watcher) = watcher {
-            let watcher = watcher.clone();
-            watcher.try_complete_watched().await
+    pub async fn start(
+        self: Arc<Self>,
+        mut delay_queue_rx: Receiver<DelayQueueOp<T>>,
+        mut shutdown: Shutdown,
+    ) {
+        // DelayQueue 处理循环
+        tokio::spawn(async move {
+            let mut delay_queue = DelayQueue::new();
+
+            loop {
+                tokio::select! {
+                    Some(op) = delay_queue_rx.recv() => {
+                        match op {
+                            DelayQueueOp::Insert(state, duration) => {
+                                let key = delay_queue.insert(state.clone(), duration);
+                                state.delay_key.store(Some(key));
+                            }
+                            DelayQueueOp::Remove(key) => {
+                                delay_queue.remove(&key);
+                            }
+                        }
+                    }
+                    Some(expired) = delay_queue.next() => {
+                        let op = expired.into_inner();
+                        if op.force_complete().await {
+                            op.operation.on_expiration().await;
+                        }
+                    }
+                    _ = shutdown.recv() => break,
+                }
+            }
+        });
+
+        // 清理循环保持不变
+        let self_clone = Arc::clone(&self);
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(60)).await;
+                self_clone.purge_completed().await;
+            }
+        });
+    }
+
+    pub async fn check_and_complete(&self, key: &str) -> usize {
+        if let Some(watcher_list) = self.watchers.get(key) {
+            let mut completed = 0;
+            for op in watcher_list.value() {
+                if !op.is_completed()
+                    && op.operation.try_complete().await
+                    && op.force_complete().await
+                {
+                    completed += 1;
+                    if let Some(delay_key) = op.delay_key.load() {
+                        self.delay_queue_tx
+                            .send(DelayQueueOp::Remove(delay_key))
+                            .await
+                            .expect("delay queue sender should be alive");
+                    }
+                }
+            }
+            completed
         } else {
             0
         }
     }
 
-    async fn watch_for_operation(&self, key: String, operation: Arc<T>) {
-        let watcher = self
-            .watchers
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(Watchers::new(key)));
-        watcher.watch(operation)
-    }
+    async fn purge_completed(&self) {
+        let mut keys_to_remove = Vec::new();
 
-    pub async fn cancel_timeout(&self, operation: Arc<T>) {
-        self.timer.remove(operation.op_id()).await;
-    }
-    pub fn timer(&self) -> Arc<Timer<T>> {
-        self.timer.clone()
-    }
-}
+        // 遍历entry时按每个entry锁定
+        for mut entry in self.watchers.iter_mut() {
+            let mut new_ops = Vec::new();
 
-#[derive(Debug)]
-struct Watchers<T: DelayedOperation> {
-    key: String,
-    operations: DashSet<Arc<T>>,
-}
-
-impl<T: DelayedOperation> Watchers<T> {
-    fn new(key: String) -> Self {
-        Watchers {
-            key,
-            operations: DashSet::new(),
-        }
-    }
-
-    fn watch(&self, operation: Arc<T>) {
-        self.operations.insert(operation);
-    }
-
-    pub async fn try_complete_watched(&self) -> usize {
-        let mut completed_count = 0;
-        let mut operations_to_remove = Vec::new();
-
-        for operation in self.operations.iter() {
-            let operation = operation.clone();
-            if operation.is_completed().load() {
-                operations_to_remove.push(operation.clone());
-            } else if operation.try_complete().await {
-                completed_count += 1;
-                operations_to_remove.push(operation.clone());
-            }
-        }
-
-        for operation in operations_to_remove {
-            self.operations.remove(&operation);
-        }
-
-        completed_count
-    }
-}
-
-struct QueueWarpper {
-    queue: DelayQueue<String>,
-}
-
-impl Stream for QueueWarpper {
-    type Item = String;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let self_mut = self.get_mut();
-
-        match ready!(self_mut.queue.poll_expired(cx)) {
-            Some(expired) => Poll::Ready(Some(expired.into_inner())),
-            None => Poll::Ready(None),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Timer<T: DelayedOperation + Send + Sync + 'static> {
-    tx: mpsc::Sender<TimerMessage<T>>,
-}
-
-enum TimerMessage<T: DelayedOperation + Send + Sync + 'static> {
-    Add(String, Arc<T>, Duration),
-    Remove(String),
-}
-
-impl<T: DelayedOperation + Send + Sync + 'static> Timer<T> {
-    pub fn new(mut shutdown: Shutdown) -> Self {
-        let (tx, rx) = mpsc::channel(100);
-        let timer = Timer { tx };
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = Timer::run(rx) => {},
-                _ = shutdown.recv() => {
-                    info!("Timer shutdown");
-                },
-            }
-        });
-        timer
-    }
-
-    pub async fn add(&self, key: String, item: Arc<T>, delay: Duration) {
-        let _ = self.tx.send(TimerMessage::Add(key, item, delay)).await;
-    }
-
-    pub async fn remove(&self, key: String) {
-        let _ = self.tx.send(TimerMessage::Remove(key)).await;
-    }
-
-    async fn run(mut rx: mpsc::Receiver<TimerMessage<T>>) {
-        let mut queue_wrapper = QueueWarpper {
-            queue: DelayQueue::new(),
-        };
-        let mut entries = HashMap::new();
-        let mut operation_map = HashMap::new();
-        let mut interval = interval(Duration::from_millis(100));
-
-        loop {
-            // 处理最多10条消息
-            for _ in 0..10 {
-                match rx.try_recv() {
-                    Ok(msg) => match msg {
-                        TimerMessage::Add(str_key, item, delay) => {
-                            if let Some(delay_key) = entries.get(&str_key) {
-                                queue_wrapper.queue.remove(delay_key);
-                                error!("item already in queue");
-                            }
-                            let delay_key = queue_wrapper.queue.insert(str_key.clone(), delay);
-                            entries.insert(str_key.clone(), delay_key);
-                            operation_map.insert(str_key.clone(), item);
-                        }
-                        TimerMessage::Remove(str_key) => {
-                            if let Some(delay_key) = entries.remove(&str_key) {
-                                queue_wrapper.queue.remove(&delay_key);
-                                operation_map.remove(&str_key);
-                            }
-                        }
-                    },
-                    Err(mpsc::error::TryRecvError::Empty) => break,
-                    Err(mpsc::error::TryRecvError::Disconnected) => return,
+            for op in entry.value() {
+                if !op.is_completed() {
+                    new_ops.push(Arc::clone(op));
                 }
             }
 
-            // 检查并处理过期的项
-            interval.tick().await;
-            while let Some(expired) = queue_wrapper.next().await {
-                if let Some(item) = operation_map.remove(&expired) {
-                    item.timeout().await;
-                }
+            *entry.value_mut() = new_ops;
+
+            if entry.value().is_empty() {
+                keys_to_remove.push(entry.key().clone());
             }
         }
+
+        for key in keys_to_remove {
+            self.watchers.remove(&key);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MyAsyncOp;
+
+    // 实现也不需要 async_trait 宏
+    impl DelayedOperation for MyAsyncOp {
+        fn delay_ms(&self) -> u64 {
+            3000
+        }
+
+        async fn try_complete(&self) -> bool {
+            sleep(Duration::from_millis(100)).await;
+            println!("try_complete");
+            false
+        }
+
+        async fn on_complete(&self) {
+            println!("on_complete");
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        async fn on_expiration(&self) {
+            println!("on_expiration");
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delayed_operation_purgatory() {
+        let (notify_shutdown, _) = broadcast::channel(1);
+        let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
+
+        let (purgatory, rx, shutdown) =
+            DelayedOperationPurgatory::new("test", notify_shutdown, shutdown_complete_tx);
+        let purgatory = Arc::new(purgatory);
+
+        // 启动后台任务
+        purgatory.clone().start(rx, shutdown).await;
+
+        // 添加延迟操作
+        let op = MyAsyncOp;
+        purgatory
+            .try_complete_else_watch(op, vec!["key1".to_string()])
+            .await;
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }

@@ -1,15 +1,14 @@
-use std::hash::{Hash, Hasher};
+use std::future::Future;
 use std::sync::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
 
 use crossbeam_utils::atomic::AtomicCell;
 use tokio::sync::oneshot;
-use tracing::{error, info};
+use tracing::{debug, error};
 
 use crate::log::PositionInfo;
 use crate::{message::TopicPartition, request::fetch::FetchRequest, ReplicaManager};
 
-use super::delayed_operation::Timer;
 use super::{delayed_operation::DelayedOperation, LogFetchInfo};
 
 type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;
@@ -21,7 +20,6 @@ pub struct DelayedFetch {
     pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
     pub tx: Arc<Mutex<Option<FetchResultSender>>>,
     is_completed: AtomicCell<bool>,
-    timer: Arc<Timer<Self>>,
 }
 impl DelayedFetch {
     pub fn new(
@@ -29,7 +27,6 @@ impl DelayedFetch {
         replica_manager: Arc<ReplicaManager>,
         read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
         tx: FetchResultSender,
-        timer: Arc<Timer<Self>>,
     ) -> Self {
         Self {
             replica_manager,
@@ -37,7 +34,6 @@ impl DelayedFetch {
             read_position_infos,
             tx: Arc::new(Mutex::new(Some(tx))),
             is_completed: AtomicCell::new(false),
-            timer,
         }
     }
 }
@@ -58,7 +54,7 @@ impl DelayedOperation for DelayedFetch {
             let log_fetch_info = self.read_position_infos.get(tp).unwrap();
             if let Ok(partition_current_position) = self.replica_manager.get_leo_info(tp).await {
                 if partition_current_position.base_offset < log_fetch_info.base_offset {
-                    return self.force_complete(true).await;
+                    return true;
                 } else if partition_current_position.offset <= log_fetch_info.offset {
                     accumulated_size +=
                         log_fetch_info.position - partition_current_position.position;
@@ -69,7 +65,7 @@ impl DelayedOperation for DelayedFetch {
             }
         }
         if accumulated_size >= self.request.max_bytes as i64 {
-            return self.force_complete(true).await;
+            return true;
         }
         false
     }
@@ -81,33 +77,9 @@ impl DelayedOperation for DelayedFetch {
         }
     }
 
-    async fn on_expiration(&self) {
-        info!("delayed fetch expired, op_id: {}", self.op_id());
-    }
-
-    fn is_completed(&self) -> &AtomicCell<bool> {
-        &self.is_completed
-    }
-
-    async fn cancel(&self) {
-        self.timer.remove(self.op_id()).await;
-    }
-
-    fn op_id(&self) -> String {
-        format!("{}-{}", self.request.client_ip, self.request.correlation_id)
+    fn on_expiration(&self) -> impl Future<Output = ()> + Send {
+        async move {
+            debug!("delayed fetch expired");
+        }
     }
 }
-
-impl Hash for DelayedFetch {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        format!("{}-{}", self.request.client_ip, self.request.correlation_id).hash(state);
-    }
-}
-
-impl PartialEq for DelayedFetch {
-    fn eq(&self, other: &Self) -> bool {
-        self.request.client_ip == other.request.client_ip
-            && self.request.correlation_id == other.request.correlation_id
-    }
-}
-impl Eq for DelayedFetch {}

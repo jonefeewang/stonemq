@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 
-use crate::AppError::NetworkReadError;
+use crate::message::MemoryRecords;
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::{
     Bool, NPBytes, NPString, PBytes, PString, PVarInt, PVarLong, PrimaryType, I16, I32, I64, I8,
@@ -12,8 +12,8 @@ use crate::protocol::primary_types::{
 use crate::protocol::schema::Schema;
 use crate::protocol::value_set::ValueSet;
 use crate::protocol::{Acks, ApiKey, ApiVersion};
-use crate::message::MemoryRecords;
 use crate::AppError::IllegalStateError;
+use crate::AppError::NetworkReadError;
 use crate::{AppError, AppResult};
 
 ///
@@ -327,6 +327,20 @@ impl DataType {
             DataType::I16(data) => Ok(data.value.try_into()?),
             field => Err(NetworkReadError(Cow::Owned(format!(
                 "Expected I16 but found {:?}",
+                field
+            )))),
+        }
+    }
+}
+
+impl TryFrom<DataType> for NPBytes {
+    type Error = AppError;
+
+    fn try_from(value: DataType) -> Result<Self, Self::Error> {
+        match value {
+            DataType::NPBytes(data) => Ok(data),
+            field => Err(NetworkReadError(Cow::Owned(format!(
+                "Expected NPBytes but found {:?}",
                 field
             )))),
         }
