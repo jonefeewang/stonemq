@@ -14,9 +14,7 @@ use crate::Shutdown;
 // 异步的DelayedOperation trait
 pub trait DelayedOperation: Send + Sync {
     fn delay_ms(&self) -> u64;
-
     async fn try_complete(&self) -> bool;
-
     fn on_complete(&self) -> impl Future<Output = ()> + Send;
     fn on_expiration(&self) -> impl Future<Output = ()> + Send;
 }

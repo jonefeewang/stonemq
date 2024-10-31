@@ -31,7 +31,7 @@ pub static CONSUMER_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let schema = Schema::from_fields_desc_vec(fields_desc);
     Arc::new(schema)
 });
-pub static CONSUMER_PROTOCOL_HEADER_V0: Lazy<ValueSet> = Lazy::new(|| {
+pub static CONSUMER_PROTOCOL_V0_HEADER: Lazy<ValueSet> = Lazy::new(|| {
     let mut value_set = ValueSet::new(CONSUMER_PROTOCOL_V0_SCHEMA.clone());
     value_set
         .append_field_value(VERSION_KEY_NAME, DataType::I16(I16::default()))
@@ -88,13 +88,99 @@ pub static ASSIGNMENT_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(schema)
 });
 
-pub struct ConsumerProtocol {}
-pub struct Subscription {
-    pub topics: Vec<String>,
-    pub user_data: BytesMut,
+/////////////////---sticky assignor---/////////////////
+pub static PREVIOUS_ASSIGNMENT_KEY_NAME: &str = "previous_assignment";
+
+pub static TOPIC_ASSIGNMENT_STICKY: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+        (0, TOPIC_KEY_NAME, DataType::PString(PString::default())),
+        (
+            1,
+            PARTITIONS_KEY_NAME,
+            DataType::Array(ArrayType {
+                can_be_empty: false,
+                p_type: Arc::new(DataType::I32(I32::default())),
+                values: None,
+            }),
+        ),
+    ];
+    let schema = Schema::from_fields_desc_vec(fields_desc);
+    Arc::new(schema)
+});
+pub static STICKY_ASSIGNOR_USER_DATA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, DataType)> = vec![(
+        0,
+        PREVIOUS_ASSIGNMENT_KEY_NAME,
+        DataType::Array(ArrayType {
+            can_be_empty: false,
+            p_type: Arc::new(DataType::Schema(Arc::clone(&TOPIC_ASSIGNMENT_STICKY))),
+            values: None,
+        }),
+    )];
+    let schema = Schema::from_fields_desc_vec(fields_desc);
+    Arc::new(schema)
+});
+
+struct TopicAssignmentSticky {}
+impl TopicAssignmentSticky {
+    pub fn read_from(mut buf: BytesMut) -> AppResult<Vec<TopicPartition>> {
+        let mut value_set = STICKY_ASSIGNOR_USER_DATA.clone().read_from(&mut buf)?;
+        let previous_assignment: ArrayType = value_set
+            .get_field_value(PREVIOUS_ASSIGNMENT_KEY_NAME)?
+            .try_into()?;
+        let previous_assignment =
+            previous_assignment
+                .values
+                .ok_or(AppError::ProtocolError(Cow::Borrowed(
+                    "previous_assignment is empty",
+                )))?;
+        let mut partitions_vec: Vec<TopicPartition> = Vec::with_capacity(previous_assignment.len());
+        for topic_assignment in previous_assignment {
+            let mut topic_assignment: ValueSet = topic_assignment.try_into()?;
+            let topic: String = topic_assignment
+                .get_field_value(TOPIC_KEY_NAME)?
+                .try_into()?;
+            let partitions: ArrayType = topic_assignment
+                .get_field_value(PARTITIONS_KEY_NAME)?
+                .try_into()?;
+            let partitions = partitions
+                .values
+                .ok_or(AppError::ProtocolError(Cow::Borrowed(
+                    "partitions is empty",
+                )))?;
+
+            for partition in partitions {
+                partitions_vec.push(TopicPartition::new(topic.clone(), partition.try_into()?));
+            }
+        }
+        Ok(partitions_vec)
+    }
 }
+
+/////////////////---consumer protocol---/////////////////
+
+pub struct ConsumerProtocol {}
 pub struct TopicAssignment {
     pub partitions: Vec<TopicPartition>,
+    pub user_data: BytesMut,
+}
+#[derive(Debug)]
+pub struct ProtocolMetadata {
+    // assignor.name
+    pub name: String,
+    // consumer protocol serialized subscription struct
+    pub metadata: BytesMut,
+}
+impl PartialEq for ProtocolMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.metadata == other.metadata
+    }
+}
+
+pub struct Subscription {
+    pub topics: Vec<String>,
+    // sticky assignor's subscripted topics list
+    // serialized by STICKY_ASSIGNOR_USER_DATA
     pub user_data: BytesMut,
 }
 

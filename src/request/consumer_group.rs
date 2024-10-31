@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::{protocol::api_schemas::consumer_protocol::Subscription, service::Node};
+use crate::{
+    protocol::api_schemas::consumer_protocol::{ProtocolMetadata, Subscription},
+    service::Node,
+};
 
 pub struct FindCoordinatorRequest {
     pub group_id: String,
@@ -68,25 +71,6 @@ impl JoinGroupRequest {
     pub const PROTOCOL_METADATA_KEY_NAME: &'static str = "protocol_metadata";
 
     pub const UNKNOWN_MEMBER_ID: &'static str = "";
-}
-
-pub struct ProtocolMetadata {
-    pub name: String,
-    pub metadata: Subscription,
-}
-
-impl ProtocolMetadata {
-    pub fn new(name: String, metadata: Subscription) -> Self {
-        ProtocolMetadata { name, metadata }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn metadata(&self) -> &Subscription {
-        &self.metadata
-    }
 }
 
 pub struct JoinGroupResponse {

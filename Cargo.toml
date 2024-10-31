@@ -48,6 +48,7 @@ metrics-exporter-prometheus = "0.15.3"
 clap = { version = "4.4", features = ["derive"] }
 
 
+uuid = { version = "1.1.2", features = ["v4"] }
 rand = "0.8.5"
 getset = "0.1.2"
 derive_builder = "0.20.0"

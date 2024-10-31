@@ -5,12 +5,11 @@ pub use topic_partition::{LogAppendInfo, PartitionData, TopicData, TopicPartitio
 
 use crate::log::PositionInfo;
 mod batch_records;
-mod consume;
+mod kafka_consume;
 mod delayed_fetch;
 mod delayed_operation;
 mod records;
 mod replica;
-mod test;
 mod topic_partition;
 
 #[derive(Debug)]

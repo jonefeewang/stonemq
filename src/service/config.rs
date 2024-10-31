@@ -297,6 +297,12 @@ pub struct NetworkConfig {
     pub max_connection: usize,
     pub max_package_size: usize,
 }
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct GroupConfig {
+    pub group_min_session_timeout: i32,
+    pub group_max_session_timeout: i32,
+    pub group_initial_rebalance_delay: i32,
+}
 /// Represents the configuration for a log.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LogConfig {
@@ -332,6 +338,7 @@ pub struct BrokerConfig {
     pub general: GeneralConfig,
     pub network: NetworkConfig,
     pub log: LogConfig,
+    pub group: GroupConfig,
 }
 
 impl BrokerConfig {

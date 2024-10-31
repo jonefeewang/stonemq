@@ -18,6 +18,7 @@ use crate::{AppError, AppResult};
 mod create_topic;
 
 pub mod consumer_group;
+pub mod errors;
 pub mod fetch;
 pub mod metadata;
 pub mod produce;
