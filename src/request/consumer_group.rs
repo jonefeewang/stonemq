@@ -51,7 +51,10 @@ impl From<Node> for FindCoordinatorResponse {
     }
 }
 
+#[derive(Debug)]
 pub struct JoinGroupRequest {
+    pub client_id: String,
+    pub client_host: String,
     pub group_id: String,
     pub session_timeout: i32,
     pub rebalance_timeout: i32,

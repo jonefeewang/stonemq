@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use crate::log::{JournalLog, Log, QueueLog};
 use crate::message::delayed_fetch::DelayedFetch;
-use crate::message::delayed_operation::{DelayedOperation, DelayedOperationPurgatory};
 use crate::message::TopicPartition;
+use crate::utils::DelayedAsyncOperationPurgatory;
 use crate::LogManager;
 use dashmap::DashMap;
 use tokio::sync::broadcast;
@@ -49,5 +49,5 @@ pub struct ReplicaManager {
     queue_metadata_cache: DashMap<String, BTreeSet<i32>>,
     notify_shutdown: broadcast::Sender<()>,
     shutdown_complete_tx: Sender<()>,
-    delayed_fetch_purgatory: Option<Arc<DelayedOperationPurgatory<DelayedFetch>>>,
+    delayed_fetch_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedFetch>>,
 }

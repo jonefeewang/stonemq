@@ -220,7 +220,7 @@ pub enum ErrorCode {
     OffsetMetadataTooLarge = 12,
 
 
-    /// topic error code
+    /// create topic error code
     TopicAlreadyExists = 36,
     InvalidPartitions = 37,
     InvalidReplicationFactor = 38,

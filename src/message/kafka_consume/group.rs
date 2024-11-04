@@ -5,11 +5,15 @@ use std::{
 
 use bytes::BytesMut;
 use dashmap::DashMap;
+use parking_lot::{RwLock, RwLockWriteGuard};
+use tokio::sync::oneshot;
 
 use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::errors::{KafkaError, KafkaResult},
 };
+
+use super::coordinator::JoinGroupResult;
 
 #[derive(Debug)]
 pub struct MemberMetadata {
@@ -20,38 +24,62 @@ pub struct MemberMetadata {
     rebalance_timeout: i32,
     session_timeout: i32,
     protocol_type: String,
-    supported_protocols: Vec<ProtocolMetadata>,
+    supported_protocols: Vec<Arc<ProtocolMetadata>>,
     assignment: Option<BytesMut>,
-    is_awaiting_join_result: bool,
+    tx: Option<oneshot::Sender<JoinGroupResult>>,
 }
 impl MemberMetadata {
     pub fn new(
-        id: String,
-        client_id: String,
-        client_host: String,
-        group_id: String,
+        id: &str,
+        client_id: &str,
+        client_host: &str,
+        group_id: &str,
         rebalance_timeout: i32,
         session_timeout: i32,
-        protocol_type: String,
-        supported_protocols: Vec<ProtocolMetadata>,
+        protocol_type: &str,
+        supported_protocols: Vec<Arc<ProtocolMetadata>>,
     ) -> Self {
         Self {
-            id,
-            client_id,
-            client_host,
-            group_id,
+            id: id.to_string(),
+            client_id: client_id.to_string(),
+            client_host: client_host.to_string(),
+            group_id: group_id.to_string(),
             rebalance_timeout,
             session_timeout,
-            protocol_type,
+            protocol_type: protocol_type.to_string(),
             supported_protocols,
             assignment: None,
-            is_awaiting_join_result: false,
+            tx: None,
         }
     }
-    pub fn match_protocol(&self, protocols: Vec<ProtocolMetadata>) -> bool {
+    pub fn match_protocol(&self, protocols: &Vec<ProtocolMetadata>) -> bool {
         self.supported_protocols
             .iter()
             .any(|p| protocols.contains(&p))
+    }
+    /// 对候选协议进行投票
+    pub fn vote(&self, candidates: &HashSet<String>) -> String {
+        // 从成员支持的协议中选择第一个也在候选列表中的协议
+        self.protocols()
+            .intersection(candidates)
+            .next()
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn protocols(&self) -> HashSet<String> {
+        self.supported_protocols
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn set_callback_channel(&mut self, tx: oneshot::Sender<JoinGroupResult>) {
+        self.tx = Some(tx);
+    }
+    pub fn take_callback_channel(&mut self) -> oneshot::Sender<JoinGroupResult> {
+        self.tx.take().unwrap()
     }
 }
 
@@ -61,20 +89,21 @@ pub struct GroupMetadata {
     generation_id: i32,
     members: HashMap<String, MemberMetadata>,
     offset: HashMap<String, i64>,
-    leader_id: String,
-    protocol: String,
+    leader_id: Option<String>,
+    /// assignor.name 选出的协议名称
+    protocol: Option<String>,
     state: GroupState,
     protocol_type: Option<String>,
     new_member_added: bool,
 }
 impl GroupMetadata {
-    pub fn new(group_id: String) -> Self {
+    pub fn new(group_id: &str) -> Self {
         Self {
-            id: group_id,
+            id: group_id.to_string(),
             generation_id: 0,
             members: HashMap::new(),
-            leader_id: "".to_string(),
-            protocol: "".to_string(),
+            leader_id: None,
+            protocol: None,
             offset: HashMap::new(),
             state: GroupState::Empty,
             protocol_type: None,
@@ -104,14 +133,21 @@ impl GroupMetadata {
                 supported_protocols.into_iter().collect(),
             ));
         }
-        if self.leader_id.is_empty() {
-            self.leader_id = member_metadata.id.clone();
+        if self.leader_id.is_none() {
+            self.leader_id = Some(member_metadata.id.clone());
         }
 
         self.members
-            .insert(member_metadata.id.clone(), Arc::new(member_metadata));
+            .insert(member_metadata.id.clone(), member_metadata);
         Ok(())
     }
+    pub fn remove_member(&mut self, member_id: &str) {
+        self.members.remove(member_id);
+    }
+    pub fn all_members(&mut self) -> Vec<&mut MemberMetadata> {
+        self.members.values_mut().collect()
+    }
+
     pub fn supports_protocols(&self, protocols: &HashSet<String>) -> bool {
         self.protocols().intersection(protocols).count() > 0
     }
@@ -130,18 +166,19 @@ impl GroupMetadata {
     pub fn has_member(&self, member_id: &str) -> bool {
         self.members.contains_key(member_id)
     }
+    pub fn get_member(&mut self, member_id: &str) -> Option<&mut MemberMetadata> {
+        self.members.get_mut(member_id)
+    }
     pub fn protocol_type_equals(&self, protocol_type: &str) -> bool {
         self.protocol_type == Some(protocol_type.to_string())
     }
     pub fn current_state(&self) -> &GroupState {
         &self.state
     }
-    pub fn leader_id(&self) -> &str {
-        &self.leader_id
+    pub fn leader_id(&self) -> Option<&str> {
+        self.leader_id.as_deref()
     }
-    pub fn get_member(&self, member_id: &str) -> Option<MemberMetadata> {
-        self.members.get(member_id).map(|m| m.clone())
-    }
+
     pub fn generation_id(&self) -> i32 {
         self.generation_id
     }
@@ -165,14 +202,102 @@ impl GroupMetadata {
     pub fn not_yet_rejoined_members(&self) -> Vec<String> {
         self.members
             .values()
-            .filter(|m| !m.is_awaiting_join_result)
+            .filter(|m| m.tx.is_none())
             .map(|m| m.id.clone())
             .collect()
+    }
+    pub fn update_member_protocols(&mut self, member_id: &str, protocols: Vec<ProtocolMetadata>) {
+        self.members.entry(member_id.to_string()).and_modify(|m| {
+            m.supported_protocols = protocols.into_iter().map(|p| Arc::new(p)).collect()
+        });
+    }
+    pub fn update_member_awaiting_join_result(
+        &mut self,
+        member_id: &str,
+        tx: oneshot::Sender<JoinGroupResult>,
+    ) {
+        self.members
+            .entry(member_id.to_string())
+            .and_modify(|m| m.set_callback_channel(tx));
+    }
+    pub fn get_all_member_protocols(&self) -> HashMap<String, Vec<Arc<ProtocolMetadata>>> {
+        self.members
+            .values()
+            .map(|m| (m.id.clone(), m.supported_protocols.clone()))
+            .collect()
+    }
+    pub fn protocol(&self) -> Option<&str> {
+        self.protocol.as_deref()
+    }
+    pub fn transition_to(&mut self, state: GroupState) {
+        self.state = state;
+    }
+    /// 获取组内所有成员中最大的 rebalance 超时时间
+    pub fn rebalance_timeout_ms(&self) -> i32 {
+        self.members
+            .values()
+            .fold(0, |timeout, member| timeout.max(member.rebalance_timeout))
+    }
+    /// 为组选择一个协议
+    ///
+    /// # 返回值
+    /// 返回得票最多的协议名称
+    ///
+    /// # Errors
+    /// 如果组内没有成员,会返回错误
+    pub fn select_protocol(&self) -> KafkaResult<String> {
+        // 获取所有成员都支持的协议列表
+        let candidates = self.candidate_protocols();
+
+        // 让每个成员对候选协议进行投票
+        let votes: Vec<(String, usize)> = self
+            .all_member_metadata()
+            .iter()
+            // 每个成员对候选协议进行投票
+            .map(|member| member.vote(&candidates))
+            // 收集所有投票
+            .fold(HashMap::new(), |mut acc, protocol| {
+                *acc.entry(protocol).or_insert(0) += 1;
+                acc
+            })
+            // 转换成Vec以便找出最大值
+            .into_iter()
+            .collect();
+
+        // 找出得票最多的协议
+        let vote = votes
+            .iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(protocol, _)| protocol)
+            .unwrap();
+
+        Ok(vote.clone())
+    }
+
+    /// 获取所有成员共同支持的协议列表
+    fn candidate_protocols(&self) -> HashSet<String> {
+        self.all_member_metadata()
+            .iter()
+            .map(|member| member.protocols())
+            .fold(None, |acc: Option<HashSet<String>>, protocols| match acc {
+                None => Some(protocols),
+                Some(acc) => Some(acc.intersection(&protocols).cloned().collect()),
+            })
+            .unwrap_or_default()
+    }
+
+    /// 获取所有成员的元数据
+    fn all_member_metadata(&self) -> Vec<&MemberMetadata> {
+        self.members.values().collect()
+    }
+    pub fn init_next_generation(&mut self) {
+        self.generation_id += 1;
+        self.new_member_added = false;
     }
 }
 
 pub struct GroupMetadataManager {
-    group_metadata: DashMap<String, Arc<Mutex<GroupMetadata>>>,
+    group_metadata: DashMap<String, Arc<RwLock<GroupMetadata>>>,
 }
 
 impl GroupMetadataManager {
@@ -182,13 +307,21 @@ impl GroupMetadataManager {
         }
     }
 
-    pub fn add_group(&self, group_metadata: GroupMetadata) -> GroupMetadata {
-        todo!()
+    pub fn add_group(&self, group_metadata: GroupMetadata) -> Arc<RwLock<GroupMetadata>> {
+        self.group_metadata
+            .entry(group_metadata.id.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(group_metadata)))
+            .value()
+            .clone()
     }
-    pub fn get_group(&self, group_id: &str) -> Option<GroupMetadata> {
-        todo!()
+    pub fn get_group(&self, group_id: &str) -> Option<Arc<RwLock<GroupMetadata>>> {
+        self.group_metadata.get(group_id).map(|g| g.clone())
     }
-    pub fn store_group(&self, group_id: &str, group_assignment: HashMap<String, Vec<u8>>) {
+    pub fn store_group(
+        &self,
+        locked_group: RwLockWriteGuard<GroupMetadata>,
+        group_assignment: Option<HashMap<String, Vec<u8>>>,
+    ) {
         todo!()
     }
     pub fn store_offset(&self, group_id: &str, offset: HashMap<String, i64>) {

@@ -39,7 +39,8 @@ tokio-util = { version = "0.7", features = ["codec", "time"] }
 
 # concurrency lib
 dashmap = "6.0.0"
-crossbeam-utils = "0.8.5"
+crossbeam = "0.8.4"
+parking_lot = "0.12.1"
 
 config = "0.14"
 tracing = { version = "0.1", features = ["log"] }

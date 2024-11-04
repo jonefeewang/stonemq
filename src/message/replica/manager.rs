@@ -1,17 +1,15 @@
 use crate::message::delayed_fetch::DelayedFetch;
-use crate::message::delayed_operation::DelayedOperationPurgatory;
 use crate::message::replica::Replica;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{LogAppendInfo, TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
-use crate::utils::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
+use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
 use crate::{global_config, AppError, AppResult, KvStore, LogManager, ReplicaManager, Shutdown};
 use dashmap::DashMap;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
-use std::ops::Deref;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
@@ -23,7 +21,18 @@ impl ReplicaManager {
         log_manager: Arc<LogManager>,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
+        rt: &Runtime,
     ) -> Self {
+        let notify_shutdown_clone = notify_shutdown.clone();
+        let shutdown_complete_tx_clone = shutdown_complete_tx.clone();
+        let delayed_fetch_purgatory = rt.block_on(async move {
+            DelayedAsyncOperationPurgatory::<DelayedFetch>::new(
+                "delayed_fetch_purgatory",
+                notify_shutdown_clone,
+                shutdown_complete_tx_clone,
+            )
+            .await
+        });
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -33,7 +42,7 @@ impl ReplicaManager {
             queue_metadata_cache: DashMap::new(),
             notify_shutdown,
             shutdown_complete_tx,
-            delayed_fetch_purgatory: None,
+            delayed_fetch_purgatory,
         }
     }
     pub async fn append_records(
@@ -88,8 +97,6 @@ impl ReplicaManager {
         }
         for (tp, _) in tp_response.iter() {
             self.delayed_fetch_purgatory
-                .as_ref()
-                .unwrap()
                 .check_and_complete(tp.to_string().as_str())
                 .await;
         }
@@ -182,22 +189,6 @@ impl ReplicaManager {
                 })
                 .collect::<Vec<String>>()
         );
-
-        // 创建delayed_fetch_purgatory
-        let (delayed_fetch_purgatory, delay_queue_rx, shutdown) =
-            DelayedOperationPurgatory::<DelayedFetch>::new(
-                "delayed_fetch_purgatory",
-                self.notify_shutdown.clone(),
-                self.shutdown_complete_tx.clone(),
-            );
-        let delayed_fetch_purgatory = Arc::new(delayed_fetch_purgatory);
-        let delayed_fetch_purgatory_clone = delayed_fetch_purgatory.clone();
-        rt.block_on(async move {
-            delayed_fetch_purgatory_clone
-                .start(delay_queue_rx, shutdown)
-                .await
-        });
-        self.delayed_fetch_purgatory = Some(delayed_fetch_purgatory);
 
         // 启动journal log splitter
         // Create a BTreeMap to store the reverse mapping

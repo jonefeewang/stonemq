@@ -66,6 +66,7 @@ impl Broker {
             log_manager.clone(),
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
+            rt,
         );
         replica_manager.startup(rt)?;
         let replica_manager = Arc::new(replica_manager);

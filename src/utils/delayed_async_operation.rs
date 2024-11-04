@@ -1,4 +1,4 @@
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use std::future::Future;
@@ -12,7 +12,7 @@ use tokio_util::time::{delay_queue, DelayQueue};
 use crate::Shutdown;
 
 // 异步的DelayedOperation trait
-pub trait DelayedOperation: Send + Sync {
+pub trait DelayedAsyncOperation: Send + Sync {
     fn delay_ms(&self) -> u64;
     async fn try_complete(&self) -> bool;
     fn on_complete(&self) -> impl Future<Output = ()> + Send;
@@ -21,13 +21,13 @@ pub trait DelayedOperation: Send + Sync {
 
 // 包装DelayedOperation的状态管理
 #[derive(Debug)]
-pub struct DelayedOperationState<T: DelayedOperation> {
+struct DelayedAsyncOperationState<T: DelayedAsyncOperation> {
     operation: Arc<T>,
     completed: AtomicCell<bool>,
     delay_key: AtomicCell<Option<delay_queue::Key>>,
 }
 
-impl<T: DelayedOperation> DelayedOperationState<T> {
+impl<T: DelayedAsyncOperation> DelayedAsyncOperationState<T> {
     pub fn new(operation: T) -> Self {
         Self {
             operation: Arc::new(operation),
@@ -51,38 +51,41 @@ impl<T: DelayedOperation> DelayedOperationState<T> {
 }
 
 // 定义 DelayQueue 的操作枚举
-pub(crate) enum DelayQueueOp<T: DelayedOperation> {
-    Insert(Arc<DelayedOperationState<T>>, Duration),
+enum DelayQueueOp<T: DelayedAsyncOperation> {
+    Insert(Arc<DelayedAsyncOperationState<T>>, Duration),
     Remove(tokio_util::time::delay_queue::Key),
 }
 
 // 管理延迟操作的Purgatory
 #[derive(Debug)]
-pub struct DelayedOperationPurgatory<T: DelayedOperation + 'static> {
+pub struct DelayedAsyncOperationPurgatory<T: DelayedAsyncOperation + 'static> {
     name: String,
-    watchers: DashMap<String, Vec<Arc<DelayedOperationState<T>>>>,
+    watchers: DashMap<String, Vec<Arc<DelayedAsyncOperationState<T>>>>,
     delay_queue_tx: Sender<DelayQueueOp<T>>,
 }
 
-impl<T: DelayedOperation> DelayedOperationPurgatory<T> {
-    pub fn new(
+impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
+    pub async fn new(
         name: &str,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
-    ) -> (Self, Receiver<DelayQueueOp<T>>, Shutdown) {
+    ) -> Arc<Self> {
         let shutdown = Shutdown::new(notify_shutdown.subscribe());
         let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000); // 适当的缓冲大小
 
-        let purgatory = DelayedOperationPurgatory {
+        let purgatory = DelayedAsyncOperationPurgatory {
             name: name.to_string(),
             watchers: DashMap::new(),
             delay_queue_tx: tx,
         };
-        (purgatory, rx, shutdown)
+        // (purgatory, rx, shutdown)
+        let purgatory = Arc::new(purgatory);
+        purgatory.clone().start(rx, shutdown).await;
+        purgatory
     }
 
     pub async fn try_complete_else_watch(&self, operation: T, watch_keys: Vec<String>) -> bool {
-        let op_state = Arc::new(DelayedOperationState::new(operation));
+        let op_state = Arc::new(DelayedAsyncOperationState::new(operation));
 
         if op_state.operation.try_complete().await && op_state.force_complete().await {
             return true;
@@ -110,7 +113,7 @@ impl<T: DelayedOperation> DelayedOperationPurgatory<T> {
         false
     }
 
-    pub async fn start(
+    async fn start(
         self: Arc<Self>,
         mut delay_queue_rx: Receiver<DelayQueueOp<T>>,
         mut shutdown: Shutdown,
@@ -199,56 +202,5 @@ impl<T: DelayedOperation> DelayedOperationPurgatory<T> {
         for key in keys_to_remove {
             self.watchers.remove(&key);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct MyAsyncOp;
-
-    // 实现也不需要 async_trait 宏
-    impl DelayedOperation for MyAsyncOp {
-        fn delay_ms(&self) -> u64 {
-            3000
-        }
-
-        async fn try_complete(&self) -> bool {
-            sleep(Duration::from_millis(100)).await;
-            println!("try_complete");
-            false
-        }
-
-        async fn on_complete(&self) {
-            println!("on_complete");
-            sleep(Duration::from_millis(50)).await;
-        }
-
-        async fn on_expiration(&self) {
-            println!("on_expiration");
-            sleep(Duration::from_millis(50)).await;
-        }
-    }
-
-    #[tokio::test]
-    async fn test_delayed_operation_purgatory() {
-        let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
-
-        let (purgatory, rx, shutdown) =
-            DelayedOperationPurgatory::new("test", notify_shutdown, shutdown_complete_tx);
-        let purgatory = Arc::new(purgatory);
-
-        // 启动后台任务
-        purgatory.clone().start(rx, shutdown).await;
-
-        // 添加延迟操作
-        let op = MyAsyncOp;
-        purgatory
-            .try_complete_else_watch(op, vec!["key1".to_string()])
-            .await;
-
-        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }

@@ -2,14 +2,15 @@ use std::future::Future;
 use std::sync::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
 
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use tokio::sync::oneshot;
 use tracing::{debug, error};
 
 use crate::log::PositionInfo;
+use crate::utils::DelayedAsyncOperation;
 use crate::{message::TopicPartition, request::fetch::FetchRequest, ReplicaManager};
 
-use super::{delayed_operation::DelayedOperation, LogFetchInfo};
+use super::LogFetchInfo;
 
 type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;
 
@@ -38,7 +39,7 @@ impl DelayedFetch {
     }
 }
 
-impl DelayedOperation for DelayedFetch {
+impl DelayedAsyncOperation for DelayedFetch {
     fn delay_ms(&self) -> u64 {
         self.request.max_wait as u64
     }

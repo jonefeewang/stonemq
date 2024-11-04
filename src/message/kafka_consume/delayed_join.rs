@@ -1,58 +1,68 @@
 use std::sync::Arc;
 
-use fake::faker::address::raw::Longitude;
+use parking_lot::RwLock;
+use tokio::sync::oneshot;
 use tracing::debug;
 
-use crate::message::delayed_operation::{DelayedOperation, DelayedOperationPurgatory};
+use crate::utils::{DelayedSyncOperation, DelayedSyncOperationPurgatory};
 
 use super::{
-    cordinator::GroupCoordinator,
+    coordinator::GroupCoordinator,
     group::{GroupMetadata, MemberMetadata},
 };
 
 pub struct DelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
-    group: Arc<GroupMetadata>,
+    group: Arc<RwLock<GroupMetadata>>,
     rebalance_timeout: u64,
 }
-impl DelayedOperation for DelayedJoin {
+impl DelayedJoin {
+    pub fn new(
+        group_cordinator: Arc<GroupCoordinator>,
+        group: Arc<RwLock<GroupMetadata>>,
+        rebalance_timeout: u64,
+    ) -> Self {
+        Self {
+            group_cordinator,
+            group,
+            rebalance_timeout,
+        }
+    }
+}
+impl DelayedSyncOperation for DelayedJoin {
     fn delay_ms(&self) -> u64 {
         self.rebalance_timeout
     }
 
-    async fn try_complete(&self) -> bool {
+    fn try_complete(&self) -> bool {
         self.group_cordinator.can_complete_join(self.group.clone())
     }
 
-    async fn on_complete(&self) {
-        self.group_cordinator
-            .on_complete_join(self.group.clone())
-            .await;
+    fn on_complete(&self) {
+        self.group_cordinator.on_complete_join(self.group.clone())
     }
 
-    fn on_expiration(&self) -> impl std::future::Future<Output = ()> + Send {
-        async move {
-            debug!("delayed join expired");
-        }
+    fn on_expiration(&self) {
+        debug!("delayed join expired");
     }
 }
 // 初始化延迟加入，第一个组的加入者
 pub struct InitialDelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
-    group: Arc<GroupMetadata>,
-    purgatory: Arc<DelayedOperationPurgatory<InitialDelayedJoin>>,
-    configured_rebalance_delay: u64,
-    delay_ms: u64,
-    remaining_delay_ms: u64,
+    group: Arc<RwLock<GroupMetadata>>,
+    purgatory: Arc<DelayedSyncOperationPurgatory<InitialDelayedJoin>>,
+    configured_rebalance_delay: i32,
+    delay_ms: i32,
+    remaining_delay_ms: i32,
 }
 impl InitialDelayedJoin {
     pub fn new(
         group_cordinator: Arc<GroupCoordinator>,
-        group: Arc<GroupMetadata>,
-        purgatory: Arc<DelayedOperationPurgatory<InitialDelayedJoin>>,
-        configured_rebalance_delay: u64,
-        delay_ms: u64,
-        remaining_delay_ms: u64,
+        group: Arc<RwLock<GroupMetadata>>,
+        purgatory: Arc<DelayedSyncOperationPurgatory<InitialDelayedJoin>>,
+        configured_rebalance_delay: i32,
+        delay_ms: i32,
+        remaining_delay_ms: i32,
     ) -> Self {
         Self {
             group_cordinator,
@@ -64,16 +74,16 @@ impl InitialDelayedJoin {
         }
     }
 }
-impl DelayedOperation for InitialDelayedJoin {
+impl DelayedSyncOperation for InitialDelayedJoin {
     fn delay_ms(&self) -> u64 {
-        self.delay_ms
+        self.delay_ms as u64
     }
 
-    async fn try_complete(&self) -> bool {
+    fn try_complete(&self) -> bool {
         false
     }
 
-    async fn on_complete(&self) {
+    fn on_complete(&self) {
         if self.group.new_member_added && self.remaining_delay_ms != 0 {
             self.group.new_member_added = false;
             let delay = self.remaining_delay_ms.min(self.configured_rebalance_delay);
@@ -87,19 +97,14 @@ impl DelayedOperation for InitialDelayedJoin {
                 remaining_delay_ms: remaining,
             };
             self.purgatory
-                .try_complete_else_watch(new_join, vec![self.group.group_id.clone()])
-                .await;
+                .try_complete_else_watch(new_join, vec![self.group.group_id.clone()]);
         } else {
-            self.group_cordinator
-                .on_complete_join(self.group.clone())
-                .await;
+            self.group_cordinator.on_complete_join(self.group.clone());
         }
     }
 
-    fn on_expiration(&self) -> impl std::future::Future<Output = ()> + Send {
-        async move {
-            debug!("initial delayed join expired");
-        }
+    fn on_expiration(&self) {
+        debug!("initial delayed join expired");
     }
 }
 
@@ -111,20 +116,20 @@ pub struct DelayedHeartbeat {
     session_timeout: u64,
 }
 
-impl DelayedOperation for DelayedHeartbeat {
+impl DelayedSyncOperation for DelayedHeartbeat {
     fn delay_ms(&self) -> u64 {
         self.session_timeout
     }
 
-    async fn try_complete(&self) -> bool {
+    fn try_complete(&self) -> bool {
         false
     }
-    
-    fn on_complete(&self) -> impl std::future::Future<Output = ()> + Send {
+
+    fn on_complete(&self) {
         todo!()
     }
-    
-    fn on_expiration(&self) -> impl std::future::Future<Output = ()> + Send {
+
+    fn on_expiration(&self) {
         todo!()
     }
 }
