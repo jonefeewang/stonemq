@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-use tokio::sync::oneshot;
+use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::utils::{DelayedSyncOperation, DelayedSyncOperationPurgatory};
+use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
 
 use super::{
     coordinator::GroupCoordinator,
@@ -29,20 +28,22 @@ impl DelayedJoin {
         }
     }
 }
-impl DelayedSyncOperation for DelayedJoin {
+impl DelayedAsyncOperation for DelayedJoin {
     fn delay_ms(&self) -> u64 {
         self.rebalance_timeout
     }
 
-    fn try_complete(&self) -> bool {
-        self.group_cordinator.can_complete_join(self.group.clone())
+    async fn try_complete(&self) -> bool {
+        self.group_cordinator
+            .can_complete_join(self.group.clone())
+            .await
     }
 
-    fn on_complete(&self) {
-        self.group_cordinator.on_complete_join(self.group.clone())
+    async fn on_complete(&self) {
+        self.group_cordinator.on_complete_join(self.group.clone());
     }
 
-    fn on_expiration(&self) {
+    async fn on_expiration(&self) {
         debug!("delayed join expired");
     }
 }
@@ -50,7 +51,7 @@ impl DelayedSyncOperation for DelayedJoin {
 pub struct InitialDelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
     group: Arc<RwLock<GroupMetadata>>,
-    purgatory: Arc<DelayedSyncOperationPurgatory<InitialDelayedJoin>>,
+    purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
     configured_rebalance_delay: i32,
     delay_ms: i32,
     remaining_delay_ms: i32,
@@ -59,7 +60,7 @@ impl InitialDelayedJoin {
     pub fn new(
         group_cordinator: Arc<GroupCoordinator>,
         group: Arc<RwLock<GroupMetadata>>,
-        purgatory: Arc<DelayedSyncOperationPurgatory<InitialDelayedJoin>>,
+        purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
         configured_rebalance_delay: i32,
         delay_ms: i32,
         remaining_delay_ms: i32,
@@ -74,21 +75,24 @@ impl InitialDelayedJoin {
         }
     }
 }
-impl DelayedSyncOperation for InitialDelayedJoin {
+impl DelayedAsyncOperation for InitialDelayedJoin {
     fn delay_ms(&self) -> u64 {
         self.delay_ms as u64
     }
 
-    fn try_complete(&self) -> bool {
+    async fn try_complete(&self) -> bool {
         false
     }
 
-    fn on_complete(&self) {
-        if self.group.new_member_added && self.remaining_delay_ms != 0 {
-            self.group.new_member_added = false;
+    async fn on_complete(&self) {
+        let group_clone = self.group.clone();
+        let mut locked_write_group = group_clone.write().await;
+        let group_id = locked_write_group.id().to_string();
+        if locked_write_group.new_member_added() && self.remaining_delay_ms != 0 {
+            locked_write_group.reset_new_member_added();
             let delay = self.remaining_delay_ms.min(self.configured_rebalance_delay);
             let remaining = (self.remaining_delay_ms - delay).max(0);
-            let new_join = InitialDelayedJoin {
+            let new_delayed_join = InitialDelayedJoin {
                 group_cordinator: self.group_cordinator.clone(),
                 group: self.group.clone(),
                 purgatory: self.purgatory.clone(),
@@ -96,14 +100,17 @@ impl DelayedSyncOperation for InitialDelayedJoin {
                 delay_ms: delay,
                 remaining_delay_ms: remaining,
             };
+            // 释放锁, 因为下边的调用会再次尝试获取锁
+            drop(locked_write_group);
+
             self.purgatory
-                .try_complete_else_watch(new_join, vec![self.group.group_id.clone()]);
+                .try_complete_else_watch(new_delayed_join, vec![group_id]);
         } else {
             self.group_cordinator.on_complete_join(self.group.clone());
         }
     }
 
-    fn on_expiration(&self) {
+    async fn on_expiration(&self) {
         debug!("initial delayed join expired");
     }
 }
@@ -116,20 +123,20 @@ pub struct DelayedHeartbeat {
     session_timeout: u64,
 }
 
-impl DelayedSyncOperation for DelayedHeartbeat {
+impl DelayedAsyncOperation for DelayedHeartbeat {
     fn delay_ms(&self) -> u64 {
         self.session_timeout
     }
 
-    fn try_complete(&self) -> bool {
+    async fn try_complete(&self) -> bool {
         false
     }
 
-    fn on_complete(&self) {
+    async fn on_complete(&self) {
         todo!()
     }
 
-    fn on_expiration(&self) {
+    async fn on_expiration(&self) {
         todo!()
     }
 }

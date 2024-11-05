@@ -1,9 +1,10 @@
-use std::fmt;
 use thiserror::Error;
 
 /// Kafka错误类型
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum KafkaError {
+    #[error("None")]
+    None,
     #[error("The server experienced an unexpected error: {0}")]
     Unknown(String),
     
@@ -459,6 +460,7 @@ impl ErrorCode {
 impl From<&KafkaError> for ErrorCode {
     fn from(error: &KafkaError) -> Self {
         match error {
+            KafkaError::None => ErrorCode::None,
             KafkaError::Unknown(_) => ErrorCode::Unknown,
             KafkaError::OffsetOutOfRange(_) => ErrorCode::OffsetOutOfRange,
             KafkaError::CorruptMessage(_) => ErrorCode::CorruptMessage,

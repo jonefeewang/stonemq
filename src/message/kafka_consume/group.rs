@@ -3,14 +3,16 @@ use std::{
     sync::Arc,
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
-use parking_lot::{RwLock, RwLockWriteGuard};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, RwLock, RwLockWriteGuard};
 
 use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
-    request::errors::{KafkaError, KafkaResult},
+    request::{
+        consumer_group::SyncGroupResponse,
+        errors::{KafkaError, KafkaResult},
+    },
 };
 
 use super::coordinator::JoinGroupResult;
@@ -25,8 +27,9 @@ pub struct MemberMetadata {
     session_timeout: i32,
     protocol_type: String,
     supported_protocols: Vec<Arc<ProtocolMetadata>>,
-    assignment: Option<BytesMut>,
-    tx: Option<oneshot::Sender<JoinGroupResult>>,
+    assignment: Option<Bytes>,
+    join_group_cb_sender: Option<oneshot::Sender<JoinGroupResult>>,
+    sync_group_cb_sender: Option<oneshot::Sender<SyncGroupResponse>>,
 }
 impl MemberMetadata {
     pub fn new(
@@ -49,13 +52,27 @@ impl MemberMetadata {
             protocol_type: protocol_type.to_string(),
             supported_protocols,
             assignment: None,
-            tx: None,
+            join_group_cb_sender: None,
+            sync_group_cb_sender: None,
         }
     }
-    pub fn match_protocol(&self, protocols: &Vec<ProtocolMetadata>) -> bool {
-        self.supported_protocols
-            .iter()
-            .any(|p| protocols.contains(&p))
+    pub fn update_supported_protocols(&mut self, protocols: Vec<ProtocolMetadata>) {
+        self.supported_protocols = protocols.into_iter().map(|p| Arc::new(p)).collect();
+    }
+
+    /// 检查提供的协议元数据是否与当前存储的元数据匹配
+    ///
+    /// # 返回值
+    /// 如果提供的协议元数据与当前存储的元数据匹配,返回 true,否则返回 false
+    pub fn protocol_equals(&self, protocols: &Vec<ProtocolMetadata>) -> bool {
+        for (index, protocol) in protocols.iter().enumerate() {
+            if self.supported_protocols[index].name != protocol.name
+                || self.supported_protocols[index].metadata != protocol.metadata
+            {
+                return false;
+            }
+        }
+        true
     }
     /// 对候选协议进行投票
     pub fn vote(&self, candidates: &HashSet<String>) -> String {
@@ -75,11 +92,29 @@ impl MemberMetadata {
     pub fn id(&self) -> &str {
         &self.id
     }
-    pub fn set_callback_channel(&mut self, tx: oneshot::Sender<JoinGroupResult>) {
-        self.tx = Some(tx);
+    pub fn set_join_group_callback_channel(&mut self, tx: oneshot::Sender<JoinGroupResult>) {
+        self.join_group_cb_sender = Some(tx);
     }
-    pub fn take_callback_channel(&mut self) -> oneshot::Sender<JoinGroupResult> {
-        self.tx.take().unwrap()
+    pub fn take_join_group_callback_channel(&mut self) -> oneshot::Sender<JoinGroupResult> {
+        self.join_group_cb_sender.take().unwrap()
+    }
+    pub fn set_sync_group_callback_channel(&mut self, tx: oneshot::Sender<SyncGroupResponse>) {
+        self.sync_group_cb_sender = Some(tx);
+    }
+    pub fn take_sync_group_callback_channel(&mut self) -> oneshot::Sender<SyncGroupResponse> {
+        self.sync_group_cb_sender.take().unwrap()
+    }
+    pub fn metadata(&self, protocol: &str) -> Option<Bytes> {
+        self.supported_protocols
+            .iter()
+            .find(|p| p.name == protocol)
+            .map(|p| p.metadata.clone())
+    }
+    pub fn assignment(&self) -> Option<Bytes> {
+        self.assignment.clone()
+    }
+    pub fn set_assignment(&mut self, assignment: Bytes) {
+        self.assignment = Some(assignment);
     }
 }
 
@@ -149,7 +184,7 @@ impl GroupMetadata {
     }
 
     pub fn supports_protocols(&self, protocols: &HashSet<String>) -> bool {
-        self.protocols().intersection(protocols).count() > 0
+        self.members.is_empty() || self.candidate_protocols().intersection(protocols).count() > 0
     }
     pub fn protocols(&self) -> HashSet<String> {
         self.members
@@ -196,34 +231,30 @@ impl GroupMetadata {
     pub fn new_member_added(&self) -> bool {
         self.new_member_added
     }
+    pub fn set_new_member_added(&mut self) {
+        self.new_member_added = true;
+    }
     pub fn reset_new_member_added(&mut self) {
         self.new_member_added = false;
     }
     pub fn not_yet_rejoined_members(&self) -> Vec<String> {
         self.members
             .values()
-            .filter(|m| m.tx.is_none())
+            .filter(|m| m.join_group_cb_sender.is_none())
             .map(|m| m.id.clone())
             .collect()
     }
-    pub fn update_member_protocols(&mut self, member_id: &str, protocols: Vec<ProtocolMetadata>) {
-        self.members.entry(member_id.to_string()).and_modify(|m| {
-            m.supported_protocols = protocols.into_iter().map(|p| Arc::new(p)).collect()
-        });
-    }
-    pub fn update_member_awaiting_join_result(
-        &mut self,
-        member_id: &str,
-        tx: oneshot::Sender<JoinGroupResult>,
-    ) {
-        self.members
-            .entry(member_id.to_string())
-            .and_modify(|m| m.set_callback_channel(tx));
-    }
-    pub fn get_all_member_protocols(&self) -> HashMap<String, Vec<Arc<ProtocolMetadata>>> {
+
+    /// 获取当前成员的匹配组协议的元数据
+    pub fn current_member_metadata(&self) -> HashMap<String, Bytes> {
         self.members
             .values()
-            .map(|m| (m.id.clone(), m.supported_protocols.clone()))
+            .map(|m| {
+                (
+                    m.id.clone(),
+                    m.metadata(self.protocol.as_ref().unwrap()).unwrap(),
+                )
+            })
             .collect()
     }
     pub fn protocol(&self) -> Option<&str> {
@@ -233,7 +264,7 @@ impl GroupMetadata {
         self.state = state;
     }
     /// 获取组内所有成员中最大的 rebalance 超时时间
-    pub fn rebalance_timeout_ms(&self) -> i32 {
+    pub fn max_rebalance_timeout_ms(&self) -> i32 {
         self.members
             .values()
             .fold(0, |timeout, member| timeout.max(member.rebalance_timeout))
@@ -287,7 +318,7 @@ impl GroupMetadata {
     }
 
     /// 获取所有成员的元数据
-    fn all_member_metadata(&self) -> Vec<&MemberMetadata> {
+    pub fn all_member_metadata(&self) -> Vec<&MemberMetadata> {
         self.members.values().collect()
     }
     pub fn init_next_generation(&mut self) {
@@ -320,8 +351,8 @@ impl GroupMetadataManager {
     pub fn store_group(
         &self,
         locked_group: RwLockWriteGuard<GroupMetadata>,
-        group_assignment: Option<HashMap<String, Vec<u8>>>,
-    ) {
+        group_assignment: Option<HashMap<String, Bytes>>,
+    ) -> KafkaResult<()> {
         todo!()
     }
     pub fn store_offset(&self, group_id: &str, offset: HashMap<String, i64>) {
