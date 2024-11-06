@@ -9,7 +9,7 @@ use crate::AppError::InvalidValue;
 use crate::AppResult;
 
 use bytes::Buf;
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use std::io::{Error, ErrorKind, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;

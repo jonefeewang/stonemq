@@ -6,7 +6,7 @@ use crate::log::log_segment::LogSegment;
 use crate::log::Log;
 use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult};
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;

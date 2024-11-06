@@ -1,4 +1,4 @@
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::{path::Path, u32};
 use tokio::fs::File;

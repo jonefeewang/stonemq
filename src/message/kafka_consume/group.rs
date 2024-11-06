@@ -5,7 +5,10 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
-use tokio::sync::{oneshot, RwLock, RwLockWriteGuard};
+use tokio::{
+    sync::{oneshot, RwLock, RwLockWriteGuard},
+    time::Instant,
+};
 
 use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
@@ -30,6 +33,8 @@ pub struct MemberMetadata {
     assignment: Option<Bytes>,
     join_group_cb_sender: Option<oneshot::Sender<JoinGroupResult>>,
     sync_group_cb_sender: Option<oneshot::Sender<SyncGroupResponse>>,
+    last_heartbeat: Instant,
+    is_leaving: bool,
 }
 impl MemberMetadata {
     pub fn new(
@@ -54,6 +59,8 @@ impl MemberMetadata {
             assignment: None,
             join_group_cb_sender: None,
             sync_group_cb_sender: None,
+            last_heartbeat: Instant::now(),
+            is_leaving: false,
         }
     }
     pub fn update_supported_protocols(&mut self, protocols: Vec<ProtocolMetadata>) {
@@ -115,6 +122,27 @@ impl MemberMetadata {
     }
     pub fn set_assignment(&mut self, assignment: Bytes) {
         self.assignment = Some(assignment);
+    }
+    pub fn last_heartbeat(&self) -> Instant {
+        self.last_heartbeat
+    }
+    pub fn update_last_heartbeat(&mut self) {
+        self.last_heartbeat = Instant::now();
+    }
+    pub fn session_timeout(&self) -> i32 {
+        self.session_timeout
+    }
+    pub fn is_awaiting_join(&self) -> bool {
+        self.join_group_cb_sender.is_some()
+    }
+    pub fn is_awaiting_sync(&self) -> bool {
+        self.sync_group_cb_sender.is_some()
+    }
+    pub fn is_leaving(&self) -> bool {
+        self.is_leaving
+    }
+    pub fn set_leaving(&mut self) {
+        self.is_leaving = true;
     }
 }
 
@@ -201,7 +229,10 @@ impl GroupMetadata {
     pub fn has_member(&self, member_id: &str) -> bool {
         self.members.contains_key(member_id)
     }
-    pub fn get_member(&mut self, member_id: &str) -> Option<&mut MemberMetadata> {
+    pub fn get_member(&self, member_id: &str) -> Option<&MemberMetadata> {
+        self.members.get(member_id)
+    }
+    pub fn get_mut_member(&mut self, member_id: &str) -> Option<&mut MemberMetadata> {
         self.members.get_mut(member_id)
     }
     pub fn protocol_type_equals(&self, protocol_type: &str) -> bool {
@@ -350,8 +381,8 @@ impl GroupMetadataManager {
     }
     pub fn store_group(
         &self,
-        locked_group: RwLockWriteGuard<GroupMetadata>,
-        group_assignment: Option<HashMap<String, Bytes>>,
+        write_lock: &RwLockWriteGuard<GroupMetadata>,
+        group_assignment: Option<&HashMap<String, Bytes>>,
     ) -> KafkaResult<()> {
         todo!()
     }

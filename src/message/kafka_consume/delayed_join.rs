@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Instant};
 use tracing::debug;
 
 use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
@@ -117,26 +117,49 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
 
 pub struct DelayedHeartbeat {
     group_cordinator: Arc<GroupCoordinator>,
-    group: Arc<GroupMetadata>,
-    member: MemberMetadata,
-    heartbeat_deadline: u64,
+    group: Arc<RwLock<GroupMetadata>>,
+    heartbeat_deadline: Instant,
     session_timeout: u64,
+    member_id: String,
 }
-
+impl DelayedHeartbeat {
+    pub fn new(
+        group_cordinator: Arc<GroupCoordinator>,
+        group: Arc<RwLock<GroupMetadata>>,
+        heartbeat_deadline: Instant,
+        member_id: String,
+        session_timeout: u64,
+    ) -> Self {
+        Self {
+            group_cordinator,
+            group,
+            heartbeat_deadline,
+            session_timeout,
+            member_id,
+        }
+    }
+}
 impl DelayedAsyncOperation for DelayedHeartbeat {
     fn delay_ms(&self) -> u64 {
         self.session_timeout
     }
 
     async fn try_complete(&self) -> bool {
-        false
+        self.group_cordinator
+            .try_complete_heartbeat(self.group.clone(), &self.member_id, self.heartbeat_deadline)
+            .await
     }
 
     async fn on_complete(&self) {
-        todo!()
+        self.group_cordinator
+            .on_heartbeat_complete(self.group.clone(), &self.member_id)
+            .await;
     }
 
     async fn on_expiration(&self) {
-        todo!()
+        self.group_cordinator
+            .clone()
+            .on_heartbeat_expiry(self.group.clone(), &self.member_id, self.heartbeat_deadline)
+            .await;
     }
 }

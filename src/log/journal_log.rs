@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crossbeam_utils::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use futures_util::lock::Mutex;
 use tokio::runtime::Runtime;
