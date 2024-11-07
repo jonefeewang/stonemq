@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -71,16 +72,16 @@ impl DelayedAsyncOperation for DelayedFetch {
         false
     }
 
-    async fn on_complete(&self) {
-        let result = self.replica_manager.do_fetch(&self.request).await.unwrap();
-        if let Some(tx) = self.tx.lock().unwrap().take() {
-            tx.send(result).unwrap();
-        }
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            let result = self.replica_manager.do_fetch(&self.request).await.unwrap();
+            if let Some(tx) = self.tx.lock().unwrap().take() {
+                tx.send(result).unwrap();
+            }
+        })
     }
 
-    fn on_expiration(&self) -> impl Future<Output = ()> + Send {
-        async move {
-            debug!("delayed fetch expired");
-        }
+    async fn on_expiration(&self) {
+        debug!("delayed fetch expired");
     }
 }

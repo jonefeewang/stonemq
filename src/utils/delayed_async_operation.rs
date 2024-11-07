@@ -2,6 +2,7 @@ use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use futures_util::StreamExt;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -14,8 +15,8 @@ use crate::Shutdown;
 // 异步的DelayedOperation trait
 pub trait DelayedAsyncOperation: Send + Sync {
     fn delay_ms(&self) -> u64;
-    async fn try_complete(&self) -> bool;
-    fn on_complete(&self) -> impl Future<Output = ()> + Send;
+    fn try_complete(&self) -> impl Future<Output = bool> + Send;
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
     fn on_expiration(&self) -> impl Future<Output = ()> + Send;
 }
 
@@ -85,6 +86,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
     }
 
     pub async fn try_complete_else_watch(&self, operation: T, watch_keys: Vec<String>) -> bool {
+        // let operation = operation.into();
         let op_state = Arc::new(DelayedAsyncOperationState::new(operation));
 
         if op_state.operation.try_complete().await && op_state.force_complete().await {
@@ -98,7 +100,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
 
             self.watchers
                 .entry(key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Arc::clone(&op_state));
         }
 
@@ -119,9 +121,9 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         mut shutdown: Shutdown,
     ) {
         // DelayQueue 处理循环
+
         tokio::spawn(async move {
             let mut delay_queue = DelayQueue::new();
-
             loop {
                 tokio::select! {
                     Some(op) = delay_queue_rx.recv() => {

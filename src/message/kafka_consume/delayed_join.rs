@@ -1,14 +1,11 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use tokio::{sync::RwLock, time::Instant};
 use tracing::debug;
 
 use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
 
-use super::{
-    coordinator::GroupCoordinator,
-    group::{GroupMetadata, MemberMetadata},
-};
+use super::{coordinator::GroupCoordinator, group::GroupMetadata};
 
 pub struct DelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
@@ -39,8 +36,12 @@ impl DelayedAsyncOperation for DelayedJoin {
             .await
     }
 
-    async fn on_complete(&self) {
-        self.group_cordinator.on_complete_join(self.group.clone());
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            self.group_cordinator
+                .on_complete_join(self.group.clone())
+                .await;
+        })
     }
 
     async fn on_expiration(&self) {
@@ -84,30 +85,37 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
         false
     }
 
-    async fn on_complete(&self) {
-        let group_clone = self.group.clone();
-        let mut locked_write_group = group_clone.write().await;
-        let group_id = locked_write_group.id().to_string();
-        if locked_write_group.new_member_added() && self.remaining_delay_ms != 0 {
-            locked_write_group.reset_new_member_added();
-            let delay = self.remaining_delay_ms.min(self.configured_rebalance_delay);
-            let remaining = (self.remaining_delay_ms - delay).max(0);
-            let new_delayed_join = InitialDelayedJoin {
-                group_cordinator: self.group_cordinator.clone(),
-                group: self.group.clone(),
-                purgatory: self.purgatory.clone(),
-                configured_rebalance_delay: self.configured_rebalance_delay,
-                delay_ms: delay,
-                remaining_delay_ms: remaining,
-            };
-            // 释放锁, 因为下边的调用会再次尝试获取锁
-            drop(locked_write_group);
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            let group_clone = self.group.clone();
+            let mut locked_write_group = group_clone.write().await;
 
-            self.purgatory
-                .try_complete_else_watch(new_delayed_join, vec![group_id]);
-        } else {
-            self.group_cordinator.on_complete_join(self.group.clone());
-        }
+            let group_id = locked_write_group.id().to_string();
+
+            if locked_write_group.new_member_added() && self.remaining_delay_ms != 0 {
+                locked_write_group.reset_new_member_added();
+                let delay = self.remaining_delay_ms.min(self.configured_rebalance_delay);
+                let remaining = (self.remaining_delay_ms - delay).max(0);
+                drop(locked_write_group);
+
+                let new_delayed_join = InitialDelayedJoin::new(
+                    self.group_cordinator.clone(),
+                    self.group.clone(),
+                    self.purgatory.clone(),
+                    self.configured_rebalance_delay,
+                    delay,
+                    remaining,
+                );
+
+                self.purgatory
+                    .try_complete_else_watch(new_delayed_join, vec![group_id])
+                    .await;
+            } else {
+                self.group_cordinator
+                    .on_complete_join(self.group.clone())
+                    .await;
+            }
+        })
     }
 
     async fn on_expiration(&self) {
@@ -150,10 +158,12 @@ impl DelayedAsyncOperation for DelayedHeartbeat {
             .await
     }
 
-    async fn on_complete(&self) {
-        self.group_cordinator
-            .on_heartbeat_complete(self.group.clone(), &self.member_id)
-            .await;
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            self.group_cordinator
+                .on_heartbeat_complete(self.group.clone(), &self.member_id)
+                .await;
+        })
     }
 
     async fn on_expiration(&self) {

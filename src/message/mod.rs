@@ -7,6 +7,7 @@ use crate::log::PositionInfo;
 mod batch_records;
 mod delayed_fetch;
 mod kafka_consume;
+pub mod offset;
 mod records;
 mod replica;
 mod topic_partition;

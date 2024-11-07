@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use bytes::Bytes;
 
 use crate::{
+    message::TopicPartition,
     protocol::api_schemas::consumer_protocol::{ProtocolMetadata, Subscription},
     service::Node,
 };
@@ -202,4 +203,21 @@ pub struct HeartbeatResponse {
 }
 impl HeartbeatResponse {
     pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
+}
+
+pub struct FetchOffsetsRequest {
+    pub group_id: String,
+    pub member_id: String,
+    pub partitions: Option<Vec<TopicPartition>>,
+}
+
+pub struct FetchOffsetsResponse {
+    pub error_code: ErrorCode,
+    pub throttle_time_ms: i32,
+    pub offsets: HashMap<TopicPartition, PartitionData>,
+}
+pub struct PartitionData {
+    pub offset: i64,
+    pub metadata: String,
+    pub error: KafkaError,
 }

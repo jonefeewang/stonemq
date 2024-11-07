@@ -169,7 +169,7 @@ pub struct ProtocolMetadata {
     // assignor.name
     pub name: String,
     // consumer protocol serialized subscription struct
-    pub metadata: Bytes,
+    pub metadata: BytesMut,
 }
 impl PartialEq for ProtocolMetadata {
     fn eq(&self, other: &Self) -> bool {

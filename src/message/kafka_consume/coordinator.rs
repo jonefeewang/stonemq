@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use crossbeam::atomic::AtomicCell;
+use futures_util::io::Empty;
 use tokio::{
     sync::{broadcast, mpsc::Sender, oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
@@ -10,10 +11,16 @@ use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
-    message::kafka_consume::group::{GroupMetadata, GroupState, MemberMetadata},
+    message::{
+        kafka_consume::group::{GroupMetadata, GroupState, MemberMetadata},
+        offset::OffsetAndMetadata,
+        TopicPartition,
+    },
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
-        consumer_group::{FindCoordinatorResponse, JoinGroupRequest, SyncGroupResponse},
+        consumer_group::{
+            FindCoordinatorResponse, JoinGroupRequest, PartitionData, SyncGroupResponse,
+        },
         errors::{ErrorCode, KafkaError, KafkaResult},
     },
     service::{GroupConfig, Node},
@@ -136,11 +143,11 @@ impl GroupCoordinator {
         request: JoinGroupRequest,
         group: Arc<RwLock<GroupMetadata>>,
     ) -> KafkaResult<JoinGroupResult> {
-        let mut locked_group = group.write().await;
+        let locked_group = group.write().await;
 
         if !locked_group.is(GroupState::Empty)
-            && (!locked_group.protocol_type_equals(&request.protocol_type)
-                || !locked_group.supports_protocols(
+            && (locked_group.protocol_type() != Some(&request.protocol_type)
+                || !locked_group.is_support_protocols(
                     &request
                         .group_protocols
                         .iter()
@@ -158,7 +165,7 @@ impl GroupCoordinator {
             Ok(self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId))
         } else {
             let coordinator_clone = self.clone();
-            let result = match locked_group.current_state() {
+            let result = match locked_group.state() {
                 GroupState::Dead => {
                     // if the group is marked as dead, it means some other thread has just removed the group
                     // from the coordinator metadata; this is likely that the group has migrated to some other
@@ -198,7 +205,7 @@ impl GroupCoordinator {
                         let member_id = request.member_id.clone();
                         let leader_id = locked_group.leader_id().unwrap().to_string();
                         let member = locked_group.get_member(&member_id).unwrap();
-                        if member.protocol_equals(&request.group_protocols) {
+                        if member.protocol_matches(&request.group_protocols) {
                             // member is joining with the same metadata (which could be because it failed to
                             // receive the initial JoinGroup response), so just return current group information
                             // for the current generation.
@@ -242,7 +249,7 @@ impl GroupCoordinator {
                         let leader_id = locked_group.leader_id().unwrap().to_string();
                         let member = locked_group.get_member(&member_id).unwrap();
                         if member.id() == leader_id
-                            || !member.protocol_equals(&request.group_protocols)
+                            || !member.protocol_matches(&request.group_protocols)
                         {
                             // force a rebalance if a member has changed metadata or if the leader sends JoinGroup.
                             // The latter allows the leader to trigger rebalances for changes affecting assignment
@@ -303,12 +310,17 @@ impl GroupCoordinator {
             request.session_timeout,
             request.rebalance_timeout,
             &request.protocol_type,
-            request.group_protocols.into_iter().map(Arc::new).collect(),
+            request
+                .group_protocols
+                .into_iter()
+                .map(|p| (p.name.clone(), Bytes::copy_from_slice(&p.metadata)))
+                .collect(),
         );
         let (tx, rx) = oneshot::channel();
-        member.set_join_group_callback_channel(tx);
+        member.set_join_group_callback(tx);
         locked_group.add_member(member)?;
 
+        // update the newMemberAdded flag to indicate that the join group can be further delayed
         if locked_group.is(GroupState::PreparingRebalance) && locked_group.generation_id() == 0 {
             locked_group.set_new_member_added();
         }
@@ -316,6 +328,7 @@ impl GroupCoordinator {
         self.maybe_prepare_rebalance(locked_group, group).await;
         Ok(rx.await.unwrap())
     }
+
     /// 在拿到group写锁的情况下, 更新成员并触发rebalance，同时延迟的join操作需要一个独立的group
     async fn update_member_and_rebalance(
         self: &Arc<Self>,
@@ -327,7 +340,7 @@ impl GroupCoordinator {
     ) {
         let member = locked_group.get_mut_member(member_id).unwrap();
         member.update_supported_protocols(protocols);
-        member.set_join_group_callback_channel(tx);
+        member.set_join_group_callback(tx);
 
         self.maybe_prepare_rebalance(locked_group, group).await;
     }
@@ -367,7 +380,7 @@ impl GroupCoordinator {
                 self.initial_delayed_join_purgatory.clone(),
                 self.group_config.group_initial_rebalance_delay,
                 self.group_config.group_initial_rebalance_delay,
-                (locked_group.max_rebalance_timeout_ms()
+                (locked_group.max_rebalance_timeout()
                     - self.group_config.group_initial_rebalance_delay)
                     .max(0),
             );
@@ -384,7 +397,7 @@ impl GroupCoordinator {
             let delayed_join = DelayedJoin::new(
                 coordinator_clone,
                 group,
-                locked_group.max_rebalance_timeout_ms() as u64,
+                locked_group.max_rebalance_timeout() as u64,
             );
             locked_group.transition_to(GroupState::PreparingRebalance);
 
@@ -426,7 +439,7 @@ impl GroupCoordinator {
                 let sub_protocol = locked_write_group.protocol().unwrap().to_string();
                 let all_member_protocols = locked_write_group.current_member_metadata();
 
-                for member in locked_write_group.all_members() {
+                for member in locked_write_group.members() {
                     let join_result = JoinGroupResult {
                         members: if member.id() == leader_id {
                             Some(all_member_protocols.clone())
@@ -439,12 +452,10 @@ impl GroupCoordinator {
                         leader_id: leader_id.clone(),
                         error: None,
                     };
-                    let _ = member.take_join_group_callback_channel().send(join_result);
+                    let _ = member.take_join_group_callback().send(join_result);
                 }
             }
         }
-
-        todo!()
     }
     async fn complete_and_schedule_next_heartbeat_expiry(
         self: &Arc<Self>,
@@ -457,7 +468,7 @@ impl GroupCoordinator {
         let member = group_lock.get_mut_member(member_id).unwrap();
 
         // complete current heartbeat expectation
-        member.update_last_heartbeat();
+        member.update_heartbeat();
         let delay_key = format!("{}-{}", group_id, member_id);
 
         let last_heartbeat = member.last_heartbeat();
@@ -536,7 +547,7 @@ impl GroupCoordinator {
         let mut locked_write_group = group.write().await;
         locked_write_group.remove_member(member_id);
         let group_id = locked_write_group.id().to_string();
-        match locked_write_group.current_state() {
+        match locked_write_group.state() {
             GroupState::Stable | GroupState::AwaitingSync => {
                 self.maybe_prepare_rebalance(locked_write_group, group_clone)
                     .await;
@@ -544,6 +555,7 @@ impl GroupCoordinator {
             GroupState::Dead | GroupState::Empty => {}
             GroupState::PreparingRebalance => {
                 // 延迟加入
+                drop(locked_write_group);
                 self.delayed_join_purgatory
                     .check_and_complete(group_id.as_str())
                     .await;
@@ -565,7 +577,7 @@ impl GroupCoordinator {
             if let Some(group) = group {
                 let group_clone = group.clone();
                 let locked_read_group = group.read().await;
-                match locked_read_group.current_state() {
+                match locked_read_group.state() {
                     GroupState::Dead => {
                         // if the group is marked as dead, it means some other thread has just removed the group
                         // from the coordinator metadata; this is likely that the group has migrated to some other
@@ -657,7 +669,7 @@ impl GroupCoordinator {
         } else if generation_id != write_lock.generation_id() {
             return Err(KafkaError::IllegalGeneration(group_id.to_string()));
         } else {
-            let current_state = write_lock.current_state();
+            let current_state = write_lock.state();
             return match current_state {
                 GroupState::Empty | GroupState::Dead => {
                     Err(KafkaError::UnknownMemberId(member_id.to_string()))
@@ -677,7 +689,7 @@ impl GroupCoordinator {
                 GroupState::AwaitingSync => {
                     let member = write_lock.get_mut_member(member_id).unwrap();
                     let (tx, rx) = oneshot::channel();
-                    member.set_sync_group_callback_channel(tx);
+                    member.set_sync_group_callback(tx);
                     // if this is the leader, then we can attempt to persist state and transition to stable
                     if member.id() == leader_id {
                         info!(
@@ -685,7 +697,7 @@ impl GroupCoordinator {
                             group_id, generation_id
                         );
                         // fill any missing members with an empty assignment
-                        let all_members = write_lock.all_members();
+                        let all_members = write_lock.members();
                         for member in all_members {
                             if !group_assignment.contains_key(member.id()) {
                                 group_assignment.insert(member.id().to_string(), Bytes::new());
@@ -732,7 +744,7 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
         assignment: &mut HashMap<String, Bytes>,
     ) {
-        for member in write_lock.all_members() {
+        for member in write_lock.members() {
             member.set_assignment(assignment.remove(member.id()).unwrap());
         }
         self.progate_assignment(write_lock, group, &KafkaError::None)
@@ -744,7 +756,7 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
         error: KafkaError,
     ) {
-        for member in write_lock.all_members() {
+        for member in write_lock.members() {
             member.set_assignment(Bytes::new());
         }
         self.progate_assignment(write_lock, group, &error).await;
@@ -755,15 +767,14 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
         error: &KafkaError,
     ) {
-        for member in locked_write_group.all_members() {
-            let send_result =
-                member
-                    .take_sync_group_callback_channel()
-                    .send(SyncGroupResponse::new(
-                        error.into(),
-                        0,
-                        member.assignment().unwrap(),
-                    ));
+        for member in locked_write_group.members() {
+            let send_result = member
+                .take_sync_group_callback()
+                .send(SyncGroupResponse::new(
+                    error.into(),
+                    0,
+                    member.assignment().unwrap(),
+                ));
             if send_result.is_err() {
                 error!(
                     "send sync group response error: {:?}",
@@ -774,6 +785,108 @@ impl GroupCoordinator {
                 .complete_and_schedule_next_heartbeat_expiry(group.clone(), member.id())
                 .await;
         }
+    }
+
+    pub async fn handle_group_leave(
+        self: Arc<Self>,
+        group_id: &str,
+        member_id: &str,
+    ) -> KafkaResult<()> {
+        if !self.active.load() {
+            return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+        }
+
+        let group = self.group_manager.get_group(group_id);
+        if let Some(group) = group {
+            let group_clone = group.clone();
+            let mut locked_write_group = group.write().await;
+            if locked_write_group.has_member(member_id) {
+                let member = locked_write_group.get_mut_member(member_id).unwrap();
+                member.set_leaving();
+                drop(locked_write_group);
+                self.delayed_heartbeat_purgatory
+                    .check_and_complete(format!("{}-{}", group_id, member_id).as_str())
+                    .await;
+
+                self.remove_member_and_update_group(group_clone, member_id)
+                    .await;
+            } else if locked_write_group.is(GroupState::Dead) {
+                return Err(KafkaError::UnknownMemberId(member_id.to_string()));
+            }
+            Ok(())
+        } else {
+            Err(KafkaError::UnknownMemberId(member_id.to_string()))
+        }
+    }
+
+    pub async fn handle_commit_offsets(
+        self: Arc<Self>,
+        group_id: &str,
+        member_id: &str,
+        generation_id: i32,
+        offsets: HashMap<TopicPartition, OffsetAndMetadata>,
+    ) -> KafkaResult<()> {
+        if !self.active.load() {
+            return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+        }
+
+        let group = self.group_manager.get_group(group_id);
+        if let Some(group) = group {
+            let group_clone = group.clone();
+            self.do_commit_offsets(group_clone, member_id, generation_id, offsets)
+                .await;
+        } else if generation_id < 0 {
+            // the group is not relying on Kafka for group management, so allow the commit
+            let group_metadata = GroupMetadata::new(group_id);
+            self.group_manager.add_group(group_metadata);
+            let group_clone = self.group_manager.get_group(group_id).unwrap();
+            self.do_commit_offsets(group_clone, member_id, generation_id, offsets)
+                .await;
+        } else {
+            return Err(KafkaError::IllegalGeneration(group_id.to_string()));
+        }
+        Ok(())
+    }
+    pub async fn do_commit_offsets(
+        self: &Arc<Self>,
+        group: Arc<RwLock<GroupMetadata>>,
+        member_id: &str,
+        generation_id: i32,
+        offsets: HashMap<TopicPartition, OffsetAndMetadata>,
+    ) -> KafkaResult<()> {
+        let group_clone = group.clone();
+        let locked_read_group = group.read().await;
+        let group_id = locked_read_group.id().to_string();
+        if locked_read_group.is(GroupState::Dead) {
+            return Err(KafkaError::UnknownMemberId(member_id.to_string()));
+        } else if generation_id < 0 && locked_read_group.is(GroupState::Empty) {
+            self.group_manager
+                .store_offset(&group_id, member_id, offsets);
+        } else if locked_read_group.is(GroupState::AwaitingSync) {
+            return Err(KafkaError::RebalanceInProgress(group_id.to_string()));
+        } else if !locked_read_group.has_member(member_id) {
+            return Err(KafkaError::UnknownMemberId(member_id.to_string()));
+        } else if generation_id != locked_read_group.generation_id() {
+            return Err(KafkaError::IllegalGeneration(group_id.to_string()));
+        } else {
+            drop(locked_read_group);
+            self.complete_and_schedule_next_heartbeat_expiry(group_clone, member_id)
+                .await;
+            self.group_manager
+                .store_offset(&group_id, member_id, offsets);
+        }
+        Ok(())
+    }
+    pub fn handle_fetch_offsets(
+        self: Arc<Self>,
+        group_id: &str,
+        partitions: Option<Vec<TopicPartition>>,
+    ) -> KafkaResult<HashMap<TopicPartition, PartitionData>> {
+        if !self.active.load() {
+            return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+        }
+        let offset_data = self.group_manager.get_offset(group_id, partitions);
+        Ok(offset_data)
     }
 
     fn join_error(&self, member_id: String, error: ErrorCode) -> JoinGroupResult {
