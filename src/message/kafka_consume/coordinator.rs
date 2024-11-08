@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use crossbeam::atomic::AtomicCell;
-use futures_util::io::Empty;
 use tokio::{
     sync::{broadcast, mpsc::Sender, oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
@@ -89,8 +88,8 @@ impl GroupCoordinator {
         )
         .await;
 
-        let group_manager = GroupMetadataManager::new();
-        Self::new(
+        let group_manager = GroupMetadataManager::load();
+        let coordinator = Self::new(
             node,
             group_manager,
             group_config,
@@ -98,7 +97,9 @@ impl GroupCoordinator {
             initial_delayed_join_purgatory,
             delayed_heartbeat_purgatory,
         )
-        .await
+        .await;
+        coordinator.active.store(true);
+        coordinator
     }
 
     pub fn find_coordinator(&self, _: &str) -> AppResult<FindCoordinatorResponse> {
@@ -428,7 +429,7 @@ impl GroupCoordinator {
             locked_write_group.init_next_generation();
 
             if locked_write_group.is(GroupState::Empty) {
-                let result = self.group_manager.store_group(&locked_write_group, None);
+                let result = self.group_manager.store_group(&locked_write_group);
                 if result.is_err() {
                     error!("store group error: {}", result.unwrap_err());
                 }
@@ -703,9 +704,7 @@ impl GroupCoordinator {
                                 group_assignment.insert(member.id().to_string(), Bytes::new());
                             }
                         }
-                        let store_result = self
-                            .group_manager
-                            .store_group(&write_lock, Some(&group_assignment));
+                        let store_result = self.group_manager.store_group(&write_lock);
                         // another member may have joined the group while we were awaiting this callback,
                         // so we must ensure we are still in the AwaitingSync state and the same generation
                         // when it gets invoked. if we have transitioned to another state, then do nothing
@@ -885,8 +884,8 @@ impl GroupCoordinator {
         if !self.active.load() {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
-        let offset_data = self.group_manager.get_offset(group_id, partitions);
-        Ok(offset_data)
+
+        self.group_manager.get_offset(group_id, partitions)
     }
 
     fn join_error(&self, member_id: String, error: ErrorCode) -> JoinGroupResult {

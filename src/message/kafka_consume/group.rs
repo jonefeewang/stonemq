@@ -6,12 +6,15 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
+use rocksdb::{IteratorMode, Options, SliceTransform, DB};
 use tokio::{
     sync::{oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
 };
+use tracing::error;
 
 use crate::{
+    global_config,
     message::{offset::OffsetAndMetadata, TopicPartition},
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
@@ -212,13 +215,19 @@ impl MemberMetadata {
         // rebalance_timeout - int32
         buffer.put_i32(self.rebalance_timeout);
         // subscription
-        let metadata = self.metadata(group_protocol).unwrap();
-        buffer.put_u32(metadata.len() as u32);
-        buffer.put(metadata);
+        if let Some(metadata) = self.metadata(group_protocol) {
+            buffer.put_i32(metadata.len() as i32);
+            buffer.put(metadata);
+        } else {
+            buffer.put_i32(-1);
+        }
         // assignment
-        let assignment = self.assignment().unwrap();
-        buffer.put_u32(assignment.len() as u32);
-        buffer.put(assignment);
+        if let Some(assignment) = self.assignment() {
+            buffer.put_u32(assignment.len() as u32);
+            buffer.put(assignment);
+        } else {
+            buffer.put_i32(-1);
+        }
 
         Ok(buffer.freeze())
     }
@@ -260,14 +269,22 @@ impl MemberMetadata {
         let rebalance_timeout = cursor.get_i32();
 
         // subscription metadata
-        let metadata_len = cursor.get_u32() as usize;
-        let mut metadata = vec![0; metadata_len];
-        cursor.read_exact(&mut metadata).unwrap();
+        let metadata_len = cursor.get_i32();
+        let mut metadata: Option<Bytes> = None;
+        if metadata_len > 0 {
+            let mut buf = vec![0; metadata_len as usize];
+            cursor.read_exact(&mut buf).unwrap();
+            metadata = Some(Bytes::from(buf));
+        }
 
         // assignment
         let assignment_len = cursor.get_u32() as usize;
-        let mut assignment = vec![0; assignment_len];
-        cursor.read_exact(&mut assignment).unwrap();
+        let mut assignment: Option<Bytes> = None;
+        if assignment_len > 0 {
+            let mut buf = vec![0; assignment_len];
+            cursor.read_exact(&mut buf).unwrap();
+            assignment = Some(Bytes::from(buf));
+        }
 
         let member = Self::new(
             id,
@@ -277,7 +294,8 @@ impl MemberMetadata {
             rebalance_timeout,
             session_timeout,
             protocol_type,
-            vec![(protocol.to_string(), Bytes::from(metadata))],
+            // 被保存的组一定存在协议元数据
+            vec![(protocol.to_string(), metadata.unwrap())],
         );
 
         Ok(member)
@@ -521,6 +539,9 @@ impl GroupMetadata {
         buffer.put_u32(self.leader_id.as_ref().unwrap().len() as u32);
         buffer.put(self.leader_id.as_ref().unwrap().as_bytes());
 
+        // members length - int32
+        buffer.put_i32(self.members.len() as i32);
+
         for member in self.members.values() {
             let protocol = self.protocol.as_ref().unwrap();
             let serialized = member.serialize(protocol)?;
@@ -559,8 +580,11 @@ impl GroupMetadata {
             KafkaError::CoordinatorNotAvailable(format!("无法解析leader_id: {}", e))
         })?;
 
+        // members length - int32
+        let members_len = cursor.get_i32() as usize;
+
         let mut members = HashMap::new();
-        while cursor.position() < data.len() as u64 {
+        for _ in 0..members_len {
             let member_len = cursor.get_u32() as usize;
             let mut member_data = vec![0; member_len];
             cursor.read_exact(&mut member_data).unwrap();
@@ -648,50 +672,129 @@ impl GroupMetadata {
 }
 
 pub struct GroupMetadataManager {
-    group_metadata: DashMap<String, Arc<RwLock<GroupMetadata>>>,
+    groups: DashMap<String, Arc<RwLock<GroupMetadata>>>,
 }
 
 impl GroupMetadataManager {
-    pub fn new() -> Self {
-        Self {
-            group_metadata: DashMap::new(),
-        }
+    const GROUP_PREFIX: &str = "group";
+    const OFFSET_PREFIX: &str = "offset";
+    pub fn group_db_key(group_id: &str) -> String {
+        format!("{}:{}", Self::GROUP_PREFIX, group_id)
+    }
+    pub fn offset_db_key(group_id: &str, topic_partition: &TopicPartition) -> String {
+        format!("{}:{}:{}", Self::OFFSET_PREFIX, group_id, topic_partition)
+    }
+    pub fn new(groups: DashMap<String, Arc<RwLock<GroupMetadata>>>) -> Self {
+        Self { groups }
     }
 
     pub fn add_group(&self, group_metadata: GroupMetadata) -> Arc<RwLock<GroupMetadata>> {
-        self.group_metadata
+        self.groups
             .entry(group_metadata.id.clone())
             .or_insert_with(|| Arc::new(RwLock::new(group_metadata)))
             .value()
             .clone()
     }
     pub fn get_group(&self, group_id: &str) -> Option<Arc<RwLock<GroupMetadata>>> {
-        self.group_metadata.get(group_id).map(|g| g.clone())
+        self.groups.get(group_id).map(|g| g.clone())
     }
-    pub fn store_group(
-        &self,
-        write_lock: &RwLockWriteGuard<GroupMetadata>,
-        group_assignment: Option<&HashMap<String, Bytes>>,
-    ) -> KafkaResult<()> {
-        todo!()
+    pub fn store_group(&self, write_lock: &RwLockWriteGuard<GroupMetadata>) -> KafkaResult<()> {
+        let group_id = write_lock.id.clone();
+        let group_data = write_lock.serialize()?;
+
+        let db_path = &global_config().general.local_db_path;
+        let db = DB::open_default(db_path).unwrap();
+        let result = db.put(Self::group_db_key(&group_id), group_data);
+        if result.is_err() {
+            return Err(KafkaError::CoordinatorNotAvailable(group_id.clone()));
+        }
+        Ok(())
     }
     pub fn store_offset(
         &self,
         group_id: &str,
         member_id: &str,
         offsets: HashMap<TopicPartition, OffsetAndMetadata>,
-    ) {
-        todo!()
+    ) -> KafkaResult<()> {
+        let db_path = &global_config().general.local_db_path;
+        let db = DB::open_default(db_path).unwrap();
+        for (topic_partition, offset_and_metadata) in offsets {
+            let key = Self::offset_db_key(group_id, &topic_partition);
+            let value = offset_and_metadata.serialize()?;
+            let result = db.put(key, value);
+            if result.is_err() {
+                return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+            }
+        }
+        Ok(())
     }
     pub fn get_offset(
         &self,
         group_id: &str,
         partitions: Option<Vec<TopicPartition>>,
-    ) -> HashMap<TopicPartition, PartitionData> {
-        todo!()
+    ) -> KafkaResult<HashMap<TopicPartition, PartitionData>> {
+        let db_path = &global_config().general.local_db_path;
+        let db = DB::open_default(db_path).unwrap();
+        let mut offsets = HashMap::new();
+        for partition in partitions.unwrap_or_default() {
+            let key = Self::offset_db_key(group_id, &partition);
+            let value = db.get(key);
+            if let Ok(Some(value)) = value {
+                let offset_and_metadata = OffsetAndMetadata::deserialize(&value)?;
+                offsets.insert(
+                    partition,
+                    PartitionData {
+                        offset: offset_and_metadata.offset_metadata.offset,
+                        metadata: offset_and_metadata.offset_metadata.metadata,
+                        error: KafkaError::None,
+                    },
+                );
+            } else {
+                offsets.insert(
+                    partition,
+                    PartitionData {
+                        offset: 0,
+                        metadata: "".to_string(),
+                        error: KafkaError::CoordinatorNotAvailable(group_id.to_string()),
+                    },
+                );
+            }
+        }
+        Ok(offsets)
     }
-    pub fn load_groups(&self) -> Vec<String> {
-        todo!()
+    pub fn load() -> Self {
+        // 配置 RocksDB 选项
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+
+        // 假设所有 Group ID 前缀为 "group:"
+        opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(6));
+
+        // 打开数据库
+        let db = DB::open(&opts, &global_config().general.local_db_path).expect("无法打开 RocksDB");
+
+        // 设置迭代器模式
+        let mode = IteratorMode::From(Self::GROUP_PREFIX.as_bytes(), rocksdb::Direction::Forward);
+        let iter = db.iterator(mode);
+
+        // 执行前缀扫描
+        let groups = DashMap::new();
+        for result in iter {
+            if let Ok((key, value)) = result {
+                if key.starts_with(Self::GROUP_PREFIX.as_bytes()) {
+                    // 处理键值对
+                    let group_id = String::from_utf8_lossy(&key).to_string();
+                    let group_metadata = GroupMetadata::deserialize(&value, &group_id).unwrap();
+                    groups.insert(group_id, Arc::new(RwLock::new(group_metadata)));
+                } else {
+                    // 超过前缀范围，停止扫描
+                    break;
+                }
+            } else {
+                error!("加载组元数据失败: {}", result.err().unwrap());
+            }
+        }
+        Self::new(groups)
     }
 }
 

@@ -288,6 +288,7 @@ impl DynamicConfig {
 pub struct GeneralConfig {
     pub id: i32,
     pub max_msg_size: i32,
+    pub local_db_path: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
