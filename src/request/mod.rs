@@ -2,6 +2,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use consumer_group::{
+    FetchOffsetsRequest, HeartbeatRequest, JoinGroupRequest, LeaveGroupRequest,
+    OffsetCommitRequest, SyncGroupRequest,
+};
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, trace};
 
@@ -28,6 +32,12 @@ pub enum ApiRequest {
     Produce(ProduceRequest),
     Metadata(MetaDataRequest),
     ApiVersion(ApiVersionRequest),
+    JoinGroup(JoinGroupRequest),
+    SyncGroup(SyncGroupRequest),
+    LeaveGroup(LeaveGroupRequest),
+    Heartbeat(HeartbeatRequest),
+    OffsetCommit(OffsetCommitRequest),
+    FetchOffsets(FetchOffsetsRequest),
 }
 
 #[derive(Debug)]
@@ -148,6 +158,24 @@ impl RequestProcessor {
             ApiRequest::ApiVersion(request) => {
                 Self::handle_api_version_request(request_context, request).await
             }
+            ApiRequest::JoinGroup(request) => {
+                Self::handle_join_group_request(request_context, request).await
+            }
+            ApiRequest::SyncGroup(request) => {
+                Self::handle_sync_group_request(request_context, request).await
+            }
+            ApiRequest::LeaveGroup(request) => {
+                Self::handle_leave_group_request(request_context, request).await
+            }
+            ApiRequest::Heartbeat(request) => {
+                Self::handle_heartbeat_request(request_context, request).await
+            }
+            ApiRequest::OffsetCommit(request) => {
+                Self::handle_offset_commit_request(request_context, request).await
+            }
+            ApiRequest::FetchOffsets(request) => {
+                Self::handle_fetch_offsets_request(request_context, request).await
+            }
         }
     }
 
@@ -211,6 +239,42 @@ impl RequestProcessor {
             )
             .await?;
         Ok(())
+    }
+    pub async fn handle_join_group_request(
+        request_context: &mut RequestContext<'_>,
+        request: JoinGroupRequest,
+    ) -> AppResult<()> {
+        todo!()
+    }
+    pub async fn handle_sync_group_request(
+        request_context: &mut RequestContext<'_>,
+        request: SyncGroupRequest,
+    ) -> AppResult<()> {
+        todo!()
+    }
+    pub async fn handle_leave_group_request(
+        request_context: &mut RequestContext<'_>,
+        request: LeaveGroupRequest,
+    ) -> AppResult<()> {
+        todo!()
+    }
+    pub async fn handle_heartbeat_request(
+        request_context: &mut RequestContext<'_>,
+        request: HeartbeatRequest,
+    ) -> AppResult<()> {
+        todo!()
+    }
+    pub async fn handle_offset_commit_request(
+        request_context: &mut RequestContext<'_>,
+        request: OffsetCommitRequest,
+    ) -> AppResult<()> {
+        todo!()
+    }
+    pub async fn handle_fetch_offsets_request(
+        request_context: &mut RequestContext<'_>,
+        request: FetchOffsetsRequest,
+    ) -> AppResult<()> {
+        todo!()
     }
 
     pub(crate) async fn respond_invalid_request(

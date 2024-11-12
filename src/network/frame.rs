@@ -3,13 +3,17 @@ use std::io::ErrorKind;
 
 use bytes::{Buf, BytesMut};
 
-use crate::{AppError, AppResult};
-use crate::AppError::Incomplete;
-use crate::DynamicConfig;
 use crate::protocol::{ApiKey, ProtocolCodec};
-use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
+use crate::request::consumer_group::{
+    FetchOffsetsRequest, HeartbeatRequest, JoinGroupRequest, LeaveGroupRequest,
+    OffsetCommitRequest, SyncGroupRequest,
+};
 use crate::request::metadata::MetaDataRequest;
 use crate::request::produce::ProduceRequest;
+use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
+use crate::AppError::Incomplete;
+use crate::DynamicConfig;
+use crate::{AppError, AppResult};
 
 impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
     type Error = AppError;
@@ -30,6 +34,37 @@ impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
                     ApiVersionRequest::read_from(&mut data.0, &data.1.api_version)?;
                 Ok(ApiRequest::ApiVersion(api_version_request))
             }
+            ApiKey::JoinGroup => {
+                let join_group_request =
+                    JoinGroupRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::JoinGroup(join_group_request))
+            }
+            ApiKey::SyncGroup => {
+                let sync_group_request =
+                    SyncGroupRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::SyncGroup(sync_group_request))
+            }
+            ApiKey::LeaveGroup => {
+                let leave_group_request =
+                    LeaveGroupRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::LeaveGroup(leave_group_request))
+            }
+            ApiKey::Heartbeat => {
+                let heartbeat_request =
+                    HeartbeatRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::Heartbeat(heartbeat_request))
+            }
+            ApiKey::OffsetCommit => {
+                let offset_commit_request =
+                    OffsetCommitRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::OffsetCommit(offset_commit_request))
+            }
+            ApiKey::OffsetFetch => {
+                let fetch_offsets_request =
+                    FetchOffsetsRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::FetchOffsets(fetch_offsets_request))
+            }
+            _ => todo!(),
         }
     }
 }

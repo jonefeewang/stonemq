@@ -18,7 +18,7 @@ use crate::{
     message::{offset::OffsetAndMetadata, TopicPartition},
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
-        consumer_group::{PartitionData, SyncGroupResponse},
+        consumer_group::{PartitionOffsetData, SyncGroupResponse},
         errors::{KafkaError, KafkaResult},
     },
 };
@@ -732,7 +732,7 @@ impl GroupMetadataManager {
         &self,
         group_id: &str,
         partitions: Option<Vec<TopicPartition>>,
-    ) -> KafkaResult<HashMap<TopicPartition, PartitionData>> {
+    ) -> KafkaResult<HashMap<TopicPartition, PartitionOffsetData>> {
         let db_path = &global_config().general.local_db_path;
         let db = DB::open_default(db_path).unwrap();
         let mut offsets = HashMap::new();
@@ -743,7 +743,7 @@ impl GroupMetadataManager {
                 let offset_and_metadata = OffsetAndMetadata::deserialize(&value)?;
                 offsets.insert(
                     partition,
-                    PartitionData {
+                    PartitionOffsetData {
                         offset: offset_and_metadata.offset_metadata.offset,
                         metadata: offset_and_metadata.offset_metadata.metadata,
                         error: KafkaError::None,
@@ -752,7 +752,7 @@ impl GroupMetadataManager {
             } else {
                 offsets.insert(
                     partition,
-                    PartitionData {
+                    PartitionOffsetData {
                         offset: 0,
                         metadata: "".to_string(),
                         error: KafkaError::CoordinatorNotAvailable(group_id.to_string()),

@@ -169,12 +169,12 @@ impl TopicPartition {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct PartitionData {
+pub struct PartitionMsgData {
     pub partition: i32,
     pub message_set: MemoryRecords,
 }
 
-impl PartitionData {
+impl PartitionMsgData {
     pub fn new(partition: i32, message_set: MemoryRecords) -> Self {
         Self {
             partition,
@@ -186,11 +186,11 @@ impl PartitionData {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct TopicData {
     pub topic_name: String,
-    pub partition_data: Vec<PartitionData>,
+    pub partition_data: Vec<PartitionMsgData>,
 }
 
 impl TopicData {
-    pub fn new(topic_name: String, partition_data: Vec<PartitionData>) -> Self {
+    pub fn new(topic_name: String, partition_data: Vec<PartitionMsgData>) -> Self {
         Self {
             topic_name,
             partition_data,

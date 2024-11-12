@@ -8,9 +8,9 @@ use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
 use crate::message::TopicData;
-use crate::message::{MemoryRecords, PartitionData};
+use crate::message::{MemoryRecords, PartitionMsgData};
 use crate::protocol::array::ArrayType;
-use crate::protocol::primary_types::{NPString, PString, I16, I32, I8};
+use crate::protocol::primary_types::{NPString, PString, I16, I32};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
@@ -97,7 +97,7 @@ impl ProduceRequest {
                     // "record_set" field
                     let records: MemoryRecords =
                         value_set.get_field_value(RECORD_SET_KEY_NAME)?.try_into()?;
-                    partition_ary.push(PartitionData::new(partition_num, records));
+                    partition_ary.push(PartitionMsgData::new(partition_num, records));
                 }
             }
             topic_array.push(TopicData::new(topic_name, partition_ary));
@@ -204,7 +204,7 @@ impl ProduceRequest {
     /// topic data `[TopicName [Partition MessageSetSize MessageSet]]`
     /// partition data `[Partition MessageSetSize MessageSet]`
     fn generate_partition_data_array(
-        partition_data_vec: Vec<PartitionData>,
+        partition_data_vec: Vec<PartitionMsgData>,
         topic_data_value_set: &ValueSet,
     ) -> AppResult<Vec<DataType>> {
         let mut partition_data_ary = Vec::with_capacity(partition_data_vec.len());
@@ -351,7 +351,7 @@ mod tests {
     fn create_test_produce_request() -> ProduceRequest {
         let partition_data = vec![1, 2]
             .into_iter()
-            .map(|partition| PartitionData::new(partition, MemoryRecords::empty()))
+            .map(|partition| PartitionMsgData::new(partition, MemoryRecords::empty()))
             .collect::<Vec<_>>();
         let topic_data = vec!["test_topic1".to_string(), "test_topic2".to_string()]
             .into_iter()

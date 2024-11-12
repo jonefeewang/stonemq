@@ -346,6 +346,19 @@ impl TryFrom<DataType> for NPBytes {
         }
     }
 }
+impl TryFrom<DataType> for PBytes {
+    type Error = AppError;
+
+    fn try_from(value: DataType) -> Result<Self, Self::Error> {
+        match value {
+            DataType::PBytes(data) => Ok(data),
+            field => Err(NetworkReadError(Cow::Owned(format!(
+                "Expected PBytes but found {:?}",
+                field
+            )))),
+        }
+    }
+}
 
 /////////////////////////////////////////// Rust type to DataType ///////////////////////////////////////////
 

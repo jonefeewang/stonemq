@@ -6,19 +6,20 @@ use once_cell::sync::Lazy;
 use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
-use crate::AppResult;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::{ApiVersionRequest, ApiVersionResponse, RequestHeader};
+use crate::AppResult;
 
+pub mod consumer_groups;
+pub mod consumer_protocol;
 mod create_topic;
 pub mod metadata_reps;
 pub mod metadata_req;
 pub mod produce_reps;
 pub mod produce_req;
-pub mod consumer_protocol;
 
 // Constants for key names used in the request header
 static API_KEY: &str = "api_key";

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
 use crate::{
     message::TopicPartition,
@@ -68,20 +68,10 @@ pub struct JoinGroupRequest {
     pub group_protocols: Vec<ProtocolMetadata>,
 }
 
-impl JoinGroupRequest {
-    pub const GROUP_ID_KEY_NAME: &'static str = "group_id";
-    pub const SESSION_TIMEOUT_KEY_NAME: &'static str = "session_timeout";
-    pub const REBALANCE_TIMEOUT_KEY_NAME: &'static str = "rebalance_timeout";
-    pub const MEMBER_ID_KEY_NAME: &'static str = "member_id";
-    pub const PROTOCOL_TYPE_KEY_NAME: &'static str = "protocol_type";
-    pub const GROUP_PROTOCOLS_KEY_NAME: &'static str = "group_protocols";
-    pub const PROTOCOL_NAME_KEY_NAME: &'static str = "protocol_name";
-    pub const PROTOCOL_METADATA_KEY_NAME: &'static str = "protocol_metadata";
-
-    pub const UNKNOWN_MEMBER_ID: &'static str = "";
-}
+impl JoinGroupRequest {}
 
 pub struct JoinGroupResponse {
+    pub throttle_time: Option<i32>,
     // 可能的错误代码：
     // COORDINATOR_LOAD_IN_PROGRESS (14)
     // GROUP_COORDINATOR_NOT_AVAILABLE (15)
@@ -95,7 +85,7 @@ pub struct JoinGroupResponse {
     pub group_protocol: String,
     pub member_id: String,
     pub leader_id: String,
-    pub members: BTreeMap<String, Vec<u8>>,
+    pub members: BTreeMap<String, Bytes>,
 }
 
 impl JoinGroupResponse {
@@ -117,9 +107,10 @@ impl JoinGroupResponse {
         group_protocol: String,
         member_id: String,
         leader_id: String,
-        members: BTreeMap<String, Vec<u8>>,
+        members: BTreeMap<String, Bytes>,
     ) -> Self {
         JoinGroupResponse {
+            throttle_time: None,
             error_code: error,
             generation_id,
             group_protocol,
@@ -130,11 +121,12 @@ impl JoinGroupResponse {
     }
 }
 
+#[derive(Debug)]
 pub struct SyncGroupRequest {
     pub group_id: String,
     pub generation_id: i32,
     pub member_id: String,
-    pub group_assignment: HashMap<String, Bytes>,
+    pub group_assignment: HashMap<String, BytesMut>,
 }
 impl SyncGroupRequest {
     pub const GROUP_ID_KEY_NAME: &'static str = "group_id";
@@ -146,7 +138,7 @@ impl SyncGroupRequest {
         group_id: String,
         generation_id: i32,
         member_id: String,
-        group_assignment: HashMap<String, Bytes>,
+        group_assignment: HashMap<String, BytesMut>,
     ) -> Self {
         SyncGroupRequest {
             group_id,
@@ -176,6 +168,7 @@ impl SyncGroupResponse {
     }
 }
 
+#[derive(Debug)]
 pub struct HeartbeatRequest {
     pub group_id: String,
     pub member_id: String,
@@ -187,6 +180,7 @@ impl HeartbeatRequest {
     pub const MEMBER_ID_KEY_NAME: &'static str = "member_id";
 }
 
+#[derive(Debug)]
 pub struct HeartbeatResponse {
     /**
      * Possible error codes:
@@ -205,19 +199,52 @@ impl HeartbeatResponse {
     pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
 }
 
+#[derive(Debug)]
 pub struct FetchOffsetsRequest {
     pub group_id: String,
-    pub member_id: String,
     pub partitions: Option<Vec<TopicPartition>>,
 }
 
 pub struct FetchOffsetsResponse {
-    pub error_code: ErrorCode,
+    pub error_code: KafkaError,
     pub throttle_time_ms: i32,
-    pub offsets: HashMap<TopicPartition, PartitionData>,
+    pub offsets: HashMap<TopicPartition, PartitionOffsetData>,
 }
-pub struct PartitionData {
+pub struct PartitionOffsetData {
     pub offset: i64,
     pub metadata: String,
     pub error: KafkaError,
+}
+#[derive(Debug)]
+pub struct PartitionOffsetCommitData {
+    pub partition_id: i32,
+    pub offset: i64,
+    pub metadata: String,
+}
+
+#[derive(Debug)]
+pub struct LeaveGroupRequest {
+    pub group_id: String,
+    pub member_id: String,
+}
+
+#[derive(Debug)]
+pub struct LeaveGroupResponse {
+    pub error: KafkaError,
+    pub throttle_time_ms: i32,
+}
+
+#[derive(Debug)]
+pub struct OffsetCommitRequest {
+    pub group_id: String,
+    pub generation_id: i32,
+    pub member_id: String,
+    pub retention_time: i64,
+    pub offset_data: HashMap<TopicPartition, PartitionOffsetCommitData>,
+}
+
+#[derive(Debug)]
+pub struct OffsetCommitResponse {
+    pub throttle_time_ms: i32,
+    pub responses: HashMap<TopicPartition, Vec<(i32, KafkaError)>>,
 }

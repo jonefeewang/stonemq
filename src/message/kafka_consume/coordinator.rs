@@ -18,7 +18,7 @@ use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{
-            FindCoordinatorResponse, JoinGroupRequest, PartitionData, SyncGroupResponse,
+            FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData, SyncGroupResponse,
         },
         errors::{ErrorCode, KafkaError, KafkaResult},
     },
@@ -880,7 +880,7 @@ impl GroupCoordinator {
         self: Arc<Self>,
         group_id: &str,
         partitions: Option<Vec<TopicPartition>>,
-    ) -> KafkaResult<HashMap<TopicPartition, PartitionData>> {
+    ) -> KafkaResult<HashMap<TopicPartition, PartitionOffsetData>> {
         if !self.active.load() {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }

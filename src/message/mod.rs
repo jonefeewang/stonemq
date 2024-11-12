@@ -1,7 +1,7 @@
 pub use delayed_fetch::DelayedFetch;
 pub use records::{MemoryRecordBuilder, MemoryRecords};
 pub use replica::{JournalReplica, QueueReplica, ReplicaManager};
-pub use topic_partition::{LogAppendInfo, PartitionData, TopicData, TopicPartition};
+pub use topic_partition::{LogAppendInfo, PartitionMsgData, TopicData, TopicPartition};
 
 use crate::log::PositionInfo;
 mod batch_records;
