@@ -13,7 +13,6 @@ use getset::{CopyGetters, Getters};
 use once_cell::sync::OnceCell;
 
 use opentelemetry::{global, trace::TracerProvider, Key, KeyValue};
-use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::SpanLimits;
 use opentelemetry_sdk::{
     metrics::{
@@ -44,6 +43,8 @@ use tokio::sync::broadcast::error::SendError as BroadcastSendError;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
+
+use dotenv::dotenv;
 
 pub type AppResult<T> = Result<T, AppError>;
 pub fn global_config() -> &'static BrokerConfig {
@@ -166,6 +167,8 @@ impl Drop for OtelGuard {
 }
 
 pub fn setup_local_tracing() -> AppResult<()> {
+    // 加载 .env 文件
+    dotenv().ok();
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_timer(timer)

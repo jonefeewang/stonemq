@@ -1,6 +1,5 @@
 use clap::Parser;
 use dotenv::dotenv;
-use opentelemetry::global;
 use std::path::PathBuf;
 use stonemq::service::setup_tracing;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
