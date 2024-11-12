@@ -390,8 +390,10 @@ impl GroupCoordinator {
             // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
             drop(locked_group);
 
+            let initial_delayed_join_clone = Arc::new(initial_delayed_join);
+
             self.initial_delayed_join_purgatory
-                .try_complete_else_watch(initial_delayed_join, vec![group_id])
+                .try_complete_else_watch(initial_delayed_join_clone, vec![group_id])
                 .await;
         } else {
             // 延迟加入
@@ -404,8 +406,9 @@ impl GroupCoordinator {
 
             // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
             drop(locked_group);
+            let delayed_join_clone = Arc::new(delayed_join);
             self.delayed_join_purgatory
-                .try_complete_else_watch(delayed_join, vec![group_id])
+                .try_complete_else_watch(delayed_join_clone, vec![group_id])
                 .await;
         }
     }
@@ -491,9 +494,9 @@ impl GroupCoordinator {
             member_id.to_string(),
             session_timeout as u64,
         );
-
+        let delay_heartbeat_clone = Arc::new(delay_heartbeat);
         self.delayed_heartbeat_purgatory
-            .try_complete_else_watch(delay_heartbeat, vec![delay_key])
+            .try_complete_else_watch(delay_heartbeat_clone, vec![delay_key])
             .await;
     }
     pub async fn try_complete_heartbeat(

@@ -37,9 +37,9 @@ impl ReplicaManager {
                 .map(|topic_partition| topic_partition.to_string())
                 .collect();
             let delayed_fetch = DelayedFetch::new(request, self.clone(), position_infos, tx);
-
+            let delayed_fetch_clone = Arc::new(delayed_fetch);
             self.delayed_fetch_purgatory
-                .try_complete_else_watch(delayed_fetch, delay_fetch_keys)
+                .try_complete_else_watch(delayed_fetch_clone, delay_fetch_keys)
                 .await;
             let result = rx.await.unwrap();
 

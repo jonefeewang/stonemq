@@ -106,9 +106,9 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
                     delay,
                     remaining,
                 );
-
+                let new_delayed_join_clone = Arc::new(new_delayed_join);
                 self.purgatory
-                    .try_complete_else_watch(new_delayed_join, vec![group_id])
+                    .try_complete_else_watch(new_delayed_join_clone, vec![group_id])
                     .await;
             } else {
                 self.group_cordinator
