@@ -5,10 +5,11 @@ use once_cell::sync::Lazy;
 use super::{consumer_protocol::TOPICS_KEY_NAME, ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME};
 use crate::protocol::{
     array::ArrayType,
-    primary_types::{NPBytes, NPString, PBytes, PString, I16, I32, I64},
+    primary_types::{NPBytes, NPString, PBytes, PString, I16, I32, I64, I8},
     schema::Schema,
     types::DataType,
 };
+pub mod find_coordinator;
 pub mod heartbeat;
 pub mod join_group;
 pub mod leave_group;
@@ -32,7 +33,7 @@ pub const PROTOCOL_METADATA_KEY_NAME: &str = "protocol_metadata";
 pub const GENERATION_ID_KEY_NAME: &str = "generation_id";
 pub const GROUP_PROTOCOL_KEY_NAME: &str = "group_protocol";
 pub const LEADER_ID_KEY_NAME: &str = "leader_id";
-pub const MEMBER_KEY_NAME: &str = "members";
+pub const MEMBERS_KEY_NAME: &str = "members";
 pub const MEMBER_METADATA_KEY_NAME: &str = "member_metadata";
 pub const MEMBER_ASSIGNMENT_KEY_NAME: &str = "member_assignment";
 pub const GROUP_ASSIGNMENT_KEY_NAME: &str = "group_assignment";
@@ -44,6 +45,16 @@ pub const GROUP_GENERATION_ID_KEY_NAME: &str = "group_generation_id";
 pub const RESPONSES_KEY_NAME: &str = "responses";
 pub const RETENTION_TIME_KEY_NAME: &str = "retention_time";
 pub const UNKNOWN_MEMBER_ID: &str = "";
+
+pub const COORDINATOR_KEY_KEY_NAME: &str = "coordinator_key";
+pub const COORDINATOR_TYPE_KEY_NAME: &str = "coordinator_type";
+
+pub const NODE_ID_KEY_NAME: &str = "node_id";
+pub const NODE_HOST_KEY_NAME: &str = "host";
+pub const NODE_PORT_KEY_NAME: &str = "port";
+
+pub const ERROR_MESSAGE_KEY_NAME: &str = "error_message";
+pub const COORDINATOR_KEY_NAME: &str = "coordinator";
 
 pub static LEAVE_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let fields_desc: Vec<(i32, &str, DataType)> = vec![
@@ -249,6 +260,45 @@ pub static OFFSET_COMMIT_RESPONSE_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
                 )),
                 values: None,
             }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FIND_COORDINATOR_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+        (
+            0,
+            COORDINATOR_KEY_KEY_NAME,
+            DataType::PString(PString::default()),
+        ),
+        (1, COORDINATOR_TYPE_KEY_NAME, DataType::I8(I8::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FIND_COORDINATOR_BROKER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+        (0, NODE_ID_KEY_NAME, DataType::I32(I32::default())),
+        (1, NODE_HOST_KEY_NAME, DataType::PString(PString::default())),
+        (2, NODE_PORT_KEY_NAME, DataType::I32(I32::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FIND_COORDINATOR_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+        (0, THROTTLE_TIME_KEY_NAME, DataType::I32(I32::default())),
+        (1, ERROR_CODE_KEY_NAME, DataType::I16(I16::default())),
+        (
+            2,
+            ERROR_MESSAGE_KEY_NAME,
+            DataType::NPString(NPString::default()),
+        ),
+        (
+            3,
+            COORDINATOR_KEY_NAME,
+            DataType::Schema(FIND_COORDINATOR_BROKER_V0_SCHEMA.clone()),
         ),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))

@@ -1,14 +1,15 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use consumer_group::{
-    FetchOffsetsRequest, HeartbeatRequest, JoinGroupRequest, LeaveGroupRequest,
-    OffsetCommitRequest, SyncGroupRequest,
+    FetchOffsetsRequest, FindCoordinatorRequest, FindCoordinatorResponse, HeartbeatRequest,
+    JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest, OffsetCommitRequest, SyncGroupRequest,
 };
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, trace};
 
+use crate::message::GroupCoordinator;
 use crate::network::Connection;
 use crate::protocol::api_schemas::SUPPORTED_API_VERSIONS;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
@@ -32,6 +33,7 @@ pub enum ApiRequest {
     Produce(ProduceRequest),
     Metadata(MetaDataRequest),
     ApiVersion(ApiVersionRequest),
+    FindCoordinator(FindCoordinatorRequest),
     JoinGroup(JoinGroupRequest),
     SyncGroup(SyncGroupRequest),
     LeaveGroup(LeaveGroupRequest),
@@ -67,13 +69,9 @@ impl RequestHeader {
         match &self.client_id {
             Some(client_id) => {
                 let client_id_size = client_id.len();
-                let size = 2 + 2 + 4 + 4 + client_id_size;
-                size
+                2 + 2 + 4 + 4 + client_id_size
             }
-            None => {
-                let size = 2 + 2 + 4 + 4;
-                size
-            }
+            None => 2 + 2 + 4 + 4,
         }
     }
 }
@@ -83,17 +81,20 @@ pub struct RequestContext<'c> {
     pub conn: &'c mut Connection,
     pub request_header: RequestHeader,
     pub replica_manager: Arc<ReplicaManager>,
+    pub group_coordinator: Arc<GroupCoordinator>,
 }
 impl<'c> RequestContext<'c> {
     pub fn new(
         conn: &'c mut Connection,
         request_header: RequestHeader,
         replica_manager: Arc<ReplicaManager>,
+        group_coordinator: Arc<GroupCoordinator>,
     ) -> Self {
         RequestContext {
             conn,
             request_header,
             replica_manager,
+            group_coordinator,
         }
     }
 }
@@ -157,6 +158,9 @@ impl RequestProcessor {
             }
             ApiRequest::ApiVersion(request) => {
                 Self::handle_api_version_request(request_context, request).await
+            }
+            ApiRequest::FindCoordinator(request) => {
+                Self::handle_find_coordinator_request(request_context, request).await
             }
             ApiRequest::JoinGroup(request) => {
                 Self::handle_join_group_request(request_context, request).await
@@ -240,11 +244,61 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    pub async fn handle_find_coordinator_request(
+        request_context: &mut RequestContext<'_>,
+        request: FindCoordinatorRequest,
+    ) -> AppResult<()> {
+        let response = request_context
+            .group_coordinator
+            .find_coordinator(request)
+            .await?;
+
+        trace!("find coordinator response: {:?}", &response);
+        response
+            .write_to(
+                &mut request_context.conn.writer,
+                &request_context.request_header.api_version,
+                request_context.request_header.correlation_id,
+            )
+            .await?;
+        trace!("find coordinator response write to client");
+        Ok(())
+    }
     pub async fn handle_join_group_request(
         request_context: &mut RequestContext<'_>,
         request: JoinGroupRequest,
     ) -> AppResult<()> {
-        todo!()
+        let join_result = request_context
+            .group_coordinator
+            .clone()
+            .handle_join_group(request)
+            .await
+            .unwrap();
+        let error_code = match join_result.error {
+            Some(error) => error as i16,
+            None => 0,
+        };
+        let members = match join_result.members {
+            Some(members) => members,
+            None => BTreeMap::new(),
+        };
+        let join_group_response = JoinGroupResponse::new(
+            error_code,
+            join_result.generation_id,
+            join_result.sub_protocol,
+            join_result.member_id,
+            join_result.leader_id,
+            members,
+        );
+        trace!("join group result: {:?}", join_group_response);
+        join_group_response
+            .write_to(
+                &mut request_context.conn.writer,
+                &request_context.request_header.api_version,
+                request_context.request_header.correlation_id,
+            )
+            .await?;
+        Ok(())
     }
     pub async fn handle_sync_group_request(
         request_context: &mut RequestContext<'_>,

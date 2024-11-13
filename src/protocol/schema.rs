@@ -5,6 +5,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 use tracing::trace;
 
+use crate::message::MemoryRecords;
 use crate::protocol::array::ArrayType;
 use crate::protocol::field::Field;
 use crate::protocol::primary_types::{
@@ -13,7 +14,6 @@ use crate::protocol::primary_types::{
 };
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
-use crate::message::MemoryRecords;
 use crate::AppError::{NetworkReadError, ProtocolError};
 use crate::AppResult;
 
@@ -81,12 +81,12 @@ impl Schema {
                         value_set
                     ))));
                 }
-                //should never happen
+
+                // 只允许schema嵌套schema/array
                 DataType::Schema(schema) => {
-                    return Err(NetworkReadError(Cow::Owned(format!(
-                        "unexpected type schema:{:?}",
-                        schema
-                    ))));
+                    let schema_clone = schema.clone();
+                    let sub_value_set = schema_clone.read_from(buffer)?;
+                    Ok(DataType::ValueSet(sub_value_set))
                 }
             };
             value_set.append_field_value(field.name, result?)?;

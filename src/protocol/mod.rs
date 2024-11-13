@@ -12,8 +12,10 @@ use api_schemas::consumer_groups::sync_group::{
     SYNC_GROUP_REQUEST_V1_SCHEMA, SYNC_GROUP_RESPONSE_V1_SCHEMA,
 };
 use api_schemas::consumer_groups::{
-    LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
-    OFFSET_COMMIT_RESPONSE_V3_SCHEMA, OFFSET_FETCH_RESPONSE_V3_SCHEMA,
+    FIND_COORDINATOR_BROKER_V0_SCHEMA, FIND_COORDINATOR_REQUEST_V1_SCHEMA,
+    FIND_COORDINATOR_RESPONSE_V1_SCHEMA, LEAVE_GROUP_RESPONSE_V1_SCHEMA,
+    OFFSET_COMMIT_REQUEST_V3_SCHEMA, OFFSET_COMMIT_RESPONSE_V3_SCHEMA,
+    OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
 use bytes::BytesMut;
 use tokio::io::AsyncWriteExt;
@@ -77,13 +79,21 @@ pub trait ProtocolCodec<T> {
                     Arc::clone(&METADATA_REQUEST_V1)
                 }
                 ApiVersion::V4 => Arc::clone(&METADATA_REQUEST_V4),
-                _ => {
-                    todo!()
-                }
             },
             ApiKey::ApiVersion => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&API_VERSIONS_REQUEST_V0),
                 _ => {
+                    todo!()
+                }
+            },
+            ApiKey::FindCoordinator => match api_version {
+                ApiVersion::V0 => {
+                    // too old, not support
+                    todo!()
+                }
+                ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA),
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                    // not exist
                     todo!()
                 }
             },
@@ -95,9 +105,6 @@ pub trait ProtocolCodec<T> {
                 }
                 ApiVersion::V3 | ApiVersion::V4 => {
                     // not exist
-                    todo!()
-                }
-                _ => {
                     todo!()
                 }
             },
@@ -236,7 +243,17 @@ pub trait ProtocolCodec<T> {
                     todo!()
                 }
             },
-            _ => todo!(),
+            ApiKey::FindCoordinator => match api_version {
+                ApiVersion::V0 => {
+                    // too old, not support
+                    todo!()
+                }
+                ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                    // not exist
+                    todo!()
+                }
+            },
         }
     }
 }
@@ -263,6 +280,7 @@ pub enum ApiKey {
     Heartbeat,
     OffsetCommit,
     OffsetFetch,
+    FindCoordinator,
 }
 impl TryFrom<i16> for ApiKey {
     type Error = AppError;
@@ -271,13 +289,14 @@ impl TryFrom<i16> for ApiKey {
         match value {
             0 => Ok(ApiKey::Produce),
             3 => Ok(ApiKey::Metadata),
-            18 => Ok(ApiKey::ApiVersion),
+            8 => Ok(ApiKey::OffsetCommit),
+            9 => Ok(ApiKey::OffsetFetch),
+            10 => Ok(ApiKey::FindCoordinator),
             11 => Ok(ApiKey::JoinGroup),
-            12 => Ok(ApiKey::SyncGroup),
+            12 => Ok(ApiKey::Heartbeat),
             13 => Ok(ApiKey::LeaveGroup),
-            14 => Ok(ApiKey::Heartbeat),
-            15 => Ok(ApiKey::OffsetCommit),
-            16 => Ok(ApiKey::OffsetFetch),
+            14 => Ok(ApiKey::SyncGroup),
+            18 => Ok(ApiKey::ApiVersion),
             invalid => Err(InvalidValue("api key", invalid.to_string())),
         }
     }
@@ -287,13 +306,14 @@ impl From<ApiKey> for i16 {
         match value {
             ApiKey::Produce => 0,
             ApiKey::Metadata => 3,
-            ApiKey::ApiVersion => 18,
+            ApiKey::OffsetCommit => 8,
+            ApiKey::OffsetFetch => 9,
+            ApiKey::FindCoordinator => 10,
             ApiKey::JoinGroup => 11,
-            ApiKey::SyncGroup => 12,
+            ApiKey::Heartbeat => 12,
             ApiKey::LeaveGroup => 13,
-            ApiKey::Heartbeat => 14,
-            ApiKey::OffsetCommit => 15,
-            ApiKey::OffsetFetch => 16,
+            ApiKey::SyncGroup => 14,
+            ApiKey::ApiVersion => 18,
         }
     }
 }

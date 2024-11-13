@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 
 use bytes::Bytes;
 use crossbeam::atomic::AtomicCell;
@@ -18,7 +22,7 @@ use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{
-            FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData, SyncGroupResponse,
+            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData, SyncGroupResponse
         },
         errors::{ErrorCode, KafkaError, KafkaResult},
     },
@@ -32,6 +36,7 @@ use super::{
     group::GroupMetadataManager,
 };
 
+#[derive(Debug)]
 pub struct GroupCoordinator {
     active: AtomicCell<bool>,
     node: Node,
@@ -43,7 +48,7 @@ pub struct GroupCoordinator {
 }
 
 impl GroupCoordinator {
-    pub async fn new(
+    async fn new(
         node: Node,
         group_manager: GroupMetadataManager,
         group_config: GroupConfig,
@@ -102,7 +107,10 @@ impl GroupCoordinator {
         coordinator
     }
 
-    pub fn find_coordinator(&self, _: &str) -> AppResult<FindCoordinatorResponse> {
+    pub async fn find_coordinator(
+        &self,
+        request: FindCoordinatorRequest,
+    ) -> AppResult<FindCoordinatorResponse> {
         // 因为stonemq目前支持单机，所以coordinator就是自身
         let response: FindCoordinatorResponse = self.node.clone().into();
         Ok(response)
@@ -905,7 +913,7 @@ impl GroupCoordinator {
 
 #[derive(Debug)]
 pub struct JoinGroupResult {
-    pub members: Option<HashMap<String, Bytes>>,
+    pub members: Option<BTreeMap<String, Bytes>>,
     pub member_id: String,
     pub generation_id: i32,
     pub sub_protocol: String,

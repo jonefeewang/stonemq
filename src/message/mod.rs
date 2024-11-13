@@ -11,6 +11,7 @@ pub mod offset;
 mod records;
 mod replica;
 mod topic_partition;
+pub use kafka_consume::GroupCoordinator;
 
 #[derive(Debug)]
 pub struct LogFetchInfo {

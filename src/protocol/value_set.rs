@@ -6,12 +6,12 @@ use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
 use tokio::io::AsyncWriteExt;
 
-use crate::AppError::{IllegalStateError, NetworkWriteError, ProtocolError};
-use crate::AppResult;
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::PrimaryType;
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
+use crate::AppError::{IllegalStateError, NetworkWriteError, ProtocolError};
+use crate::AppResult;
 
 ///
 /// ValueSet是一个schema相对应的值，同样也是一个有序的序列，这里使用BTreeMap来存储
@@ -72,6 +72,16 @@ impl ValueSet {
         } else {
             Err(ProtocolError(Cow::Borrowed(
                 "Array type must be schema type",
+            )))
+        }
+    }
+    pub fn sub_valueset_of_schema_field(&self, field_name: &'static str) -> AppResult<ValueSet> {
+        let schema_field = &self.schema.get_field(field_name)?.p_type;
+        if let DataType::Schema(ref schema) = schema_field {
+            Ok(ValueSet::new(schema.clone()))
+        } else {
+            Err(ProtocolError(Cow::Borrowed(
+                "field type must be schema type",
             )))
         }
     }
@@ -142,13 +152,8 @@ impl ValueSet {
                             schema
                         ))));
                     }
-                    //should never happen
-                    DataType::ValueSet(structure) => {
-                        return Err(NetworkWriteError(Cow::Owned(format!(
-                            "unexpected type schema:{:?}",
-                            structure
-                        ))));
-                    }
+                    // 只允许value set嵌套 valueset 或 array
+                    DataType::ValueSet(sub_value_set) => sub_value_set.write_to(writer).await?,
                 }
             }
             Ok(())
@@ -206,7 +211,7 @@ mod test {
             outer_field2: Vec<Inner>,
         }
         use super::*;
-        use crate::protocol::primary_types::{I32, PString};
+        use crate::protocol::primary_types::{PString, I32};
         const INNER_FIELD1: &str = "inner_field1";
         const INNER_FIELD2: &str = "inner_field2";
         const OUTER_FIELD1: &str = "outer_field1";
@@ -286,5 +291,56 @@ mod test {
         let read_outer_structure = outer_schema.read_from(&mut buffer).unwrap();
         //check
         assert_eq!(read_outer_structure, outer_value_set_clone);
+    }
+
+    #[tokio::test]
+    async fn test_nested_value_set() {
+        use super::*;
+        use crate::protocol::primary_types::{PString, I32};
+
+        // 创建内部schema
+        let inner_schema = Arc::new(Schema::from_fields_desc_vec(vec![
+            (0, "inner_field1", DataType::I32(I32::default())),
+            (1, "inner_field2", DataType::PString(PString::default())),
+        ]));
+
+        // 创建外部schema,包含一个内部schema字段
+        let outer_schema = Arc::new(Schema::from_fields_desc_vec(vec![
+            (0, "outer_field1", DataType::I32(I32::default())),
+            (1, "outer_field2", DataType::Schema(inner_schema.clone())),
+        ]));
+
+        // 创建外部value set
+        let mut outer_value_set = ValueSet::new(outer_schema.clone());
+        outer_value_set
+            .append_field_value("outer_field1", DataType::I32(I32 { value: 1 }))
+            .unwrap();
+
+        // 创建内部value set
+        let mut inner_value_set = outer_value_set.sub_valueset_of_schema_field("outer_field2").unwrap();
+        inner_value_set
+            .append_field_value("inner_field1", DataType::I32(I32 { value: 2 }))
+            .unwrap();
+        inner_value_set
+            .append_field_value("inner_field2", DataType::PString(PString { value: "test".to_string() }))
+            .unwrap();
+
+        // 将内部value set添加到外部value set
+        outer_value_set
+            .append_field_value("outer_field2", DataType::ValueSet(inner_value_set))
+            .unwrap();
+
+        let outer_value_set_clone = outer_value_set.clone();
+
+        // 写入buffer
+        let mut writer = Vec::new();
+        outer_value_set.write_to(&mut writer).await.unwrap();
+
+        // 从buffer读取
+        let mut buffer = BytesMut::from(&writer[..]);
+        let read_outer_value_set = outer_schema.read_from(&mut buffer).unwrap();
+
+        // 验证
+        assert_eq!(read_outer_value_set, outer_value_set_clone);
     }
 }

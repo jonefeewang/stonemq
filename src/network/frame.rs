@@ -5,8 +5,8 @@ use bytes::{Buf, BytesMut};
 
 use crate::protocol::{ApiKey, ProtocolCodec};
 use crate::request::consumer_group::{
-    FetchOffsetsRequest, HeartbeatRequest, JoinGroupRequest, LeaveGroupRequest,
-    OffsetCommitRequest, SyncGroupRequest,
+    FetchOffsetsRequest, FindCoordinatorRequest, HeartbeatRequest, JoinGroupRequest,
+    LeaveGroupRequest, OffsetCommitRequest, SyncGroupRequest,
 };
 use crate::request::metadata::MetaDataRequest;
 use crate::request::produce::ProduceRequest;
@@ -64,7 +64,11 @@ impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
                     FetchOffsetsRequest::read_from(&mut data.0, &data.1.api_version)?;
                 Ok(ApiRequest::FetchOffsets(fetch_offsets_request))
             }
-            _ => todo!(),
+            ApiKey::FindCoordinator => {
+                let find_coordinator_request =
+                    FindCoordinatorRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::FindCoordinator(find_coordinator_request))
+            }
         }
     }
 }

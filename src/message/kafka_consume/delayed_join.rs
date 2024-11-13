@@ -7,6 +7,7 @@ use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
 
 use super::{coordinator::GroupCoordinator, group::GroupMetadata};
 
+#[derive(Debug)]
 pub struct DelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
     group: Arc<RwLock<GroupMetadata>>,
@@ -49,6 +50,7 @@ impl DelayedAsyncOperation for DelayedJoin {
     }
 }
 // 初始化延迟加入，第一个组的加入者
+#[derive(Debug)]
 pub struct InitialDelayedJoin {
     group_cordinator: Arc<GroupCoordinator>,
     group: Arc<RwLock<GroupMetadata>>,
@@ -123,6 +125,7 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
     }
 }
 
+#[derive(Debug)]
 pub struct DelayedHeartbeat {
     group_cordinator: Arc<GroupCoordinator>,
     group: Arc<RwLock<GroupMetadata>>,

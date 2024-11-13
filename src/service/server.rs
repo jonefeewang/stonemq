@@ -1,22 +1,15 @@
-use std::borrow::Cow;
 use std::sync::Arc;
 
-use getset::Getters;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
 use tokio::time::{self, Duration};
-use tokio::{runtime, signal};
 use tracing::{error, info, instrument, trace};
 
+use crate::message::GroupCoordinator;
 use crate::network::Connection;
 use crate::request::{ApiRequest, RequestContext, RequestProcessor};
-use crate::service::BrokerConfig;
-use crate::AppError::IllegalStateError;
 use crate::DynamicConfig;
-use crate::LogManager;
 use crate::{AppResult, ReplicaManager, Shutdown};
-
-use super::config::OtelGuard;
 
 struct ConnectionHandler {
     connection: Connection,
@@ -25,6 +18,7 @@ struct ConnectionHandler {
     socket_read_ch_tx: mpsc::Sender<()>,
     socket_read_ch_rx: mpsc::Receiver<()>,
     replica_manager: Arc<ReplicaManager>,
+    group_coordinator: Arc<GroupCoordinator>,
 }
 pub struct Server {
     listener: TcpListener,
@@ -33,6 +27,7 @@ pub struct Server {
     shutdown_complete_tx: mpsc::Sender<()>,
     replica_manager: Arc<ReplicaManager>,
     dynamic_config: Arc<RwLock<DynamicConfig>>,
+    group_coordinator: Arc<GroupCoordinator>,
 }
 
 impl Server {
@@ -43,6 +38,7 @@ impl Server {
         shutdown_complete_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
         dynamic_config: Arc<RwLock<DynamicConfig>>,
+        group_coordinator: Arc<GroupCoordinator>,
     ) -> Self {
         Server {
             listener,
@@ -51,6 +47,7 @@ impl Server {
             shutdown_complete_tx,
             replica_manager,
             dynamic_config,
+            group_coordinator,
         }
     }
     #[tracing::instrument(name = "tcp_server_run", skip(self), level = "trace")]
@@ -81,6 +78,7 @@ impl Server {
                 socket_read_ch_tx,
                 socket_read_ch_rx,
                 replica_manager: self.replica_manager.clone(),
+                group_coordinator: self.group_coordinator.clone(),
             };
             tokio::spawn(async move {
                 if let Err(err) = handler.run().await {
@@ -135,6 +133,7 @@ impl ConnectionHandler {
                 &mut self.connection,
                 frame.request_header,
                 self.replica_manager.clone(),
+                self.group_coordinator.clone(),
             );
             trace!("Received request: {:?}", &request_context.request_header);
             match ApiRequest::try_from((frame.body, &request_context.request_header)) {

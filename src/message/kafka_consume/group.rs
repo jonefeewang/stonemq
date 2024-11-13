@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::Read,
     sync::Arc,
 };
@@ -454,7 +454,7 @@ impl GroupMetadata {
     }
 
     /// 获取当前成员的匹配组协议的元数据
-    pub fn current_member_metadata(&self) -> HashMap<String, Bytes> {
+    pub fn current_member_metadata(&self) -> BTreeMap<String, Bytes> {
         self.members
             .iter()
             .filter_map(|(id, member)| {
@@ -671,6 +671,7 @@ impl GroupMetadata {
     }
 }
 
+#[derive(Debug)]
 pub struct GroupMetadataManager {
     groups: DashMap<String, Arc<RwLock<GroupMetadata>>>,
 }

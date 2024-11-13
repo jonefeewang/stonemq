@@ -10,10 +10,10 @@ use crate::{
 
 use super::errors::{ErrorCode, KafkaError};
 
+#[derive(Debug)]
 pub struct FindCoordinatorRequest {
-    pub group_id: String,
     pub coordinator_key: String,
-    pub coordinator_type: String,
+    pub coordinator_type: i8,
 }
 
 impl FindCoordinatorRequest {
@@ -21,11 +21,11 @@ impl FindCoordinatorRequest {
     pub const COORDINATOR_KEY_KEY_NAME: &'static str = "coordinator_key";
     pub const COORDINATOR_TYPE_KEY_NAME: &'static str = "coordinator_type";
 }
-
+#[derive(Debug)]
 pub struct FindCoordinatorResponse {
     pub throttle_time_ms: i32,
-    pub error_message: String,
-    pub error: i32,
+    pub error_message: Option<String>,
+    pub error: i16,
     pub node: Node,
 }
 impl FindCoordinatorResponse {
@@ -49,7 +49,7 @@ impl From<Node> for FindCoordinatorResponse {
     fn from(node: Node) -> Self {
         FindCoordinatorResponse {
             throttle_time_ms: 0,
-            error_message: "".to_string(),
+            error_message: None,
             error: 0,
             node,
         }
@@ -70,6 +70,7 @@ pub struct JoinGroupRequest {
 
 impl JoinGroupRequest {}
 
+#[derive(Debug)]
 pub struct JoinGroupResponse {
     pub throttle_time: Option<i32>,
     // 可能的错误代码：

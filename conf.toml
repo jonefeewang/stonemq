@@ -4,6 +4,8 @@
 id = 123
 # max message size 1M
 max_msg_size = 1_048_576
+# local kv db path
+local_db_path = "test_data/kv_db"
 
 [network]
 ###### network config
@@ -20,9 +22,10 @@ recovery_checkpoint_interval = 30
 file_records_comm_channel_size = 100
 ## default 8192(8kb)
 splitter_read_buffer_size = 8192
-# default 100ms
-splitter_wait_interval = 1000
+splitter_wait_interval = 100_1000
 
+
+# default 100ms
 ###### journal config
 # default segment size 10M
 journal_segment_size = 10_240
@@ -43,3 +46,10 @@ queue_index_interval_bytes = 256
 
 ###### kv config
 kv_store_path = "test_data/kv_store/kv.db"
+
+
+[group]
+###### group config
+group_min_session_timeout = 6_000
+group_max_session_timeout = 300_000
+group_initial_rebalance_delay = 3000

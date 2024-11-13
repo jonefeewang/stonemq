@@ -1,6 +1,6 @@
 use crate::protocol::api_schemas::consumer_groups::{
     GENERATION_ID_KEY_NAME, GROUP_ID_KEY_NAME, GROUP_PROTOCOLS_KEY_NAME, GROUP_PROTOCOL_KEY_NAME,
-    LEADER_ID_KEY_NAME, MEMBER_ID_KEY_NAME, MEMBER_KEY_NAME, MEMBER_METADATA_KEY_NAME,
+    LEADER_ID_KEY_NAME, MEMBERS_KEY_NAME, MEMBER_ID_KEY_NAME, MEMBER_METADATA_KEY_NAME,
     PROTOCOL_METADATA_KEY_NAME, PROTOCOL_NAME_KEY_NAME, PROTOCOL_TYPE_KEY_NAME,
     REBALANCE_TIMEOUT_KEY_NAME, SESSION_TIMEOUT_KEY_NAME,
 };
@@ -40,7 +40,7 @@ pub static JOIN_GROUP_REQUEST_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
         (0, GROUP_ID_KEY_NAME, DataType::PString(PString::default())),
         (1, SESSION_TIMEOUT_KEY_NAME, DataType::I32(I32::default())),
         (2, REBALANCE_TIMEOUT_KEY_NAME, DataType::I32(I32::default())),
-        (3, MEMBER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (3, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
         (
             4,
             PROTOCOL_TYPE_KEY_NAME,
@@ -81,11 +81,11 @@ pub static JOIN_GROUP_RESPONSE_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
             GROUP_PROTOCOL_KEY_NAME,
             DataType::PString(PString::default()),
         ),
-        (4, LEADER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
-        (5, MEMBER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (4, LEADER_ID_KEY_NAME, DataType::PString(PString::default())),
+        (5, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
         (
             6,
-            MEMBER_KEY_NAME,
+            MEMBERS_KEY_NAME,
             DataType::Array(ArrayType {
                 can_be_empty: false,
                 p_type: Arc::new(DataType::Schema(
@@ -191,7 +191,7 @@ impl ProtocolCodec<JoinGroupResponse> for JoinGroupResponse {
         writer.write_i32(response_total_size as i32).await?;
         writer.write_i32(correlation_id).await?;
         value_set.write_to(writer).await?;
-        Ok(())  
+        Ok(())
     }
 
     fn read_from(
@@ -218,7 +218,7 @@ impl JoinGroupResponse {
         let mut member_ary = Vec::with_capacity(self.members.len());
         for (member_id, member_metadata) in self.members {
             let mut member_valueset =
-                response_valueset.sub_valueset_of_ary_field(MEMBER_KEY_NAME)?;
+                response_valueset.sub_valueset_of_ary_field(MEMBERS_KEY_NAME)?;
             member_valueset.append_field_value(MEMBER_ID_KEY_NAME, member_id.into())?;
             member_valueset.append_field_value(
                 MEMBER_METADATA_KEY_NAME,
@@ -230,9 +230,9 @@ impl JoinGroupResponse {
         let member_schema = response_valueset
             .schema
             .clone()
-            .sub_schema_of_ary_field(MEMBER_KEY_NAME)?;
+            .sub_schema_of_ary_field(MEMBERS_KEY_NAME)?;
         response_valueset.append_field_value(
-            MEMBER_KEY_NAME,
+            MEMBERS_KEY_NAME,
             DataType::array_of_value_set(member_ary, member_schema),
         )?;
         Ok(())

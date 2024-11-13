@@ -1,7 +1,9 @@
+use crate::message::GroupCoordinator;
 use crate::service::{setup_tracing, Server};
 use crate::AppError::IllegalStateError;
 use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
+use crossbeam::atomic::AtomicCell;
 use opentelemetry::global;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -118,6 +120,18 @@ impl Broker {
             let lock = dynamic_config.read().await;
             lock.max_connection()
         };
+
+        let group_config = global_config().group.clone();
+        let node = Node::new_localhost();
+        let group_coordinator = GroupCoordinator::startup(
+            group_config,
+            notify_shutdown.clone(),
+            shutdown_complete_tx.clone(),
+            node,
+        )
+        .await;
+        let group_coordinator = Arc::new(group_coordinator);
+
         let mut server = Server::new(
             bind_result?,
             Arc::new(Semaphore::new(max_connection)),
@@ -125,6 +139,7 @@ impl Broker {
             shutdown_complete_tx,
             replica_manager.clone(),
             dynamic_config.clone(),
+            group_coordinator.clone(),
         );
         tokio::select! {
           res = server.run() => {
