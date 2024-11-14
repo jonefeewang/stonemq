@@ -28,7 +28,7 @@ pub static HEARTBEAT_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
             GROUP_GENERATION_ID_KEY_NAME,
             DataType::I32(I32::default()),
         ),
-        (2, MEMBER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (2, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
@@ -100,6 +100,7 @@ impl ProtocolCodec<HeartbeatResponse> for HeartbeatResponse {
         writer.write_i32(response_total_size as i32).await?;
         writer.write_i32(correlation_id).await?;
         value_set.write_to(writer).await?;
+        writer.flush().await?;
         Ok(())
     }
 
@@ -115,8 +116,7 @@ impl HeartbeatResponse {
     fn encode_to_value_set(self, response_valueset: &mut ValueSet) -> AppResult<()> {
         response_valueset
             .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into())?;
-        let error_code = ErrorCode::from(&self.error);
-        response_valueset.append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into())?;
+        response_valueset.append_field_value(ERROR_CODE_KEY_NAME, self.error_code.into())?;
         Ok(())
     }
 }

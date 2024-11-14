@@ -2,12 +2,15 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use bytes::Bytes;
 use consumer_group::{
     FetchOffsetsRequest, FindCoordinatorRequest, FindCoordinatorResponse, HeartbeatRequest,
-    JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest, OffsetCommitRequest, SyncGroupRequest,
+    HeartbeatResponse, JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest, OffsetCommitRequest,
+    SyncGroupRequest, SyncGroupResponse,
 };
+use errors::{ErrorCode, KafkaError};
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::message::GroupCoordinator;
 use crate::network::Connection;
@@ -278,10 +281,7 @@ impl RequestProcessor {
             Some(error) => error as i16,
             None => 0,
         };
-        let members = match join_result.members {
-            Some(members) => members,
-            None => BTreeMap::new(),
-        };
+        let members = join_result.members.unwrap_or_default();
         let join_group_response = JoinGroupResponse::new(
             error_code,
             join_result.generation_id,
@@ -290,7 +290,7 @@ impl RequestProcessor {
             join_result.leader_id,
             members,
         );
-        trace!("join group result: {:?}", join_group_response);
+        trace!("join group response: {:?}", join_group_response);
         join_group_response
             .write_to(
                 &mut request_context.conn.writer,
@@ -304,7 +304,47 @@ impl RequestProcessor {
         request_context: &mut RequestContext<'_>,
         request: SyncGroupRequest,
     ) -> AppResult<()> {
-        todo!()
+        trace!("sync group request: {:?}", request);
+        // request 中的bytesmut 来自于connection中的buffer，不能破坏掉，需要返还给connection，这里将BytesMut转换成Bytes，返还BytesMut
+        let group_assignment = request
+            .group_assignment
+            .iter()
+            .map(|(k, v)| (k.clone(), Bytes::from(v.clone())))
+            .collect();
+        let sync_group_result = request_context
+            .group_coordinator
+            .clone()
+            .handle_sync_group(
+                &request.group_id,
+                &request.member_id,
+                request.generation_id,
+                group_assignment,
+            )
+            .await;
+        trace!("sync group response: {:?}", sync_group_result);
+        match sync_group_result {
+            Ok(response) => {
+                response
+                    .write_to(
+                        &mut request_context.conn.writer,
+                        &request_context.request_header.api_version,
+                        request_context.request_header.correlation_id,
+                    )
+                    .await?;
+                Ok(())
+            }
+            Err(e) => {
+                let error_code = ErrorCode::from(&e);
+                SyncGroupResponse::new(error_code, 0, Bytes::new())
+                    .write_to(
+                        &mut request_context.conn.writer,
+                        &request_context.request_header.api_version,
+                        request_context.request_header.correlation_id,
+                    )
+                    .await?;
+                Ok(())
+            }
+        }
     }
     pub async fn handle_leave_group_request(
         request_context: &mut RequestContext<'_>,
@@ -316,7 +356,26 @@ impl RequestProcessor {
         request_context: &mut RequestContext<'_>,
         request: HeartbeatRequest,
     ) -> AppResult<()> {
-        todo!()
+        debug!("received heartbeat request: {:?}", request);
+        let result = request_context
+            .group_coordinator
+            .clone()
+            .handle_heartbeat(&request.group_id, &request.member_id, request.generation_id)
+            .await;
+        let response = match result {
+            Ok(_) => HeartbeatResponse::new(KafkaError::None, 0),
+            Err(e) => HeartbeatResponse::new(e, 0),
+        };
+
+        response
+            .write_to(
+                &mut request_context.conn.writer,
+                &request_context.request_header.api_version,
+                request_context.request_header.correlation_id,
+            )
+            .await?;
+        debug!("finished heartbeat response ");
+        Ok(())
     }
     pub async fn handle_offset_commit_request(
         request_context: &mut RequestContext<'_>,

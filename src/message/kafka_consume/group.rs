@@ -223,7 +223,7 @@ impl MemberMetadata {
         }
         // assignment
         if let Some(assignment) = self.assignment() {
-            buffer.put_u32(assignment.len() as u32);
+            buffer.put_i32(assignment.len() as i32); // 修改为i32以匹配反序列化
             buffer.put(assignment);
         } else {
             buffer.put_i32(-1);
@@ -278,15 +278,15 @@ impl MemberMetadata {
         }
 
         // assignment
-        let assignment_len = cursor.get_u32() as usize;
+        let assignment_len = cursor.get_i32(); // 修改为get_i32以匹配序列化
         let mut assignment: Option<Bytes> = None;
         if assignment_len > 0 {
-            let mut buf = vec![0; assignment_len];
+            let mut buf = vec![0; assignment_len as usize];
             cursor.read_exact(&mut buf).unwrap();
             assignment = Some(Bytes::from(buf));
         }
 
-        let member = Self::new(
+        let mut member = Self::new(
             id,
             client_id,
             client_host,
@@ -297,6 +297,11 @@ impl MemberMetadata {
             // 被保存的组一定存在协议元数据
             vec![(protocol.to_string(), metadata.unwrap())],
         );
+
+        // 设置assignment
+        if let Some(assignment) = assignment {
+            member.set_assignment(assignment);
+        }
 
         Ok(member)
     }
@@ -638,6 +643,8 @@ impl GroupMetadata {
     pub fn init_next_generation(&mut self) {
         self.generation_id += 1;
         self.new_member_added = false;
+        self.protocol = self.select_protocol().ok();
+        self.transition_to(GroupState::AwaitingSync);
     }
 
     pub fn new_member_added(&self) -> bool {

@@ -10,7 +10,7 @@ use tokio::{
     sync::{broadcast, mpsc::Sender, oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use crate::{
@@ -22,7 +22,8 @@ use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{
-            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData, SyncGroupResponse
+            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData,
+            SyncGroupResponse,
         },
         errors::{ErrorCode, KafkaError, KafkaResult},
     },
@@ -103,6 +104,7 @@ impl GroupCoordinator {
             delayed_heartbeat_purgatory,
         )
         .await;
+
         coordinator.active.store(true);
         coordinator
     }
@@ -132,6 +134,7 @@ impl GroupCoordinator {
         {
             return Ok(self.join_error(request.member_id.clone(), ErrorCode::InvalidSessionTimeout));
         }
+        trace!("handle join group request: {:?}", request);
 
         let group = self.group_manager.get_group(&request.group_id);
         if let Some(group) = group {
@@ -304,6 +307,7 @@ impl GroupCoordinator {
         }
     }
 
+    // do_join_group 的辅助函数-1，在获取写锁的情况下，添加成员，释放锁，并触发rebalance
     async fn add_member_and_rebalance(
         self: &Arc<Self>,
         request: JoinGroupRequest,
@@ -316,8 +320,8 @@ impl GroupCoordinator {
             &request.client_id,
             &request.client_host,
             locked_group.id(),
-            request.session_timeout,
             request.rebalance_timeout,
+            request.session_timeout,
             &request.protocol_type,
             request
                 .group_protocols
@@ -327,6 +331,7 @@ impl GroupCoordinator {
         );
         let (tx, rx) = oneshot::channel();
         member.set_join_group_callback(tx);
+        trace!("add member: {:?}", member);
         locked_group.add_member(member)?;
 
         // update the newMemberAdded flag to indicate that the join group can be further delayed
@@ -334,11 +339,14 @@ impl GroupCoordinator {
             locked_group.set_new_member_added();
         }
 
-        self.maybe_prepare_rebalance(locked_group, group).await;
+        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        drop(locked_group);
+
+        self.maybe_prepare_rebalance(group).await;
         Ok(rx.await.unwrap())
     }
 
-    /// 在拿到group写锁的情况下, 更新成员并触发rebalance，同时延迟的join操作需要一个独立的group
+    // do_join_group 的辅助函数-2，在获取写锁的情况下，更新成员并触发rebalance，同时延迟的join操作需要一个独立的group
     async fn update_member_and_rebalance(
         self: &Arc<Self>,
         member_id: &str,
@@ -351,41 +359,55 @@ impl GroupCoordinator {
         member.update_supported_protocols(protocols);
         member.set_join_group_callback(tx);
 
-        self.maybe_prepare_rebalance(locked_group, group).await;
+        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        drop(locked_group);
+
+        self.maybe_prepare_rebalance(group).await;
     }
-    async fn maybe_prepare_rebalance(
-        self: &Arc<Self>,
-        locked_group: RwLockWriteGuard<'_, GroupMetadata>,
-        group: Arc<RwLock<GroupMetadata>>,
-    ) {
+    // 多个地方会调用这个函数，函数参数不能持有锁，否则会造成交叉获取锁操作，造成死锁
+    async fn maybe_prepare_rebalance(self: &Arc<Self>, group: Arc<RwLock<GroupMetadata>>) {
+        trace!("maybe prepare rebalance");
+        let locked_group = group.read().await;
         if !locked_group.can_rebalance() {
             // 已经有组内成员已经发起延迟操作了
             return;
         }
-        self.prepare_rebalance(locked_group, group).await;
+        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        drop(locked_group);
+        self.prepare_rebalance(group).await;
     }
-    async fn prepare_rebalance(
-        self: &Arc<Self>,
-        mut locked_group: RwLockWriteGuard<'_, GroupMetadata>,
-        group: Arc<RwLock<GroupMetadata>>,
-    ) {
+    async fn prepare_rebalance(self: &Arc<Self>, group: Arc<RwLock<GroupMetadata>>) {
+        trace!("prepare rebalance");
+        let group_clone = group.clone();
+        let mut locked_group = group.write().await;
         let coordinator_clone = self.clone();
         let group_id = locked_group.id().to_string();
         if locked_group.is(GroupState::AwaitingSync) {
             // consumer leader 的sync request还未上来，收到了新的join request，取消所有成员的assignment
-            self.reset_and_progate_assignment_error(
-                &mut locked_group,
+            for member in locked_group.members() {
+                member.set_assignment(Bytes::new());
+            }
+
+            // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+            drop(locked_group);
+
+            self.progate_assignment(
                 group.clone(),
-                KafkaError::RebalanceInProgress(group_id.clone()),
+                &KafkaError::RebalanceInProgress(group_id.clone()),
             )
             .await;
+
+            // 重新获取锁, 保持外部锁的使用状态
+            locked_group = group.write().await;
         }
+
+        // 初始化延迟加入
 
         if locked_group.is(GroupState::Empty) {
             // 初始化延迟加入
             let initial_delayed_join = InitialDelayedJoin::new(
                 coordinator_clone,
-                group,
+                group_clone,
                 self.initial_delayed_join_purgatory.clone(),
                 self.group_config.group_initial_rebalance_delay,
                 self.group_config.group_initial_rebalance_delay,
@@ -407,7 +429,7 @@ impl GroupCoordinator {
             // 延迟加入
             let delayed_join = DelayedJoin::new(
                 coordinator_clone,
-                group,
+                group_clone,
                 locked_group.max_rebalance_timeout() as u64,
             );
             locked_group.transition_to(GroupState::PreparingRebalance);
@@ -428,15 +450,25 @@ impl GroupCoordinator {
         false
     }
     pub async fn on_complete_join(&self, group: Arc<RwLock<GroupMetadata>>) {
+        trace!("on complete join");
         // remove all not yet rejoined members
         let mut locked_write_group = group.write().await;
+        trace!(
+            "acquired write lock in on complete join and group state is:{:?}",
+            locked_write_group.state()
+        );
 
         let not_yet_rejoined_members = locked_write_group.not_yet_rejoined_members();
         for member_id in not_yet_rejoined_members {
             locked_write_group.remove_member(&member_id);
         }
 
+        debug!(
+            "on complete join group state:{:?}",
+            locked_write_group.state()
+        );
         if !locked_write_group.is(GroupState::Dead) {
+            trace!("on complete join init next generation");
             locked_write_group.init_next_generation();
 
             if locked_write_group.is(GroupState::Empty) {
@@ -446,6 +478,7 @@ impl GroupCoordinator {
                 }
             } else {
                 // 给所有等待加入的成员发送加入结果
+                trace!("on complete join send join result");
                 let leader_id = locked_write_group.leader_id().unwrap().to_string();
                 let generation_id = locked_write_group.generation_id();
                 let sub_protocol = locked_write_group.protocol().unwrap().to_string();
@@ -474,6 +507,7 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
         member_id: &str,
     ) {
+        trace!("complete  heartbeat expiry");
         let group_clone = group.clone();
         let mut group_lock = group.write().await;
         let group_id = group_lock.id().to_string();
@@ -493,6 +527,7 @@ impl GroupCoordinator {
             .await;
 
         // reschedule the next heartbeat expiration deadline
+        trace!("reschedule the next heartbeat expiration deadline");
         let next_heartbeat_expiry = last_heartbeat + Duration::from_secs(session_timeout as u64);
         let delay_key = format!("{}-{}", group_id, member_id);
         let delay_heartbeat = DelayedHeartbeat::new(
@@ -513,9 +548,16 @@ impl GroupCoordinator {
         member_id: &str,
         heartbeat_deadline: Instant,
     ) -> bool {
+        trace!(
+            "try complete heartbeat for member: {} heartbeat_deadline: {}",
+            member_id,
+            heartbeat_deadline.elapsed().as_millis()
+        );
         let group_read = group.read().await;
         let member = group_read.get_member(member_id).unwrap();
-        self.should_keep_member_alive(member, heartbeat_deadline) || member.is_leaving()
+        let ret = self.should_keep_member_alive(member, heartbeat_deadline) || member.is_leaving();
+        trace!("try complete heartbeat result: {}", ret);
+        ret
     }
 
     pub async fn on_heartbeat_expiry(
@@ -524,10 +566,13 @@ impl GroupCoordinator {
         member_id: &str,
         heartbeat_deadline: Instant,
     ) {
+        trace!("on heartbeat expiry for member: {}", member_id);
         let group_clone = group.clone();
         let group_read = group.read().await;
         let member = group_read.get_member(member_id).unwrap();
         if !self.should_keep_member_alive(member, heartbeat_deadline) {
+            trace!("remove member and update group");
+            drop(group_read);
             self.remove_member_and_update_group(group_clone, member_id)
                 .await;
         }
@@ -555,14 +600,18 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
         member_id: &str,
     ) {
+        trace!("remove member and update group");
         let group_clone = group.clone();
         let mut locked_write_group = group.write().await;
         locked_write_group.remove_member(member_id);
         let group_id = locked_write_group.id().to_string();
         match locked_write_group.state() {
             GroupState::Stable | GroupState::AwaitingSync => {
-                self.maybe_prepare_rebalance(locked_write_group, group_clone)
-                    .await;
+                trace!(
+                    "remove member and update group state: {:?}",
+                    locked_write_group.state()
+                );
+                self.maybe_prepare_rebalance(group_clone).await;
             }
             GroupState::Dead | GroupState::Empty => {}
             GroupState::PreparingRebalance => {
@@ -722,25 +771,38 @@ impl GroupCoordinator {
                         if write_lock.is(GroupState::AwaitingSync)
                             && generation_id == write_lock.generation_id()
                         {
+                            trace!("store group result: {:?}", store_result);
                             if store_result.is_ok() {
-                                self.set_and_progate_assignment(
-                                    &mut write_lock,
-                                    group_clone,
-                                    &mut group_assignment,
-                                )
-                                .await;
+                                for member in write_lock.members() {
+                                    member.set_assignment(
+                                        group_assignment.remove(member.id()).unwrap(),
+                                    );
+                                }
+
+                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                drop(write_lock);
+                                self.progate_assignment(group_clone, &KafkaError::None)
+                                    .await;
+
+                                // 获取锁，改变状态
+                                write_lock = group.write().await;
                                 write_lock.transition_to(GroupState::Stable);
+                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                drop(write_lock);
                             } else {
                                 // 设置错误并准备重新平衡
-                                self.reset_and_progate_assignment_error(
-                                    &mut write_lock,
-                                    group_clone.clone(),
-                                    store_result.unwrap_err(),
-                                )
-                                .await;
-                                self.maybe_prepare_rebalance(write_lock, group_clone).await;
+                                for member in write_lock.members() {
+                                    member.set_assignment(Bytes::new());
+                                }
+                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                drop(write_lock);
+                                self.progate_assignment(group.clone(), &KafkaError::None)
+                                    .await;
+
+                                self.maybe_prepare_rebalance(group_clone).await;
                             }
                         }
+                        trace!("awaitting sync group response");
                     }
                     Ok(rx.await.unwrap())
                 }
@@ -748,35 +810,13 @@ impl GroupCoordinator {
         }
     }
 
-    async fn set_and_progate_assignment(
-        self: &Arc<Self>,
-        write_lock: &mut RwLockWriteGuard<'_, GroupMetadata>,
-        group: Arc<RwLock<GroupMetadata>>,
-        assignment: &mut HashMap<String, Bytes>,
-    ) {
-        for member in write_lock.members() {
-            member.set_assignment(assignment.remove(member.id()).unwrap());
-        }
-        self.progate_assignment(write_lock, group, &KafkaError::None)
-            .await;
-    }
-    async fn reset_and_progate_assignment_error(
-        self: &Arc<Self>,
-        write_lock: &mut RwLockWriteGuard<'_, GroupMetadata>,
-        group: Arc<RwLock<GroupMetadata>>,
-        error: KafkaError,
-    ) {
-        for member in write_lock.members() {
-            member.set_assignment(Bytes::new());
-        }
-        self.progate_assignment(write_lock, group, &error).await;
-    }
     async fn progate_assignment(
         self: &Arc<Self>,
-        locked_write_group: &mut RwLockWriteGuard<'_, GroupMetadata>,
         group: Arc<RwLock<GroupMetadata>>,
         error: &KafkaError,
     ) {
+        let mut locked_write_group = group.write().await;
+        let mut member_ids = vec![];
         for member in locked_write_group.members() {
             let send_result = member
                 .take_sync_group_callback()
@@ -791,8 +831,14 @@ impl GroupCoordinator {
                     send_result.unwrap_err()
                 );
             }
+            member_ids.push(member.id().to_string());
+        }
+        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        drop(locked_write_group);
+
+        for member_id in member_ids {
             self.clone()
-                .complete_and_schedule_next_heartbeat_expiry(group.clone(), member.id())
+                .complete_and_schedule_next_heartbeat_expiry(group.clone(), &member_id)
                 .await;
         }
     }
@@ -817,7 +863,6 @@ impl GroupCoordinator {
                 self.delayed_heartbeat_purgatory
                     .check_and_complete(format!("{}-{}", group_id, member_id).as_str())
                     .await;
-
                 self.remove_member_and_update_group(group_clone, member_id)
                     .await;
             } else if locked_write_group.is(GroupState::Dead) {

@@ -135,7 +135,7 @@ impl ConnectionHandler {
                 self.replica_manager.clone(),
                 self.group_coordinator.clone(),
             );
-            trace!("Received request: {:?}", &request_context.request_header);
+            info!("Received request: {:?}", &request_context.request_header);
             match ApiRequest::try_from((frame.body, &request_context.request_header)) {
                 Ok(request) => {
                     RequestProcessor::process_request(request, &mut request_context).await?
@@ -144,6 +144,7 @@ impl ConnectionHandler {
                     RequestProcessor::respond_invalid_request(error, &request_context).await?
                 }
             };
+            info!("Finished processing request");
             // 发送响应....
             // ...
             // 这里不需要管理缓冲区BytesMut会处理，只要通过advance移动指针后,

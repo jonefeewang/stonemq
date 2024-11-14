@@ -69,6 +69,7 @@ impl ProtocolCodec<LeaveGroupResponse> for LeaveGroupResponse {
         writer.write_i32(response_total_size as i32).await?;
         writer.write_i32(correlation_id).await?;
         value_set.write_to(writer).await?;
+        writer.flush().await?;
         Ok(())
     }
 

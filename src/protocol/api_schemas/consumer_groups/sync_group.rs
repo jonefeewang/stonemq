@@ -39,7 +39,7 @@ pub static SYNC_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let fields_desc: Vec<(i32, &str, DataType)> = vec![
         (0, GROUP_ID_KEY_NAME, DataType::PString(PString::default())),
         (1, GENERATION_ID_KEY_NAME, DataType::I32(I32::default())),
-        (2, MEMBER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (2, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
         (
             3,
             GROUP_ASSIGNMENT_KEY_NAME,
@@ -144,6 +144,7 @@ impl ProtocolCodec<SyncGroupResponse> for SyncGroupResponse {
         writer.write_i32(response_total_size as i32).await?;
         writer.write_i32(correlation_id).await?;
         value_set.write_to(writer).await?;
+        writer.flush().await?;
         Ok(())
     }
 

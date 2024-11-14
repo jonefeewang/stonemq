@@ -191,6 +191,7 @@ pub async fn setup_tracing() -> OtelGuard {
         .with_target(true) // 是否显示日志目标
         .with_thread_names(true) // 是否显示线程名称
         .with_thread_ids(true) // 是否显示线程ID
+        .with_file(true)
         .with_line_number(true)
         .with_ansi(true);
 

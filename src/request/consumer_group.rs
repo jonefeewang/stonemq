@@ -193,11 +193,18 @@ pub struct HeartbeatResponse {
      * REBALANCE_IN_PROGRESS (27)
      * GROUP_AUTHORIZATION_FAILED (30)
      */
-    pub error: KafkaError,
+    pub error_code: i16,
     pub throttle_time_ms: i32,
 }
 impl HeartbeatResponse {
     pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
+    pub fn new(error: KafkaError, throttle_time_ms: i32) -> Self {
+        let error_code = ErrorCode::from(&error);
+        HeartbeatResponse {
+            error_code: error_code as i16,
+            throttle_time_ms,
+        }
+    }
 }
 
 #[derive(Debug)]

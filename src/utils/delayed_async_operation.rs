@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::time::sleep;
 use tokio::time::Duration;
 use tokio_util::time::{delay_queue, DelayQueue};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::Shutdown;
 
@@ -74,7 +74,6 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
     ) -> Arc<Self> {
-        let shutdown = Shutdown::new(notify_shutdown.subscribe());
         let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000); // 适当的缓冲大小
 
         let purgatory = DelayedAsyncOperationPurgatory {
@@ -84,7 +83,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         };
         // (purgatory, rx, shutdown)
         let purgatory = Arc::new(purgatory);
-        purgatory.clone().start(rx, shutdown).await;
+        purgatory.clone().start(rx, notify_shutdown).await;
         purgatory
     }
 
@@ -93,7 +92,11 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         operation: Arc<T>,
         watch_keys: Vec<String>,
     ) -> bool {
-        // let operation = operation.into();
+        trace!(
+            "try complete else watch delay:{} with key:{}",
+            operation.delay_ms(),
+            watch_keys.join(",")
+        );
         let op_state = Arc::new(DelayedAsyncOperationState::new(operation));
 
         if op_state.operation.try_complete().await && op_state.force_complete().await {
@@ -125,10 +128,13 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
     async fn start(
         self: Arc<Self>,
         mut delay_queue_rx: Receiver<DelayQueueOp<T>>,
-        mut shutdown: Shutdown,
+        notify_shutdown: broadcast::Sender<()>,
     ) {
         // DelayQueue 处理循环
         let purgatory_name = self.name.clone();
+
+        let mut delay_queue_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
+        let mut purge_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
 
         tokio::spawn(async move {
             let mut delay_queue = DelayQueue::new();
@@ -141,9 +147,10 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                                 let key = delay_queue.insert(state.clone(), duration);
                                 state.delay_key.store(Some(key));
                                 debug!(
-                                    "purgatory {} insert delay queue {:?}",
+                                    "purgatory {} insert delay queue {:?}, duration: {}",
                                     &purgatory_name,
-                                    key
+                                    key,
+                                    duration.as_millis()
                                 );
                             }
                             DelayQueueOp::Remove(key) => {
@@ -157,6 +164,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                         }
                     }
                     Some(expired) = delay_queue.next() => {
+                        trace!("purgatory {} delay got expired", &purgatory_name);
                         let op = expired.into_inner();
                         if op.force_complete().await {
                             op.operation.on_expiration().await;
@@ -167,7 +175,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                             );
                         }
                     }
-                    _ = shutdown.recv() => break,
+                    _ = delay_queue_shutdown.recv() => break,
                 }
             }
         });
@@ -176,8 +184,13 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         let self_clone = Arc::clone(&self);
         tokio::spawn(async move {
             loop {
-                sleep(Duration::from_secs(60)).await;
-                self_clone.purge_completed().await;
+                tokio::select! {
+                    _ = purge_shutdown.recv() => break,
+                    _ = async {
+                        sleep(Duration::from_secs(60)).await;
+                        self_clone.purge_completed().await;
+                    } => {}
+                }
             }
         });
     }
@@ -192,6 +205,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                 {
                     completed += 1;
                     if let Some(delay_key) = op.delay_key.load() {
+                        trace!("check and complete remove delay queue key: {:?}", delay_key);
                         self.delay_queue_tx
                             .send(DelayQueueOp::Remove(delay_key))
                             .await
