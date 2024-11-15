@@ -10,7 +10,8 @@ use consumer_group::{
 };
 use errors::{ErrorCode, KafkaError};
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, error, info, trace};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::message::GroupCoordinator;
 use crate::network::Connection;
@@ -83,6 +84,7 @@ impl RequestHeader {
 pub struct RequestContext<'c> {
     pub conn: &'c mut Connection,
     pub request_header: RequestHeader,
+    socket_read_ch_tx: mpsc::Sender<()>,
     pub replica_manager: Arc<ReplicaManager>,
     pub group_coordinator: Arc<GroupCoordinator>,
 }
@@ -90,15 +92,21 @@ impl<'c> RequestContext<'c> {
     pub fn new(
         conn: &'c mut Connection,
         request_header: RequestHeader,
+        socket_read_ch_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
         group_coordinator: Arc<GroupCoordinator>,
     ) -> Self {
         RequestContext {
             conn,
             request_header,
+            socket_read_ch_tx,
             replica_manager,
             group_coordinator,
         }
+    }
+    pub async fn notify_processor_proceed(&self) {
+        let sender = &self.socket_read_ch_tx;
+        let _ = sender.send(()).await;
     }
 }
 
@@ -153,39 +161,68 @@ impl RequestProcessor {
         );
         match request {
             ApiRequest::Produce(request) => {
-                Self::handle_produce_request(request_context, request).await
+                Self::handle_produce_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
 
             ApiRequest::Metadata(request) => {
-                Self::handle_metadata_request(request_context, request).await
+                Self::handle_metadata_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::ApiVersion(request) => {
-                Self::handle_api_version_request(request_context, request).await
+                Self::handle_api_version_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::FindCoordinator(request) => {
-                Self::handle_find_coordinator_request(request_context, request).await
+                Self::handle_find_coordinator_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::JoinGroup(request) => {
-                Self::handle_join_group_request(request_context, request).await
+                // join group 的信号在handle_join_group_request中发送
+                Self::handle_join_group_request(request_context, request).await?;
+                Ok(())
             }
             ApiRequest::SyncGroup(request) => {
-                Self::handle_sync_group_request(request_context, request).await
+                Self::handle_sync_group_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::LeaveGroup(request) => {
-                Self::handle_leave_group_request(request_context, request).await
+                Self::handle_leave_group_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::Heartbeat(request) => {
-                Self::handle_heartbeat_request(request_context, request).await
+                Self::handle_heartbeat_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::OffsetCommit(request) => {
-                Self::handle_offset_commit_request(request_context, request).await
+                Self::handle_offset_commit_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
             ApiRequest::FetchOffsets(request) => {
-                Self::handle_fetch_offsets_request(request_context, request).await
+                Self::handle_fetch_offsets_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
             }
         }
     }
 
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_produce_request(
         request_context: &mut RequestContext<'_>,
         request: ProduceRequest,
@@ -209,6 +246,15 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_api_version_request(
         request_context: &mut RequestContext<'_>,
         request: ApiVersionRequest,
@@ -225,6 +271,15 @@ impl RequestProcessor {
         Ok(())
     }
 
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_metadata_request(
         request_context: &mut RequestContext<'_>,
         request: MetaDataRequest,
@@ -247,6 +302,15 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_find_coordinator_request(
         request_context: &mut RequestContext<'_>,
         request: FindCoordinatorRequest,
@@ -267,6 +331,15 @@ impl RequestProcessor {
         trace!("find coordinator response write to client");
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_join_group_request(
         request_context: &mut RequestContext<'_>,
         request: JoinGroupRequest,
@@ -274,7 +347,7 @@ impl RequestProcessor {
         let join_result = request_context
             .group_coordinator
             .clone()
-            .handle_join_group(request)
+            .handle_join_group(request, request_context)
             .await
             .unwrap();
         let error_code = match join_result.error {
@@ -300,6 +373,15 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_sync_group_request(
         request_context: &mut RequestContext<'_>,
         request: SyncGroupRequest,
@@ -352,11 +434,20 @@ impl RequestProcessor {
     ) -> AppResult<()> {
         todo!()
     }
+    // #[instrument(
+    //     level = "trace",
+    //     skip_all,
+    //     fields(
+    //         client_id = request_context.request_header.client_id,
+    //         correlation_id = request_context.request_header.correlation_id,
+    //         client_host = request_context.conn.client_ip,
+    //     )
+    // )]
     pub async fn handle_heartbeat_request(
         request_context: &mut RequestContext<'_>,
         request: HeartbeatRequest,
     ) -> AppResult<()> {
-        debug!("received heartbeat request: {:?}", request);
+        // debug!("received heartbeat request: {:?}", request);
         let result = request_context
             .group_coordinator
             .clone()
@@ -374,7 +465,7 @@ impl RequestProcessor {
                 request_context.request_header.correlation_id,
             )
             .await?;
-        debug!("finished heartbeat response ");
+        // debug!("finished heartbeat response ");
         Ok(())
     }
     pub async fn handle_offset_commit_request(

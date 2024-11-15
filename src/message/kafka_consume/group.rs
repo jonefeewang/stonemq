@@ -165,8 +165,8 @@ impl MemberMetadata {
         self.sync_group_cb_sender = Some(tx);
     }
 
-    pub fn take_sync_group_callback(&mut self) -> oneshot::Sender<SyncGroupResponse> {
-        self.sync_group_cb_sender.take().unwrap()
+    pub fn take_sync_group_callback(&mut self) -> Option<oneshot::Sender<SyncGroupResponse>> {
+        self.sync_group_cb_sender.take()
     }
 
     // Heartbeat 相关方法

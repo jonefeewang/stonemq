@@ -132,7 +132,7 @@ fn init_tracer() -> Tracer {
         .tracing()
         .with_batch_config(
             BatchConfigBuilder::default()
-                .with_scheduled_delay(Duration::from_secs(300))
+                .with_scheduled_delay(Duration::from_secs(5))
                 .build(),
         )
         .with_trace_config(

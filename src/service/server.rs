@@ -50,7 +50,7 @@ impl Server {
             group_coordinator,
         }
     }
-    #[tracing::instrument(name = "tcp_server_run", skip(self), level = "trace")]
+
     pub async fn run(&mut self) -> AppResult<()> {
         info!("tcp server accepting inbound connections");
         loop {
@@ -109,7 +109,6 @@ impl Server {
 }
 
 impl ConnectionHandler {
-    #[instrument(skip(self), level = "trace", name = "connection_handler_run")]
     async fn run(&mut self) -> AppResult<()> {
         self.socket_read_ch_tx.send(()).await?;
         while !self.shutdown.is_shutdown() {
@@ -117,6 +116,7 @@ impl ConnectionHandler {
             let maybe_frame = tokio::select! {
                 res ={
                     self.socket_read_ch_rx.recv().await;
+                    trace!("read frame-------------------------------------");
                     self.connection.read_frame()
                 }=> res?,
                 _ = self.shutdown.recv() => {
@@ -132,6 +132,7 @@ impl ConnectionHandler {
             let mut request_context = RequestContext::new(
                 &mut self.connection,
                 frame.request_header,
+                self.socket_read_ch_tx.clone(),
                 self.replica_manager.clone(),
                 self.group_coordinator.clone(),
             );
@@ -141,7 +142,8 @@ impl ConnectionHandler {
                     RequestProcessor::process_request(request, &mut request_context).await?
                 }
                 Err(error) => {
-                    RequestProcessor::respond_invalid_request(error, &request_context).await?
+                    RequestProcessor::respond_invalid_request(error, &request_context).await?;
+                    self.socket_read_ch_tx.send(()).await?;
                 }
             };
             info!("Finished processing request");
@@ -161,8 +163,9 @@ impl ConnectionHandler {
             //发送完响应后，继续读取下一个请求
 
             //proceed socket read for next request
-            self.socket_read_ch_tx.send(()).await?;
-            trace!("proceed socket read for next request")
+            // 信号下沉至处理函数中，由处理函数来控制，因为有些请求比如join group，需要等待其他成员加入后才能发送响应（由函数自己控制的话，可以提前发送信号）
+            // self.socket_read_ch_tx.send(()).await?;
+            // trace!("proceed socket read for next request")
         }
         Ok(())
     }

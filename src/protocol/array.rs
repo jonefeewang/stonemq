@@ -28,7 +28,7 @@ pub struct ArrayType {
 impl ArrayType {
     pub fn read_from(&self, buffer: &mut BytesMut) -> AppResult<DataType> {
         let ary_size = buffer.get_i32();
-        trace!("array size: {}", ary_size);
+        // trace!("array size: {}", ary_size);
         let p_type = match &*self.p_type {
             DataType::Schema(schema) => DataType::ValueSet(ValueSet::new(schema.clone())),
             other_type => other_type.clone(),

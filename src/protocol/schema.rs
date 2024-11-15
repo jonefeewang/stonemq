@@ -58,7 +58,7 @@ impl Schema {
     pub fn read_from(self: Arc<Schema>, buffer: &mut BytesMut) -> AppResult<ValueSet> {
         let mut value_set = ValueSet::new(self.clone());
         for field in &self.fields {
-            trace!("read field:{}", field.name);
+            // trace!("read field:{}", field.name);
             let result = match &field.p_type {
                 DataType::Bool(_) => Bool::read_from(buffer),
                 DataType::I8(_) => I8::read_from(buffer),

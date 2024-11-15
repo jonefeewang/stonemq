@@ -6,9 +6,9 @@ use integer_encoding::VarInt;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
+use crate::protocol::types::DataType;
 use crate::AppError::NetworkReadError;
 use crate::AppResult;
-use crate::protocol::types::DataType;
 
 ///
 /// Define StoneMQ primary types.
@@ -214,7 +214,7 @@ impl PrimaryType for PString {
                 length
             ))))
         } else {
-            trace!("Reading PString with length: {}", length);
+            // trace!("Reading PString with length: {}", length);
             Ok(DataType::PString(PString {
                 value: String::from_utf8(buffer.split_to(length as usize).to_vec())?,
             }))
@@ -239,7 +239,7 @@ impl PrimaryType for NPString {
         if length < 0 {
             Ok(DataType::NPString(NPString { value: None }))
         } else {
-            trace!("Reading NPString with length: {}", length);
+            // trace!("Reading NPString with length: {}", length);
             Ok(DataType::NPString(NPString {
                 value: Some(String::from_utf8(
                     buffer.split_to(length as usize).to_vec(),
