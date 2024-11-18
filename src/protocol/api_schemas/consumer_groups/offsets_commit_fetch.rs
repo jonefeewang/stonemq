@@ -222,6 +222,8 @@ impl FetchOffsetsResponse {
             RESPONSES_KEY_NAME,
             DataType::array_of_value_set(topic_response_array, topic_schema),
         )?;
+        let error_code = ErrorCode::from(&self.error_code);
+        response_value_set.append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into())?;
         Ok(())
     }
 }
@@ -252,7 +254,7 @@ impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
         api_version: &ApiVersion,
     ) -> AppResult<OffsetCommitRequest> {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit);
-        let mut value_set = schema.read_from(buffer)?;
+        let value_set = schema.read_from(buffer)?;
         let offset_commit_request = OffsetCommitRequest::decode_from_value_set(value_set)?;
         Ok(offset_commit_request)
     }

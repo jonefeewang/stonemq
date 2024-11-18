@@ -104,7 +104,7 @@ pub static OFFSET_FETCH_REQUEST_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
             1,
             TOPICS_KEY_NAME,
             DataType::Array(ArrayType {
-                can_be_empty: false,
+                can_be_empty: true,
                 p_type: Arc::new(DataType::Schema(
                     OFFSET_FETCH_REQUEST_TOPIC_V0_SCHEMA.clone(),
                 )),
@@ -161,6 +161,7 @@ pub static OFFSET_FETCH_RESPONSE_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
                 values: None,
             }),
         ),
+        (2, ERROR_CODE_KEY_NAME, DataType::I16(I16::default())),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
@@ -204,7 +205,7 @@ pub static OFFSET_COMMIT_REQUEST_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
             GROUP_GENERATION_ID_KEY_NAME,
             DataType::I32(I32::default()),
         ),
-        (2, MEMBER_ID_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (2, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
         (3, RETENTION_TIME_KEY_NAME, DataType::I64(I64::default())),
         (
             4,

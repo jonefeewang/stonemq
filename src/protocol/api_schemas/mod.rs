@@ -126,23 +126,33 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
     );
     map.insert(
         ApiKey::SyncGroup.into(),
-        vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
+        vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
         ApiKey::Heartbeat.into(),
-        vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
+        vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
         ApiKey::LeaveGroup.into(),
-        vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
+        vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
         ApiKey::OffsetFetch.into(),
-        vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
+        vec![
+            ApiVersion::V0,
+            ApiVersion::V1,
+            ApiVersion::V2,
+            ApiVersion::V3,
+        ],
     );
     map.insert(
         ApiKey::OffsetCommit.into(),
-        vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
+        vec![
+            ApiVersion::V0,
+            ApiVersion::V1,
+            ApiVersion::V2,
+            ApiVersion::V3,
+        ],
     );
     map.insert(
         ApiKey::FindCoordinator.into(),

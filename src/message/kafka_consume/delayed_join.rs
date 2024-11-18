@@ -129,7 +129,7 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
     }
 
     async fn on_expiration(&self) {
-        debug!("initial delayed join expired");
+        trace!("initial delayed join expired");
     }
 }
 

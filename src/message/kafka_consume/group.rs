@@ -11,7 +11,7 @@ use tokio::{
     sync::{oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
 };
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     global_config,
@@ -234,8 +234,8 @@ impl MemberMetadata {
     pub fn deserialize(
         data: &[u8],
         group_id: &str,
-        protocol_type: &str,
-        protocol: &str,
+        protocol_type: &String,
+        protocol: &String,
     ) -> KafkaResult<Self> {
         let mut cursor = std::io::Cursor::new(data);
 
@@ -294,7 +294,6 @@ impl MemberMetadata {
             rebalance_timeout,
             session_timeout,
             protocol_type,
-            // 被保存的组一定存在协议元数据
             vec![(protocol.to_string(), metadata.unwrap())],
         );
 
@@ -436,7 +435,11 @@ impl GroupMetadata {
 
     /// 移除成员
     pub fn remove_member(&mut self, member_id: &str) -> Option<MemberMetadata> {
-        self.members.remove(member_id)
+        let removed_member = self.members.remove(member_id);
+        if member_id == self.leader_id.as_deref().unwrap() {
+            self.leader_id = self.members.keys().next().map(|k| k.to_string());
+        }
+        removed_member
     }
 
     /// 检查组是否包含指定成员  
@@ -458,7 +461,7 @@ impl GroupMetadata {
             .unwrap_or(0)
     }
 
-    /// 获取当前成员的匹配组协议的元数据
+    /// 获取当前成员的匹配组选定协议的元数据
     pub fn current_member_metadata(&self) -> BTreeMap<String, Bytes> {
         self.members
             .iter()
@@ -533,16 +536,31 @@ impl GroupMetadata {
         let mut buffer = BytesMut::new();
 
         // protocol_type - string
-        buffer.put_u32(self.protocol_type.as_ref().unwrap().len() as u32);
-        buffer.put(self.protocol_type.as_ref().unwrap().as_bytes());
+        match &self.protocol_type {
+            None => buffer.put_i32(-1),
+            Some(protocol_type) => {
+                buffer.put_i32(protocol_type.len() as i32);
+                buffer.put(protocol_type.as_bytes());
+            }
+        }
         // generation_id - int32
         buffer.put_i32(self.generation_id);
         // protocol - string
-        buffer.put_u32(self.protocol.as_ref().unwrap().len() as u32);
-        buffer.put(self.protocol.as_ref().unwrap().as_bytes());
+        match &self.protocol {
+            None => buffer.put_i32(-1),
+            Some(protocol) => {
+                buffer.put_i32(protocol.len() as i32);
+                buffer.put(protocol.as_bytes());
+            }
+        }
         // leader_id - string
-        buffer.put_u32(self.leader_id.as_ref().unwrap().len() as u32);
-        buffer.put(self.leader_id.as_ref().unwrap().as_bytes());
+        match &self.leader_id {
+            None => buffer.put_i32(-1),
+            Some(leader_id) => {
+                buffer.put_i32(leader_id.len() as i32);
+                buffer.put(leader_id.as_bytes());
+            }
+        }
 
         // members length - int32
         buffer.put_i32(self.members.len() as i32);
@@ -560,30 +578,43 @@ impl GroupMetadata {
         let mut cursor = std::io::Cursor::new(data);
 
         // protocol_type - string
-        let protocol_type_len = cursor.get_u32() as usize;
-        let mut protocol_type_bytes = vec![0; protocol_type_len];
-        cursor.read_exact(&mut protocol_type_bytes).unwrap();
-        let protocol_type = String::from_utf8(protocol_type_bytes).map_err(|e| {
-            KafkaError::CoordinatorNotAvailable(format!("无法解析protocol_type: {}", e))
-        })?;
+        let protocol_type_len = cursor.get_i32();
+        let protocol_type = if protocol_type_len == -1 {
+            None
+        } else {
+            let mut protocol_type_bytes = vec![0; protocol_type_len as usize];
+            cursor.read_exact(&mut protocol_type_bytes).unwrap();
+            Some(String::from_utf8(protocol_type_bytes).map_err(|e| {
+                KafkaError::CoordinatorNotAvailable(format!("无法解析protocol_type: {}", e))
+            })?)
+        };
 
         // generation_id - int32
         let generation_id = cursor.get_i32();
 
         // protocol - string
-        let protocol_len = cursor.get_u32() as usize;
-        let mut protocol_bytes = vec![0; protocol_len];
-        cursor.read_exact(&mut protocol_bytes).unwrap();
-        let protocol = String::from_utf8(protocol_bytes)
-            .map_err(|e| KafkaError::CoordinatorNotAvailable(format!("无法解析protocol: {}", e)))?;
+        let protocol_len = cursor.get_i32();
+        let protocol = if protocol_len == -1 {
+            None
+        } else {
+            let mut protocol_bytes = vec![0; protocol_len as usize];
+            cursor.read_exact(&mut protocol_bytes).unwrap();
+            Some(String::from_utf8(protocol_bytes).map_err(|e| {
+                KafkaError::CoordinatorNotAvailable(format!("无法解析protocol: {}", e))
+            })?)
+        };
 
         // leader_id - string
-        let leader_id_len = cursor.get_u32() as usize;
-        let mut leader_id_bytes = vec![0; leader_id_len];
-        cursor.read_exact(&mut leader_id_bytes).unwrap();
-        let leader_id = String::from_utf8(leader_id_bytes).map_err(|e| {
-            KafkaError::CoordinatorNotAvailable(format!("无法解析leader_id: {}", e))
-        })?;
+        let leader_id_len = cursor.get_i32();
+        let leader_id = if leader_id_len == -1 {
+            None
+        } else {
+            let mut leader_id_bytes = vec![0; leader_id_len as usize];
+            cursor.read_exact(&mut leader_id_bytes).unwrap();
+            Some(String::from_utf8(leader_id_bytes).map_err(|e| {
+                KafkaError::CoordinatorNotAvailable(format!("无法解析leader_id: {}", e))
+            })?)
+        };
 
         // members length - int32
         let members_len = cursor.get_i32() as usize;
@@ -594,17 +625,21 @@ impl GroupMetadata {
             let mut member_data = vec![0; member_len];
             cursor.read_exact(&mut member_data).unwrap();
 
-            let member =
-                MemberMetadata::deserialize(&member_data, group_id, &protocol_type, &protocol)?;
+            let member = MemberMetadata::deserialize(
+                &member_data,
+                group_id,
+                &protocol_type.clone().unwrap(),
+                &protocol.clone().unwrap(),
+            )?;
             members.insert(member.id().to_string(), member);
         }
 
         Ok(Self {
             id: group_id.to_string(),
-            protocol_type: Some(protocol_type),
+            protocol_type: protocol_type.clone(),
             generation_id,
-            protocol: Some(protocol),
-            leader_id: Some(leader_id),
+            protocol: protocol.clone(),
+            leader_id: leader_id.clone(),
             members,
             state: GroupState::Stable,
             new_member_added: false,
@@ -641,10 +676,16 @@ impl GroupMetadata {
     }
 
     pub fn init_next_generation(&mut self) {
-        self.generation_id += 1;
-        self.new_member_added = false;
-        self.protocol = self.select_protocol().ok();
-        self.transition_to(GroupState::AwaitingSync);
+        if self.members.is_empty() {
+            self.generation_id += 1;
+            self.protocol = None;
+            self.transition_to(GroupState::Empty);
+        } else {
+            self.generation_id += 1;
+            self.new_member_added = false;
+            self.protocol = self.select_protocol().ok();
+            self.transition_to(GroupState::AwaitingSync);
+        }
     }
 
     pub fn new_member_added(&self) -> bool {
@@ -748,6 +789,7 @@ impl GroupMetadataManager {
             let key = Self::offset_db_key(group_id, &partition);
             let value = db.get(key);
             if let Ok(Some(value)) = value {
+                // 如果offset存在，则返回offset
                 let offset_and_metadata = OffsetAndMetadata::deserialize(&value)?;
                 offsets.insert(
                     partition,
@@ -758,12 +800,13 @@ impl GroupMetadataManager {
                     },
                 );
             } else {
+                // 如果offset不存在，则返回0
                 offsets.insert(
                     partition,
                     PartitionOffsetData {
                         offset: 0,
                         metadata: "".to_string(),
-                        error: KafkaError::CoordinatorNotAvailable(group_id.to_string()),
+                        error: KafkaError::None,
                     },
                 );
             }
@@ -793,6 +836,7 @@ impl GroupMetadataManager {
                     // 处理键值对
                     let group_id = String::from_utf8_lossy(&key).to_string();
                     let group_metadata = GroupMetadata::deserialize(&value, &group_id).unwrap();
+                    info!("加载组元数据: {} {:#?}", group_id, group_metadata);
                     groups.insert(group_id, Arc::new(RwLock::new(group_metadata)));
                 } else {
                     // 超过前缀范围，停止扫描

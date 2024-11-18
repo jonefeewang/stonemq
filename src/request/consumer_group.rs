@@ -213,11 +213,25 @@ pub struct FetchOffsetsRequest {
     pub partitions: Option<Vec<TopicPartition>>,
 }
 
+#[derive(Debug)]
 pub struct FetchOffsetsResponse {
     pub error_code: KafkaError,
     pub throttle_time_ms: i32,
     pub offsets: HashMap<TopicPartition, PartitionOffsetData>,
 }
+impl FetchOffsetsResponse {
+    pub fn new(
+        error_code: KafkaError,
+        offsets: HashMap<TopicPartition, PartitionOffsetData>,
+    ) -> Self {
+        FetchOffsetsResponse {
+            error_code,
+            throttle_time_ms: 0,
+            offsets,
+        }
+    }
+}
+#[derive(Debug)]
 pub struct PartitionOffsetData {
     pub offset: i64,
     pub metadata: String,

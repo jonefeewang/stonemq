@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use consumer_group::{
-    FetchOffsetsRequest, FindCoordinatorRequest, FindCoordinatorResponse, HeartbeatRequest,
-    HeartbeatResponse, JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest, OffsetCommitRequest,
-    SyncGroupRequest, SyncGroupResponse,
+    FetchOffsetsRequest, FetchOffsetsResponse, FindCoordinatorRequest, FindCoordinatorResponse,
+    HeartbeatRequest, HeartbeatResponse, JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest,
+    OffsetCommitRequest, SyncGroupRequest, SyncGroupResponse,
 };
 use errors::{ErrorCode, KafkaError};
 use tokio::io::AsyncWriteExt;
@@ -247,7 +247,7 @@ impl RequestProcessor {
         Ok(())
     }
     #[instrument(
-        level = "trace",
+        level = "debug",
         skip_all,
         fields(
             client_id = request_context.request_header.client_id,
@@ -260,7 +260,7 @@ impl RequestProcessor {
         request: ApiVersionRequest,
     ) -> AppResult<()> {
         let response = request.process()?;
-        trace!("api versions response: {:?}", response);
+        debug!("api versions request");
         response
             .write_to(
                 &mut request_context.conn.writer,
@@ -272,7 +272,7 @@ impl RequestProcessor {
     }
 
     #[instrument(
-        level = "trace",
+        level = "debug",
         skip_all,
         fields(
             client_id = request_context.request_header.client_id,
@@ -285,6 +285,7 @@ impl RequestProcessor {
         request: MetaDataRequest,
     ) -> AppResult<()> {
         // send metadata for specific topics
+        debug!("metadata request");
 
         let metadata = request_context.replica_manager.get_queue_metadata(
             request
@@ -303,7 +304,7 @@ impl RequestProcessor {
         Ok(())
     }
     #[instrument(
-        level = "trace",
+        level = "debug",
         skip_all,
         fields(
             client_id = request_context.request_header.client_id,
@@ -319,8 +320,6 @@ impl RequestProcessor {
             .group_coordinator
             .find_coordinator(request)
             .await?;
-
-        trace!("find coordinator response: {:?}", &response);
         response
             .write_to(
                 &mut request_context.conn.writer,
@@ -328,11 +327,11 @@ impl RequestProcessor {
                 request_context.request_header.correlation_id,
             )
             .await?;
-        trace!("find coordinator response write to client");
+        debug!("find coordinator response write to client");
         Ok(())
     }
     #[instrument(
-        level = "trace",
+        level = "debug",
         skip_all,
         fields(
             client_id = request_context.request_header.client_id,
@@ -342,14 +341,19 @@ impl RequestProcessor {
     )]
     pub async fn handle_join_group_request(
         request_context: &mut RequestContext<'_>,
-        request: JoinGroupRequest,
+        mut request: JoinGroupRequest,
     ) -> AppResult<()> {
+        if let Some(client_id) = request_context.request_header.client_id.clone() {
+            request.client_id = client_id;
+        }
         let join_result = request_context
             .group_coordinator
             .clone()
             .handle_join_group(request, request_context)
             .await
             .unwrap();
+
+        debug!("join group result");
         let error_code = match join_result.error {
             Some(error) => error as i16,
             None => 0,
@@ -363,7 +367,7 @@ impl RequestProcessor {
             join_result.leader_id,
             members,
         );
-        trace!("join group response: {:?}", join_group_response);
+        debug!("join group response");
         join_group_response
             .write_to(
                 &mut request_context.conn.writer,
@@ -374,7 +378,7 @@ impl RequestProcessor {
         Ok(())
     }
     #[instrument(
-        level = "trace",
+        level = "debug",
         skip_all,
         fields(
             client_id = request_context.request_header.client_id,
@@ -386,7 +390,7 @@ impl RequestProcessor {
         request_context: &mut RequestContext<'_>,
         request: SyncGroupRequest,
     ) -> AppResult<()> {
-        trace!("sync group request: {:?}", request);
+        debug!("sync group request: {:?}", request);
         // request 中的bytesmut 来自于connection中的buffer，不能破坏掉，需要返还给connection，这里将BytesMut转换成Bytes，返还BytesMut
         let group_assignment = request
             .group_assignment
@@ -403,7 +407,7 @@ impl RequestProcessor {
                 group_assignment,
             )
             .await;
-        trace!("sync group response: {:?}", sync_group_result);
+        debug!("sync group response: {:?}", sync_group_result);
         match sync_group_result {
             Ok(response) => {
                 response
@@ -434,20 +438,20 @@ impl RequestProcessor {
     ) -> AppResult<()> {
         todo!()
     }
-    // #[instrument(
-    //     level = "trace",
-    //     skip_all,
-    //     fields(
-    //         client_id = request_context.request_header.client_id,
-    //         correlation_id = request_context.request_header.correlation_id,
-    //         client_host = request_context.conn.client_ip,
-    //     )
-    // )]
+    #[instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_heartbeat_request(
         request_context: &mut RequestContext<'_>,
         request: HeartbeatRequest,
     ) -> AppResult<()> {
-        // debug!("received heartbeat request: {:?}", request);
+        debug!("received heartbeat request");
         let result = request_context
             .group_coordinator
             .clone()
@@ -465,20 +469,44 @@ impl RequestProcessor {
                 request_context.request_header.correlation_id,
             )
             .await?;
-        // debug!("finished heartbeat response ");
+        debug!("finished heartbeat response ");
         Ok(())
     }
     pub async fn handle_offset_commit_request(
         request_context: &mut RequestContext<'_>,
         request: OffsetCommitRequest,
     ) -> AppResult<()> {
+        debug!("offset commit request: {:?}", request);
         todo!()
     }
     pub async fn handle_fetch_offsets_request(
         request_context: &mut RequestContext<'_>,
         request: FetchOffsetsRequest,
     ) -> AppResult<()> {
-        todo!()
+        let result = request_context
+            .group_coordinator
+            .clone()
+            .handle_fetch_offsets(&request.group_id, request.partitions);
+        debug!("fetch offsets result: {:?}", result);
+        if let Ok(offsets) = result {
+            let response = FetchOffsetsResponse::new(KafkaError::None, offsets);
+            response
+                .write_to(
+                    &mut request_context.conn.writer,
+                    &request_context.request_header.api_version,
+                    request_context.request_header.correlation_id,
+                )
+                .await?;
+        } else {
+            FetchOffsetsResponse::new(result.err().unwrap(), HashMap::new())
+                .write_to(
+                    &mut request_context.conn.writer,
+                    &request_context.request_header.api_version,
+                    request_context.request_header.correlation_id,
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn respond_invalid_request(
@@ -486,9 +514,10 @@ impl RequestProcessor {
         request_context: &RequestContext<'_>,
     ) -> AppResult<()> {
         error!(
-            "Invalid request: {:?} with request context:{:?}",
-            error, &request_context
+            "Invalid request with api key: {:?}, correlation id: {}",
+            request_context.request_header.api_key, request_context.request_header.correlation_id
         );
-        todo!()
+        debug!("respond invalid request");
+        Ok(())
     }
 }

@@ -15,7 +15,7 @@ use api_schemas::consumer_groups::{
     FIND_COORDINATOR_BROKER_V0_SCHEMA, FIND_COORDINATOR_REQUEST_V1_SCHEMA,
     FIND_COORDINATOR_RESPONSE_V1_SCHEMA, LEAVE_GROUP_RESPONSE_V1_SCHEMA,
     OFFSET_COMMIT_REQUEST_V3_SCHEMA, OFFSET_COMMIT_RESPONSE_V3_SCHEMA,
-    OFFSET_FETCH_RESPONSE_V3_SCHEMA,
+    OFFSET_FETCH_REQUEST_V3_SCHEMA, OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
 use bytes::BytesMut;
 use tokio::io::AsyncWriteExt;
@@ -133,9 +133,6 @@ pub trait ProtocolCodec<T> {
                     // not exist
                     todo!()
                 }
-                _ => {
-                    todo!()
-                }
             },
             ApiKey::OffsetCommit => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => {
@@ -153,7 +150,7 @@ pub trait ProtocolCodec<T> {
                     // too old, not support
                     todo!()
                 }
-                ApiVersion::V3 | ApiVersion::V2 => Arc::clone(&OFFSET_FETCH_RESPONSE_V3_SCHEMA),
+                ApiVersion::V3 | ApiVersion::V2 => Arc::clone(&OFFSET_FETCH_REQUEST_V3_SCHEMA),
                 ApiVersion::V4 => {
                     // not exist
                     todo!()

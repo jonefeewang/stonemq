@@ -146,7 +146,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                             DelayQueueOp::Insert(state, duration) => {
                                 let key = delay_queue.insert(state.clone(), duration);
                                 state.delay_key.store(Some(key));
-                                debug!(
+                                trace!(
                                     "purgatory {} insert delay queue {:?}, duration: {}",
                                     &purgatory_name,
                                     key,
@@ -155,7 +155,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                             }
                             DelayQueueOp::Remove(key) => {
                                 delay_queue.remove(&key);
-                                debug!(
+                                trace!(
                                     "purgatory {} remove delay queue {:?}",
                                     &purgatory_name,
                                     key
@@ -169,7 +169,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                         if op.force_complete().await {
                             op.operation.on_expiration().await;
                             op.is_expired.store(true);
-                            debug!(
+                            trace!(
                                 "purgatory {} operation expired",
                                 &purgatory_name
                             );

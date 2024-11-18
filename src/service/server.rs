@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
 use tokio::time::{self, Duration};
-use tracing::{error, info, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::message::GroupCoordinator;
 use crate::network::Connection;
@@ -136,17 +136,19 @@ impl ConnectionHandler {
                 self.replica_manager.clone(),
                 self.group_coordinator.clone(),
             );
-            info!("Received request: {:?}", &request_context.request_header);
+            trace!("Received request: {:?}", &request_context.request_header);
             match ApiRequest::try_from((frame.body, &request_context.request_header)) {
                 Ok(request) => {
+                    debug!("Received request: {:?}", request);
                     RequestProcessor::process_request(request, &mut request_context).await?
                 }
                 Err(error) => {
+                    debug!("Invalid request: {:?}", error);
                     RequestProcessor::respond_invalid_request(error, &request_context).await?;
                     self.socket_read_ch_tx.send(()).await?;
                 }
             };
-            info!("Finished processing request");
+            trace!("Finished processing request");
             // 发送响应....
             // ...
             // 这里不需要管理缓冲区BytesMut会处理，只要通过advance移动指针后,

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use tracing::trace;
 
 use crate::message::MemoryRecords;
 use crate::protocol::array::ArrayType;
