@@ -85,14 +85,11 @@ impl From<i16> for CompressionType {
     }
 }
 
-/// A memory representation of a record batch.
-/// This is used to store the record batch in memory before writing it to disk.
-/// It is also used to read the record batch from disk into memory.
-/// This structure can store message sets or record batches with magic values 0, 1, or 2.
-/// However, currently, StoneMQ only supports record batches with a magic value of 2.
-/// Therefore, this structure presently supports only record batches with a magic value of 2.
+// 内存中的记录集, 包含多个batch
 #[derive(Clone, PartialEq, Eq)]
 pub struct MemoryRecords {
+    // kafka 协议里的类型是Recrods, 内部实现是一个nullable bytes, 所以这里使用Option<BytesMut> 来表示
+    // 因为在写入log文件之前，需要填充一些字段，所以这里使用BytesMut, 而不是Bytes 来表示
     pub buffer: Option<BytesMut>,
 }
 impl Debug for MemoryRecords {

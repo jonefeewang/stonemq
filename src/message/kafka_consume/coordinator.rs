@@ -16,7 +16,6 @@ use uuid::Uuid;
 use crate::{
     message::{
         kafka_consume::group::{GroupMetadata, GroupState, MemberMetadata},
-        offset::OffsetAndMetadata,
         TopicPartition,
     },
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
@@ -116,7 +115,7 @@ impl GroupCoordinator {
 
     pub async fn find_coordinator(
         &self,
-        request: FindCoordinatorRequest,
+        _: FindCoordinatorRequest,
     ) -> AppResult<FindCoordinatorResponse> {
         // 因为stonemq目前支持单机，所以coordinator就是自身
         let response: FindCoordinatorResponse = self.node.clone().into();
@@ -951,15 +950,25 @@ impl GroupCoordinator {
         let group = self.group_manager.get_group(group_id);
         if let Some(group) = group {
             let group_clone = group.clone();
-            self.do_commit_offsets(group_clone, member_id, generation_id, offsets)
+            let commit_result = self
+                .do_commit_offsets(group_clone, member_id, generation_id, offsets)
                 .await;
+            if commit_result.is_err() {
+                let error = commit_result.unwrap_err();
+                return result(error);
+            }
         } else if generation_id < 0 {
             // the group is not relying on Kafka for group management, so allow the commit
             let group_metadata = GroupMetadata::new(group_id);
             self.group_manager.add_group(group_metadata);
             let group_clone = self.group_manager.get_group(group_id).unwrap();
-            self.do_commit_offsets(group_clone, member_id, generation_id, offsets)
+            let commit_result = self
+                .do_commit_offsets(group_clone, member_id, generation_id, offsets)
                 .await;
+            if commit_result.is_err() {
+                let error = commit_result.unwrap_err();
+                return result(error);
+            }
         } else {
             return result(KafkaError::IllegalGeneration(group_id.to_string()));
         }
@@ -980,7 +989,7 @@ impl GroupCoordinator {
             return Err(KafkaError::UnknownMemberId(member_id.to_string()));
         } else if generation_id < 0 && locked_read_group.is(GroupState::Empty) {
             self.group_manager
-                .store_offset(&group_id, member_id, offsets);
+                .store_offset(&group_id, member_id, offsets)?;
         } else if locked_read_group.is(GroupState::AwaitingSync) {
             return Err(KafkaError::RebalanceInProgress(group_id.to_string()));
         } else if !locked_read_group.has_member(member_id) {
@@ -992,7 +1001,7 @@ impl GroupCoordinator {
             self.complete_and_schedule_next_heartbeat_expiry(group_clone, member_id)
                 .await;
             self.group_manager
-                .store_offset(&group_id, member_id, offsets);
+                .store_offset(&group_id, member_id, offsets)?;
         }
         Ok(())
     }
