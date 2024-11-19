@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
-use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
+use crate::{
+    message::{LogFetchInfo, MemoryRecords, TopicPartition},
+    AppError, AppResult,
+};
 
 #[derive(Debug)]
 pub enum IsolationLevel {
@@ -8,12 +11,23 @@ pub enum IsolationLevel {
     ReadCommitted,
 }
 
+impl TryFrom<i8> for IsolationLevel {
+    type Error = AppError;
+    fn try_from(value: i8) -> AppResult<Self> {
+        match value {
+            0 => Ok(IsolationLevel::ReadUncommitted),
+            1 => Ok(IsolationLevel::ReadCommitted),
+            _ => Err(AppError::ProtocolError(Cow::Borrowed(
+                "invalid isolation level",
+            ))),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct FetchRequest {
-    pub client_ip: String,
-    pub correlation_id: i32,
     pub replica_id: i32,
-    pub max_wait: i32,
+    pub max_wait_ms: i32,
     pub min_bytes: i32,
     pub max_bytes: i32,
     pub isolation_level: IsolationLevel,
@@ -100,6 +114,7 @@ impl<T> TopicAndPartitionData<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct FetchResponse {
     /**
      * Possible error codes:
@@ -140,6 +155,7 @@ impl FetchResponse {
     pub const INVALID_LOG_START_OFFSET: i64 = -1;
 }
 
+#[derive(Debug)]
 pub struct PartitionDataRep {
     pub error_code: i16,
     pub high_watermark: i64,
@@ -149,6 +165,7 @@ pub struct PartitionDataRep {
     pub records: MemoryRecords,
 }
 
+#[derive(Debug)]
 pub struct AbortedTransaction {
     pub producer_id: i64,
     pub first_offset: i64,

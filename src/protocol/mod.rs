@@ -2,6 +2,7 @@ use std::clone::Clone;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
+use api_schemas::consumer_groups::fetch::{FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA};
 use api_schemas::consumer_groups::heartbeat::{
     HEARTBEAT_REQUEST_V1_SCHEMA, HEARTBEAT_RESPONSE_V1_SCHEMA,
 };
@@ -12,10 +13,10 @@ use api_schemas::consumer_groups::sync_group::{
     SYNC_GROUP_REQUEST_V1_SCHEMA, SYNC_GROUP_RESPONSE_V1_SCHEMA,
 };
 use api_schemas::consumer_groups::{
-    FIND_COORDINATOR_BROKER_V0_SCHEMA, FIND_COORDINATOR_REQUEST_V1_SCHEMA,
-    FIND_COORDINATOR_RESPONSE_V1_SCHEMA, LEAVE_GROUP_RESPONSE_V1_SCHEMA,
-    OFFSET_COMMIT_REQUEST_V3_SCHEMA, OFFSET_COMMIT_RESPONSE_V3_SCHEMA,
-    OFFSET_FETCH_REQUEST_V3_SCHEMA, OFFSET_FETCH_RESPONSE_V3_SCHEMA,
+    FIND_COORDINATOR_REQUEST_V1_SCHEMA, FIND_COORDINATOR_RESPONSE_V1_SCHEMA,
+    LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
+    OFFSET_COMMIT_RESPONSE_V3_SCHEMA, OFFSET_FETCH_REQUEST_V3_SCHEMA,
+    OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
 use bytes::BytesMut;
 use tokio::io::AsyncWriteExt;
@@ -69,20 +70,38 @@ pub trait ProtocolCodec<T> {
                 }
                 ApiVersion::V3 => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
 
-                _ => {
+                ApiVersion::V4 | ApiVersion::V5 => {
+                    // not exist
                     todo!()
                 }
             },
+            ApiKey::Fetch => match api_version {
+                ApiVersion::V0
+                | ApiVersion::V1
+                | ApiVersion::V2
+                | ApiVersion::V3
+                | ApiVersion::V4 => {
+                    // too old, not support
+                    todo!()
+                }
+                ApiVersion::V5 => Arc::clone(&FETCH_REQUEST_V5_SCHEMA),
+            },
+
             ApiKey::Metadata => match api_version {
                 ApiVersion::V0 => Arc::clone(&METADATA_REQUEST_V0),
                 ApiVersion::V1 | ApiVersion::V2 | ApiVersion::V3 => {
                     Arc::clone(&METADATA_REQUEST_V1)
                 }
                 ApiVersion::V4 => Arc::clone(&METADATA_REQUEST_V4),
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
             ApiKey::ApiVersion => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&API_VERSIONS_REQUEST_V0),
-                _ => {
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
+                    // not exist
                     todo!()
                 }
             },
@@ -93,6 +112,10 @@ pub trait ProtocolCodec<T> {
                 }
                 ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA),
                 ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                    // not exist
+                    todo!()
+                }
+                ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -107,6 +130,10 @@ pub trait ProtocolCodec<T> {
                     // not exist
                     todo!()
                 }
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
             ApiKey::SyncGroup => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&SYNC_GROUP_REQUEST_V1_SCHEMA),
@@ -115,10 +142,18 @@ pub trait ProtocolCodec<T> {
                     // not exist
                     todo!()
                 }
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
             ApiKey::LeaveGroup => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
                 ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                    // not exist
+                    todo!()
+                }
+                ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -133,6 +168,10 @@ pub trait ProtocolCodec<T> {
                     // not exist
                     todo!()
                 }
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
             ApiKey::OffsetCommit => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => {
@@ -141,6 +180,10 @@ pub trait ProtocolCodec<T> {
                 }
                 ApiVersion::V2 | ApiVersion::V3 => Arc::clone(&OFFSET_COMMIT_REQUEST_V3_SCHEMA),
                 ApiVersion::V4 => {
+                    // not exist
+                    todo!()
+                }
+                ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -155,6 +198,10 @@ pub trait ProtocolCodec<T> {
                     // not exist
                     todo!()
                 }
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
         }
     }
@@ -166,12 +213,31 @@ pub trait ProtocolCodec<T> {
                 ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
                     Arc::clone(&PRODUCE_RESPONSE_V2)
                 }
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
+            },
+            ApiKey::Fetch => match api_version {
+                ApiVersion::V0
+                | ApiVersion::V1
+                | ApiVersion::V2
+                | ApiVersion::V3
+                | ApiVersion::V4 => {
+                    // too old, not support
+                    todo!()
+                }
+                ApiVersion::V5 => Arc::clone(&FETCH_RESPONSE_V5_SCHEMA),
             },
             ApiKey::Metadata => match api_version {
                 ApiVersion::V0 => Arc::clone(&METADATA_RESPONSE_V0),
                 ApiVersion::V1 => Arc::clone(&METADATA_RESPONSE_V1),
                 ApiVersion::V2 => Arc::clone(&METADATA_RESPONSE_V2),
                 ApiVersion::V3 | ApiVersion::V4 => Arc::clone(&METADATA_RESPONSE_V3),
+                ApiVersion::V5 => {
+                    // not exist
+                    todo!()
+                }
             },
             ApiKey::ApiVersion => match api_version {
                 ApiVersion::V0 => Arc::clone(&API_VERSIONS_RESPONSE_V0),
@@ -183,7 +249,7 @@ pub trait ProtocolCodec<T> {
                     // too old, not support
                     todo!()
                 }
-                ApiVersion::V3 | ApiVersion::V4 => {
+                ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -195,7 +261,7 @@ pub trait ProtocolCodec<T> {
                     // too old, not support
                     todo!()
                 }
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -206,14 +272,14 @@ pub trait ProtocolCodec<T> {
                     todo!()
                 }
                 ApiVersion::V1 => Arc::clone(&HEARTBEAT_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
             },
             ApiKey::LeaveGroup => match api_version {
                 ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -224,7 +290,7 @@ pub trait ProtocolCodec<T> {
                     todo!()
                 }
                 ApiVersion::V3 => Arc::clone(&OFFSET_FETCH_RESPONSE_V3_SCHEMA),
-                ApiVersion::V4 => {
+                ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -235,7 +301,7 @@ pub trait ProtocolCodec<T> {
                     todo!()
                 }
                 ApiVersion::V3 => Arc::clone(&OFFSET_COMMIT_RESPONSE_V3_SCHEMA),
-                ApiVersion::V4 => {
+                ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -246,7 +312,7 @@ pub trait ProtocolCodec<T> {
                     todo!()
                 }
                 ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
+                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
                     // not exist
                     todo!()
                 }
@@ -269,6 +335,7 @@ pub trait ProtocolCodec<T> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ApiKey {
     Produce,
+    Fetch,
     Metadata,
     ApiVersion,
     JoinGroup,
@@ -285,6 +352,7 @@ impl TryFrom<i16> for ApiKey {
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(ApiKey::Produce),
+            1 => Ok(ApiKey::Fetch),
             3 => Ok(ApiKey::Metadata),
             8 => Ok(ApiKey::OffsetCommit),
             9 => Ok(ApiKey::OffsetFetch),
@@ -302,6 +370,7 @@ impl From<ApiKey> for i16 {
     fn from(value: ApiKey) -> Self {
         match value {
             ApiKey::Produce => 0,
+            ApiKey::Fetch => 1,
             ApiKey::Metadata => 3,
             ApiKey::OffsetCommit => 8,
             ApiKey::OffsetFetch => 9,
@@ -353,6 +422,7 @@ pub enum ApiVersion {
     V2,
     V3,
     V4,
+    V5,
 }
 
 impl From<ApiVersion> for i16 {
@@ -363,6 +433,7 @@ impl From<ApiVersion> for i16 {
             ApiVersion::V2 => 2,
             ApiVersion::V3 => 3,
             ApiVersion::V4 => 4,
+            ApiVersion::V5 => 5,
         }
     }
 }
@@ -376,6 +447,7 @@ impl TryFrom<i16> for ApiVersion {
             2 => Ok(ApiVersion::V2),
             3 => Ok(ApiVersion::V3),
             4 => Ok(ApiVersion::V4),
+            5 => Ok(ApiVersion::V5),
             invalid => Err(InvalidValue("api version", invalid.to_string())),
         }
     }

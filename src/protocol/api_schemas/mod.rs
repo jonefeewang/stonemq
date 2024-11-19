@@ -121,6 +121,17 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
+        ApiKey::Fetch.into(),
+        vec![
+            ApiVersion::V0,
+            ApiVersion::V1,
+            ApiVersion::V2,
+            ApiVersion::V3,
+            ApiVersion::V4,
+            ApiVersion::V5,
+        ],
+    );
+    map.insert(
         ApiKey::JoinGroup.into(),
         vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
     );

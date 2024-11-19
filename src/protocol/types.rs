@@ -475,6 +475,12 @@ impl From<ValueSet> for DataType {
     }
 }
 
+impl From<MemoryRecords> for DataType {
+    fn from(value: MemoryRecords) -> Self {
+        DataType::Records(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::TryInto;

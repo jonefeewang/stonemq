@@ -9,12 +9,14 @@ use crate::protocol::{
     schema::Schema,
     types::DataType,
 };
+pub mod fetch;
 pub mod find_coordinator;
 pub mod heartbeat;
 pub mod join_group;
 pub mod leave_group;
 pub mod offsets_commit_fetch;
 pub mod sync_group;
+
 pub const PARTITION_KEY_NAME: &str = "partition";
 pub const PARTITIONS_KEY_NAME: &str = "partitions";
 pub const TOPIC_KEY_NAME: &str = "topic";

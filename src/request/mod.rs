@@ -9,6 +9,7 @@ use consumer_group::{
     OffsetCommitRequest, OffsetCommitResponse, SyncGroupRequest, SyncGroupResponse,
 };
 use errors::{ErrorCode, KafkaError};
+use fetch::FetchRequest;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, instrument, trace};
@@ -35,6 +36,7 @@ pub mod produce;
 #[derive(Debug)]
 pub enum ApiRequest {
     Produce(ProduceRequest),
+    Fetch(FetchRequest),
     Metadata(MetaDataRequest),
     ApiVersion(ApiVersionRequest),
     FindCoordinator(FindCoordinatorRequest),
@@ -165,7 +167,11 @@ impl RequestProcessor {
                 request_context.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
-
+            ApiRequest::Fetch(request) => {
+                Self::handle_fetch_request(request_context, request).await?;
+                request_context.socket_read_ch_tx.send(()).await?;
+                Ok(())
+            }
             ApiRequest::Metadata(request) => {
                 Self::handle_metadata_request(request_context, request).await?;
                 request_context.socket_read_ch_tx.send(()).await?;
@@ -246,6 +252,27 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    pub async fn handle_fetch_request(
+        request_context: &mut RequestContext<'_>,
+        request: FetchRequest,
+    ) -> AppResult<()> {
+        debug!("fetch request: {:?}", request);
+        let fetch_response = request_context
+            .replica_manager
+            .clone()
+            .fetch_message(request)
+            .await?;
+        debug!("fetch response: {:?}", fetch_response);
+        fetch_response
+            .write_to(
+                &mut request_context.conn.writer,
+                &request_context.request_header.api_version,
+                request_context.request_header.correlation_id,
+            )
+            .await?;
+        Ok(())
+    }
+
     #[instrument(
         level = "debug",
         skip_all,

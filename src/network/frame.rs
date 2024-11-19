@@ -8,6 +8,7 @@ use crate::request::consumer_group::{
     FetchOffsetsRequest, FindCoordinatorRequest, HeartbeatRequest, JoinGroupRequest,
     LeaveGroupRequest, OffsetCommitRequest, SyncGroupRequest,
 };
+use crate::request::fetch::FetchRequest;
 use crate::request::metadata::MetaDataRequest;
 use crate::request::produce::ProduceRequest;
 use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
@@ -23,6 +24,10 @@ impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
             ApiKey::Produce => {
                 let produce_request = ProduceRequest::read_from(&mut data.0, &data.1.api_version)?;
                 Ok(ApiRequest::Produce(produce_request))
+            }
+            ApiKey::Fetch => {
+                let fetch_request = FetchRequest::read_from(&mut data.0, &data.1.api_version)?;
+                Ok(ApiRequest::Fetch(fetch_request))
             }
             ApiKey::Metadata => {
                 let metadata_request =

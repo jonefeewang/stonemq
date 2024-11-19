@@ -369,6 +369,10 @@ mod tests {
                 Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0)
             }
             ApiVersion::V3 | ApiVersion::V4 => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
+            ApiVersion::V5 => {
+                //not implemented
+                todo!()
+            },
         };
         let mut produce_req_value_set = ValueSet::new(schema);
 

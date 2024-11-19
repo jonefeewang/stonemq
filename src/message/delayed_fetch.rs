@@ -42,7 +42,7 @@ impl DelayedFetch {
 
 impl DelayedAsyncOperation for DelayedFetch {
     fn delay_ms(&self) -> u64 {
-        self.request.max_wait as u64
+        self.request.max_wait_ms as u64
     }
 
     async fn try_complete(&self) -> bool {
