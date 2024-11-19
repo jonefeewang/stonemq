@@ -22,8 +22,8 @@ use crate::{
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{
-            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, PartitionOffsetData,
-            SyncGroupResponse,
+            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest,
+            PartitionOffsetCommitData, PartitionOffsetData, SyncGroupResponse,
         },
         errors::{ErrorCode, KafkaError, KafkaResult},
         RequestContext,
@@ -932,10 +932,20 @@ impl GroupCoordinator {
         group_id: &str,
         member_id: &str,
         generation_id: i32,
-        offsets: HashMap<TopicPartition, OffsetAndMetadata>,
-    ) -> KafkaResult<()> {
+        offsets: HashMap<TopicPartition, PartitionOffsetCommitData>,
+    ) -> HashMap<TopicPartition, Vec<(i32, KafkaError)>> {
+        let topic_partitions: Vec<TopicPartition> = offsets.keys().cloned().collect();
+        let result = |error: KafkaError| {
+            let mut topic_responses: HashMap<TopicPartition, Vec<(i32, KafkaError)>> =
+                HashMap::new();
+            for tp in topic_partitions {
+                let topic_partitions = topic_responses.entry(tp.clone()).or_insert_with(Vec::new);
+                topic_partitions.push((tp.partition, error.clone()));
+            }
+            topic_responses
+        };
         if !self.active.load() {
-            return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+            return result(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
 
         let group = self.group_manager.get_group(group_id);
@@ -951,16 +961,17 @@ impl GroupCoordinator {
             self.do_commit_offsets(group_clone, member_id, generation_id, offsets)
                 .await;
         } else {
-            return Err(KafkaError::IllegalGeneration(group_id.to_string()));
+            return result(KafkaError::IllegalGeneration(group_id.to_string()));
         }
-        Ok(())
+
+        result(KafkaError::None)
     }
     pub async fn do_commit_offsets(
         self: &Arc<Self>,
         group: Arc<RwLock<GroupMetadata>>,
         member_id: &str,
         generation_id: i32,
-        offsets: HashMap<TopicPartition, OffsetAndMetadata>,
+        offsets: HashMap<TopicPartition, PartitionOffsetCommitData>,
     ) -> KafkaResult<()> {
         let group_clone = group.clone();
         let locked_read_group = group.read().await;

@@ -18,7 +18,7 @@ use crate::{
     message::{offset::OffsetAndMetadata, TopicPartition},
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
-        consumer_group::{PartitionOffsetData, SyncGroupResponse},
+        consumer_group::{PartitionOffsetCommitData, PartitionOffsetData, SyncGroupResponse},
         errors::{KafkaError, KafkaResult},
     },
 };
@@ -763,16 +763,31 @@ impl GroupMetadataManager {
         &self,
         group_id: &str,
         member_id: &str,
-        offsets: HashMap<TopicPartition, OffsetAndMetadata>,
+        offsets: HashMap<TopicPartition, PartitionOffsetCommitData>,
     ) -> KafkaResult<()> {
         let db_path = &global_config().general.local_db_path;
         let db = DB::open_default(db_path).unwrap();
         for (topic_partition, offset_and_metadata) in offsets {
             let key = Self::offset_db_key(group_id, &topic_partition);
-            let value = offset_and_metadata.serialize()?;
-            let result = db.put(key, value);
-            if result.is_err() {
-                return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
+            let value = offset_and_metadata.serialize();
+            if let Err(e) = value {
+                error!("序列化offset失败: {}", e);
+                return Err(KafkaError::Unknown(format!(
+                    "group id:{}  member id:{} 序列化offset失败: {}",
+                    group_id, member_id, e
+                )));
+            } else {
+                let result = db.put(key, value.unwrap());
+                if result.is_err() {
+                    let error_msg = format!(
+                        "group id:{}  member id:{} 存储offset失败: {:?}",
+                        group_id,
+                        member_id,
+                        result.err().unwrap()
+                    );
+                    error!("{}", error_msg);
+                    return Err(KafkaError::Unknown(error_msg));
+                }
             }
         }
         Ok(())
@@ -788,24 +803,35 @@ impl GroupMetadataManager {
         for partition in partitions.unwrap_or_default() {
             let key = Self::offset_db_key(group_id, &partition);
             let value = db.get(key);
+            let partition_id = partition.partition;
             if let Ok(Some(value)) = value {
                 // 如果offset存在，则返回offset
-                let offset_and_metadata = OffsetAndMetadata::deserialize(&value)?;
-                offsets.insert(
-                    partition,
-                    PartitionOffsetData {
-                        offset: offset_and_metadata.offset_metadata.offset,
-                        metadata: offset_and_metadata.offset_metadata.metadata,
-                        error: KafkaError::None,
-                    },
-                );
+                let partition_offset_data = PartitionOffsetCommitData::deserialize(&value);
+                if let Ok(partition_offset_data) = partition_offset_data {
+                    offsets.insert(
+                        partition,
+                        PartitionOffsetData {
+                            partition_id,
+                            offset: partition_offset_data.offset,
+                            metadata: partition_offset_data.metadata,
+                            error: KafkaError::None,
+                        },
+                    );
+                } else {
+                    return Err(KafkaError::Unknown(format!(
+                        "group id:{} 反序列化offset失败: {}",
+                        group_id,
+                        partition_offset_data.err().unwrap()
+                    )));
+                }
             } else {
                 // 如果offset不存在，则返回0
                 offsets.insert(
                     partition,
                     PartitionOffsetData {
+                        partition_id,
                         offset: 0,
-                        metadata: "".to_string(),
+                        metadata: None,
                         error: KafkaError::None,
                     },
                 );

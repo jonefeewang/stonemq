@@ -6,7 +6,7 @@ use bytes::Bytes;
 use consumer_group::{
     FetchOffsetsRequest, FetchOffsetsResponse, FindCoordinatorRequest, FindCoordinatorResponse,
     HeartbeatRequest, HeartbeatResponse, JoinGroupRequest, JoinGroupResponse, LeaveGroupRequest,
-    OffsetCommitRequest, SyncGroupRequest, SyncGroupResponse,
+    OffsetCommitRequest, OffsetCommitResponse, SyncGroupRequest, SyncGroupResponse,
 };
 use errors::{ErrorCode, KafkaError};
 use tokio::io::AsyncWriteExt;
@@ -477,7 +477,27 @@ impl RequestProcessor {
         request: OffsetCommitRequest,
     ) -> AppResult<()> {
         debug!("offset commit request: {:?}", request);
-        todo!()
+        let result = request_context
+            .group_coordinator
+            .clone()
+            .handle_commit_offsets(
+                &request.group_id,
+                &request.member_id,
+                request.generation_id,
+                request.offset_data,
+            )
+            .await;
+
+        debug!("offset commit result: {:?}", result);
+        let response = OffsetCommitResponse::new(0, result);
+        response
+            .write_to(
+                &mut request_context.conn.writer,
+                &request_context.request_header.api_version,
+                request_context.request_header.correlation_id,
+            )
+            .await?;
+        Ok(())
     }
     pub async fn handle_fetch_offsets_request(
         request_context: &mut RequestContext<'_>,

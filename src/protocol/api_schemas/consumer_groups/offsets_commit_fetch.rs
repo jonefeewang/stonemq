@@ -313,7 +313,7 @@ impl OffsetCommitRequest {
                     let offset: i64 = partition_value_set
                         .get_field_value(OFFSET_KEY_NAME)?
                         .try_into()?;
-                    let metadata: String = partition_value_set
+                    let metadata: Option<String> = partition_value_set
                         .get_field_value(METADATA_KEY_NAME)?
                         .try_into()?;
 
