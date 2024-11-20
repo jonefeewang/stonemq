@@ -136,10 +136,24 @@ impl SplitterTask {
             };
 
             match ret {
-                Ok((journal_offset, topic_partition, buf)) => {
+                Ok((
+                    journal_offset,
+                    topic_partition,
+                    first_batch_queue_base_offset,
+                    last_batch_queue_base_offset,
+                    records_count,
+                    recrods,
+                )) => {
                     // 写入queue log失败怎么办？
-                    self.process_batch(journal_offset, topic_partition, buf)
-                        .await?;
+                    self.process_batch(
+                        journal_offset,
+                        topic_partition,
+                        first_batch_queue_base_offset,
+                        last_batch_queue_base_offset,
+                        records_count,
+                        recrods,
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     if let Some(io_err) =
@@ -173,32 +187,59 @@ impl SplitterTask {
         }
     }
 
-    async fn read_batch(&self, file: &mut File) -> AppResult<(i64, TopicPartition, BytesMut)> {
+    async fn read_batch(
+        &self,
+        file: &mut File,
+    ) -> AppResult<(i64, TopicPartition, i64, i64, u32, MemoryRecords)> {
         let batch_size = file.read_u32().await?;
         let mut buf = BytesMut::zeroed(batch_size as usize);
         // 这里有可能会报读到EOF错误，然后返回
         file.read_exact(&mut buf).await?;
 
-        let (journal_offset, tp_str) = Self::read_topic_partition(&mut buf).await;
+        let (
+            journal_offset,
+            tp_str,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+        ) = Self::read_topic_partition(&mut buf).await;
         let topic_partition = TopicPartition::from_string(Cow::Owned(tp_str)).unwrap();
 
-        Ok((journal_offset, topic_partition, buf))
+        let memory_records = MemoryRecords::new(buf);
+
+        Ok((
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            memory_records,
+        ))
     }
 
     async fn process_batch(
         &self,
         journal_offset: i64,
         topic_partition: TopicPartition,
-        buf: BytesMut,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+        memory_records: MemoryRecords,
     ) -> AppResult<()> {
-        let record_count = self.write_queue_log(topic_partition, buf).await?;
+        self.write_queue_log(
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            memory_records,
+        )
+        .await?;
 
-        self.journal_log
-            .split_offset
-            .store(journal_offset + record_count as i64 - 1);
+        self.journal_log.split_offset.store(journal_offset);
         trace!(
             "写入queue log成功,{}, 更新split offset: {}",
-            record_count,
+            records_count,
             self.journal_log.split_offset.load()
         );
         Ok(())
@@ -211,17 +252,25 @@ impl SplitterTask {
 
     async fn write_queue_log(
         &self,
+        journal_offset: i64,
         topic_partition: TopicPartition,
-        buffer: BytesMut,
-    ) -> AppResult<i32> {
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+        memory_records: MemoryRecords,
+    ) -> AppResult<()> {
         return if let Some(queue_log) = self.queue_logs.get(&topic_partition) {
-            let records = MemoryRecords::new(buffer);
-            let record_count = records.records_count();
-            let offset = records.base_offset();
             queue_log
-                .append_records((topic_partition, offset, records))
+                .append_records((
+                    journal_offset,
+                    topic_partition,
+                    first_batch_queue_base_offset,
+                    last_batch_queue_base_offset,
+                    records_count,
+                    memory_records,
+                ))
                 .await?;
-            Ok(record_count)
+            Ok(())
         } else {
             Err(AppError::IllegalStateError(
                 format!(
@@ -233,11 +282,20 @@ impl SplitterTask {
         };
     }
 
-    async fn read_topic_partition(buf: &mut BytesMut) -> (i64, String) {
+    async fn read_topic_partition(buf: &mut BytesMut) -> (i64, String, i64, i64, u32) {
         let journal_offset = buf.get_i64();
         let tp_str_size = buf.get_u32();
         let mut tp_str_bytes = vec![0; tp_str_size as usize];
         buf.copy_to_slice(&mut tp_str_bytes);
-        (journal_offset, String::from_utf8(tp_str_bytes).unwrap())
+        let first_batch_queue_base_offset = buf.get_i64();
+        let last_batch_queue_base_offset = buf.get_i64();
+        let records_count = buf.get_u32();
+        (
+            journal_offset,
+            String::from_utf8(tp_str_bytes).unwrap(),
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+        )
     }
 }

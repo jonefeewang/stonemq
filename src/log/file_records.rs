@@ -80,10 +80,25 @@ impl FileRecords {
             let mut writer = BufWriter::new(file);
             while let Some(message) = rx.recv().await {
                 match message {
-                    FileOp::AppendJournal((offset, topic_partition, records, resp_tx)) => {
+                    FileOp::AppendJournal((
+                        journal_offset,
+                        topic_partition,
+                        first_batch_queue_base_offset,
+                        last_batch_queue_base_offset,
+                        records_count,
+                        records,
+                        resp_tx,
+                    )) => {
                         match Self::append_journal_recordbatch(
                             &mut writer,
-                            (offset, topic_partition, records),
+                            (
+                                journal_offset,
+                                topic_partition,
+                                first_batch_queue_base_offset,
+                                last_batch_queue_base_offset,
+                                records_count,
+                                records,
+                            ),
                         )
                         .await
                         {
@@ -102,10 +117,25 @@ impl FileRecords {
                             }
                         }
                     }
-                    FileOp::AppendQueue((offset, topic_partition, records, resp_tx)) => {
+                    FileOp::AppendQueue((
+                        journal_offset,
+                        topic_partition,
+                        first_batch_queue_base_offset,
+                        last_batch_queue_base_offset,
+                        records_count,
+                        records,
+                        resp_tx,
+                    )) => {
                         match Self::append_queue_recordbatch(
                             &mut writer,
-                            (offset, topic_partition, records),
+                            (
+                                journal_offset,
+                                topic_partition,
+                                first_batch_queue_base_offset,
+                                last_batch_queue_base_offset,
+                                records_count,
+                                records,
+                            ),
                         )
                         .await
                         {
@@ -161,6 +191,9 @@ impl FileRecords {
     /// * `buf_writer` - 文件的缓冲写入器
     /// * `offset` - 日志记录的偏移量
     /// * `topic_partition` - 主题分区信息
+    /// * `first_batch_queue_base_offset` - 第一个批次的偏移量
+    /// * `last_batch_queue_base_offset` - 最后一个批次的偏移量
+    /// * `records_count` - 记录的个数
     /// * `records` - 要追加的内存记录
     ///
     /// # 返回值
@@ -172,7 +205,14 @@ impl FileRecords {
     /// 如果写入过程中发生错误，将返回一个 `AppError`
     pub async fn append_journal_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (offset, topic_partition, records): (i64, TopicPartition, MemoryRecords),
+        (
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            records,
+        ): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> AppResult<usize> {
         trace!("正在将日志追加到文件...");
 
@@ -186,9 +226,12 @@ impl FileRecords {
         let total_size = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
 
         buf_writer.write_u32(total_size).await?;
-        buf_writer.write_i64(offset).await?;
+        buf_writer.write_i64(journal_offset).await?;
         buf_writer.write_u32(tp_id_bytes.len() as u32).await?;
         buf_writer.write_all(tp_id_bytes).await?;
+        buf_writer.write_i64(first_batch_queue_base_offset).await?;
+        buf_writer.write_i64(last_batch_queue_base_offset).await?;
+        buf_writer.write_u32(records_count).await?;
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
 
@@ -197,7 +240,14 @@ impl FileRecords {
 
     pub async fn append_queue_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (_, topic_partition, records): (i64, TopicPartition, MemoryRecords),
+        (
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            records,
+        ): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> AppResult<usize> {
         let topic_partition_id = topic_partition.id();
         let total_write = records.size();

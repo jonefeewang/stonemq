@@ -1,12 +1,12 @@
+use crate::log::LogAppendInfo;
 use crate::message::delayed_fetch::DelayedFetch;
-use crate::message::replica::Replica;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
-use crate::message::{LogAppendInfo, TopicData, TopicPartition};
+use crate::message::{TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
-use crate::{global_config, AppError, AppResult, KvStore, LogManager, ReplicaManager, Shutdown};
+use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
 use dashmap::DashMap;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
@@ -15,6 +15,8 @@ use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, trace};
+
+use super::{JournalReplica, QueueReplica, ReplicaManager};
 
 impl ReplicaManager {
     pub fn new(
@@ -77,7 +79,13 @@ impl ReplicaManager {
                         ))))?;
                 // 这里没做journal_partition的复制，占用了一下dashmap的锁，不过问题不大，因为你真正的底层耗时操作log.append之前已经
                 // 释放了读锁
-                let LogAppendInfo { base_offset, .. } = journal_partition
+                let LogAppendInfo {
+                    first_offset,
+                    last_offset,
+                    max_timestamp,
+                    offset_of_max_timestamp,
+                    ..
+                } = journal_partition
                     .append_record_to_leader(partition.message_set, topic_partition)
                     .await?;
 
@@ -89,7 +97,7 @@ impl ReplicaManager {
                     PartitionResponse {
                         partition: partition.partition,
                         error_code: 0,
-                        base_offset,
+                        base_offset: first_offset,
                         log_append_time: None,
                     },
                 );
@@ -250,7 +258,7 @@ impl ReplicaManager {
             let log = self
                 .log_manager
                 .get_or_create_journal_log(&topic_partition, rt)?;
-            let replica = Replica::new(broker_id, topic_partition.clone(), log);
+            let replica = JournalReplica::new(broker_id, topic_partition.clone(), log);
             let partition = JournalPartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));
@@ -278,7 +286,7 @@ impl ReplicaManager {
             let log = self
                 .log_manager
                 .get_or_create_queue_log(&topic_partition, rt)?;
-            let replica = Replica::new(broker_id, topic_partition.clone(), log);
+            let replica = QueueReplica::new(broker_id, topic_partition.clone(), log);
             let partition = QueuePartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));

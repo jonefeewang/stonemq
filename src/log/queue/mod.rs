@@ -4,7 +4,7 @@ use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;
 use crate::log::Log;
-use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
+use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{error, info, trace, warn};
 
-use super::{LogType, PositionInfo};
+use super::{LogAppendInfo, LogType, PositionInfo};
 
 #[derive(Debug)]
 pub struct QueueLog {
@@ -40,7 +40,7 @@ impl PartialEq for QueueLog {
 
 impl Eq for QueueLog {}
 
-impl Log for QueueLog {
+impl QueueLog {
     /// Appends records to the queue log.
     ///
     /// # Arguments
@@ -54,17 +54,23 @@ impl Log for QueueLog {
     /// # Performance
     ///
     /// This method acquires a write lock on the entire log, which may impact concurrent operations.
-    async fn append_records(
+    pub async fn append_records(
         &self,
-        records: (TopicPartition, i64, MemoryRecords),
+        records: (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
-        let (topic_partition, offset, memory_records) = records;
+        let (
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            memory_records,
+        ) = records;
 
         trace!(
-            "append records to queue log:{}, offset:{}, records_count:{}",
+            "append records to queue log:{}, offset:{}",
             &topic_partition,
-            offset,
-            memory_records.records_count()
+            first_batch_queue_base_offset,
         );
 
         let (active_seg_size, active_segment_offset_index_full) = {
@@ -92,16 +98,26 @@ impl Log for QueueLog {
         }
 
         let log_append_info = LogAppendInfo {
-            base_offset: memory_records.base_offset(),
+            first_offset: first_batch_queue_base_offset,
+            last_offset: last_batch_queue_base_offset,
+            max_timestamp: -1,
+            offset_of_max_timestamp: -1,
+            records_count,
             log_append_time: -1,
         };
-        let last_offset_delta = memory_records.last_offset_delta();
 
-        self.append_to_active_segment(topic_partition, offset, memory_records)
-            .await?;
+        self.append_to_active_segment(
+            journal_offset,
+            topic_partition,
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            memory_records,
+        )
+        .await?;
 
         self.last_offset
-            .store(log_append_info.base_offset + last_offset_delta as i64);
+            .store(log_append_info.first_offset + records_count as i64 - 1);
         trace!(
             "append records to queue log success, update last offset:{}",
             self.last_offset.load()
@@ -384,8 +400,11 @@ impl QueueLog {
     /// This method acquires a read lock on the segments, which may impact concurrent operations.
     async fn append_to_active_segment(
         &self,
+        journal_offset: i64,
         topic_partition: TopicPartition,
-        offset: i64,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await;
@@ -399,7 +418,15 @@ impl QueueLog {
             .1
             .append_record(
                 LogType::Queue,
-                (offset, topic_partition, memory_records, tx),
+                (
+                    journal_offset,
+                    topic_partition,
+                    first_batch_queue_base_offset,
+                    last_batch_queue_base_offset,
+                    records_count,
+                    memory_records,
+                    tx,
+                ),
             )
             .await?;
         rx.await??;

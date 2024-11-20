@@ -1,21 +1,15 @@
 pub mod log;
+pub mod message;
 pub mod network;
 pub mod protocol;
 pub mod request;
 pub mod service;
 pub mod utils;
-pub mod message;
 
-pub use service::{
-    AppError,
-    AppResult,
-    global_config,
-    GLOBAL_CONFIG,
-    BrokerConfig,
-    Broker,
-    Shutdown,
-    DynamicConfig,
-};
 pub use log::LogManager;
+pub use message::{JournalReplica, QueueReplica, ReplicaManager};
+pub use service::{
+    global_config, AppError, AppResult, Broker, BrokerConfig, DynamicConfig, Shutdown,
+    GLOBAL_CONFIG,
+};
 pub use utils::KvStore;
-pub use message::ReplicaManager;

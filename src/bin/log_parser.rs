@@ -83,46 +83,59 @@ fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
         let queue_topic_name = String::from_utf8(buffer[..str_len as usize].to_vec())?;
         buffer.advance(str_len as usize);
 
-        // 使用MemoryRecords解析剩余的buffer内容
-        let memory_records = MemoryRecords {
-            buffer: Some(buffer.clone()),
-        };
+        // first batch queue base offset
+        let first_batch_queue_base_offset: i64 = buffer.get_i64();
+
+        // last batch queue base offset
+        let last_batch_queue_base_offset: i64 = buffer.get_i64();
+
+        // records count
+        let records_count: u32 = buffer.get_u32();
 
         // println!("Journal Batch size: {}", batch_size);
         println!("Journal Offset: {}", journal_offset);
         println!("Queue Topic Name: {}", queue_topic_name);
 
-        // 解析batch header
-        if let Some(batch_header) = memory_records.batch_header() {
-            // println!("Batch Header:");
-            println!("Queue baseoffset: {}", batch_header.first_offset);
-            println!(
-                "Queue last offset delta: {}",
-                batch_header.last_offset_delta
-            );
-            // println!(
-            //     "  First Timestamp: {}",
-            //     format_timestamp(batch_header.first_timestamp)
-            // );
-            // println!(
-            //     "  Max Timestamp: {}",
-            //     format_timestamp(batch_header.max_timestamp)
-            // );
+        // 使用MemoryRecords解析剩余的buffer内容
+        let memory_records = MemoryRecords::new(buffer.clone());
+
+        let mut batchs = vec![];
+        for batch in memory_records {
+            batchs.push(batch);
         }
 
+        let first_batch = batchs.first().unwrap();
+        let last_batch = batchs.last().unwrap();
+
+        // 解析batch header
+        let batch_header = first_batch.header();
+        // println!("Batch Header:");
+        println!("Queue baseoffset: {}", batch_header.first_offset);
+        println!(
+            "Queue last offset delta: {}",
+            batch_header.last_offset_delta
+        );
+        // println!(
+        //     "  First Timestamp: {}",
+        //     format_timestamp(batch_header.first_timestamp)
+        // );
+        // println!(
+        //     "  Max Timestamp: {}",
+        //     format_timestamp(batch_header.max_timestamp)
+        // );
+
         // 解析records
-        if let Some(records) = memory_records.records() {
-            print!("Records:");
-            for (_i, record) in records.iter().enumerate() {
-                // println!("  Record {}:", i + 1);
-                // println!("    Offset Delta: {}", record.offset_delta);
-                // println!("    Timestamp Delta: {}", record.timestamp_delta);
-                // if let Some(key) = &record.key {
-                //     println!("    Key: {}", String::from_utf8_lossy(key));
-                // }
-                if let Some(value) = &record.value {
-                    print!("    Value: {}", String::from_utf8_lossy(value));
-                }
+        let records = first_batch.records();
+        print!("Records:");
+        for (_i, record) in records.iter().enumerate() {
+            // println!("  Record {}:", i + 1);
+            // println!("    Offset Delta: {}", record.offset_delta);
+            // println!("    Timestamp Delta: {}", record.timestamp_delta);
+            // if let Some(key) = &record.key {
+            //     println!("    Key: {}", String::from_utf8_lossy(key));
+            // }
+            if let Some(value) = &record.value {
+                print!("    Value: {}", String::from_utf8_lossy(value));
             }
         }
 
@@ -151,13 +164,15 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
                 buffer.resize(12 + length as usize, 0);
                 reader.read_exact(&mut buffer)?;
 
-                let memory_records = MemoryRecords {
-                    buffer: Some(buffer.clone()),
-                };
+                let memory_records = MemoryRecords::new(buffer.clone());
+                let mut batchs = vec![];
+                for batch in memory_records {
+                    batchs.push(batch);
+                }
 
-                let batch_header = memory_records.batch_header().unwrap();
+                let batch_header = batchs.first().unwrap().header();
                 println!("batch_header: {}", batch_header);
-                let records = memory_records.records().unwrap();
+                let records = batchs.first().unwrap().records();
                 println!("records: {:?}", records.len());
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {

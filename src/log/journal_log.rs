@@ -4,19 +4,20 @@ use std::sync::Arc;
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
-use futures_util::lock::Mutex;
+
 use tokio::runtime::Runtime;
-use tokio::sync::{oneshot, RwLock};
-use tracing::{error, info, trace, warn};
+use tokio::sync::{oneshot, Mutex, RwLock};
+use tracing::{debug, error, info, trace, warn};
 
 use super::file_records::FileRecords;
 use super::index_file::IndexFile;
 use super::log_segment::PositionInfo;
 use super::{
-    calculate_journal_log_overhead, CheckPointFile, Log, LogType, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
+    calculate_journal_log_overhead, CheckPointFile, LogAppendInfo, LogType,
+    NEXT_OFFSET_CHECKPOINT_FILE_NAME,
 };
 use crate::log::log_segment::LogSegment;
-use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
+use crate::message::{MemoryRecords, RecordBatch, TopicPartition};
 use crate::AppError::{self, CommonError};
 use crate::{global_config, AppResult};
 
@@ -58,7 +59,7 @@ pub struct JournalLog {
     queue_next_offset_checkpoints: CheckPointFile,
 }
 
-impl Log for JournalLog {
+impl JournalLog {
     /// 追加记录到日志。
     ///
     /// # 参数
@@ -68,12 +69,25 @@ impl Log for JournalLog {
     /// # 返回
     ///
     /// 返回包含追加操作信息的 `AppResult<LogAppendInfo>`。
-    async fn append_records(
+    pub async fn append_records(
         &self,
-        records: (TopicPartition, i64, MemoryRecords),
+        records: (TopicPartition, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
-        let (queue_topic_partition, _, mut memory_records) = records;
+        let (queue_topic_partition, mut memory_records) = records;
+
+        // 分解为record batch
+        let mut record_batches = vec![];
+        for batch in &mut memory_records {
+            record_batches.push(batch);
+        }
+
         let _write_guard = self.write_lock.lock().await; // 获取写锁以进行原子追加操作
+
+        let log_append_info = self.validate_records_and_assign_queue_offset(
+            &queue_topic_partition,
+            record_batches,
+            &mut memory_records,
+        )?;
 
         let (active_seg_size, active_segment_offset_index_full) =
             self.get_active_segment_info().await?;
@@ -89,27 +103,21 @@ impl Log for JournalLog {
             self.roll_segment().await?;
         }
 
-        let records_count = memory_records.records_count() as u32;
+        self.append_to_active_segment(
+            queue_topic_partition.clone(),
+            log_append_info.first_offset,
+            log_append_info.last_offset,
+            log_append_info.records_count,
+            memory_records,
+        )
+        .await?;
 
-        self.assign_offset(&queue_topic_partition, &mut memory_records)
-            .await?;
-        self.append_to_active_segment(queue_topic_partition.clone(), memory_records)
-            .await?;
-
-        let log_append_info = LogAppendInfo {
-            base_offset: self.next_offset.load(),
-            log_append_time: -1,
-        };
-
-        self.update_offsets(queue_topic_partition.clone(), records_count)
+        self.update_offsets(queue_topic_partition.clone(), log_append_info.records_count)
             .await;
 
-        Ok(log_append_info)
-    }
+        drop(_write_guard);
 
-    /// 提供默认的活动段错误信息。
-    fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
-        CommonError(format!("未找到活动段，日志分区: {}", topic_partition))
+        Ok(log_append_info)
     }
 }
 
@@ -173,6 +181,58 @@ impl JournalLog {
             write_lock: Mutex::new(()),
             topic_partition,
             index_file_max_size,
+        })
+    }
+
+    fn validate_records_and_assign_queue_offset(
+        &self,
+        queue_topic_partition: &TopicPartition,
+        record_batches: Vec<RecordBatch>,
+        memory_records: &mut MemoryRecords,
+    ) -> AppResult<LogAppendInfo> {
+        let mut max_timestamp = -1i64;
+        let mut offset_of_max_timestamp = -1i64;
+        let mut first_offset = -1i64;
+        let mut last_offset = -1i64;
+        let mut records_count: u32 = 0;
+        let mut queue_next_offset = self
+            .queue_next_offset_info
+            .get_mut(queue_topic_partition)
+            .unwrap();
+        if first_offset == -1 {
+            first_offset = *queue_next_offset;
+        }
+        for mut batch in record_batches {
+            &batch.validate_batch()?;
+            let records = batch.records();
+            for record in records {
+                // todo: validate records
+                records_count += 1;
+                let offset = *queue_next_offset + 1;
+                let record_time_stamp = batch.base_timestamp() + record.timestamp_delta;
+                if record_time_stamp > max_timestamp {
+                    max_timestamp = record_time_stamp;
+                    offset_of_max_timestamp = offset;
+                }
+                *queue_next_offset = offset;
+            }
+
+            batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1);
+            last_offset = batch.base_offset();
+            // batch.set_first_timestamp(max_timestamp);
+            debug!(
+                "validate_records_and_assign_offset: {}",
+                batch.base_offset()
+            );
+            batch.unsplit(memory_records);
+        }
+        Ok(LogAppendInfo {
+            first_offset,
+            last_offset,
+            max_timestamp,
+            offset_of_max_timestamp,
+            records_count,
+            log_append_time: -1,
         })
     }
 
@@ -324,31 +384,6 @@ impl JournalLog {
         Ok(())
     }
 
-    /// 为内存记录分配偏移量。
-    ///
-    /// # 参数
-    ///
-    /// * `topic_partition` - 主题分区。
-    /// * `memory_records` - 要分配偏移量的内存记录。
-    ///
-    /// # 返回
-    ///
-    /// 返回 `AppResult<()>` 表示成功或失败。
-    async fn assign_offset(
-        &self,
-        queue_topic_partition: &TopicPartition,
-        memory_records: &mut MemoryRecords,
-    ) -> AppResult<()> {
-        let queue_log_next_offset = self
-            .queue_next_offset_info
-            .entry(queue_topic_partition.clone())
-            .or_insert(0);
-        let offset = *queue_log_next_offset;
-        trace!("assign offset: {}", offset);
-        memory_records.set_base_offset(offset)?;
-        Ok(())
-    }
-
     /// 将记录追加到活动段。
     ///
     /// # 参数
@@ -362,6 +397,9 @@ impl JournalLog {
     async fn append_to_active_segment(
         &self,
         queue_topic_partition: TopicPartition,
+        first_offset: i64,
+        last_offset: i64,
+        records_count: u32,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
@@ -377,6 +415,9 @@ impl JournalLog {
                 (
                     self.next_offset.load(),
                     queue_topic_partition,
+                    first_offset,
+                    last_offset,
+                    records_count,
                     memory_records,
                     tx,
                 ),

@@ -9,8 +9,9 @@ use tracing::{debug, error};
 
 use crate::log::PositionInfo;
 use crate::utils::DelayedAsyncOperation;
-use crate::{message::TopicPartition, request::fetch::FetchRequest, ReplicaManager};
+use crate::{message::TopicPartition, request::fetch::FetchRequest};
 
+use super::replica::ReplicaManager;
 use super::LogFetchInfo;
 
 type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;

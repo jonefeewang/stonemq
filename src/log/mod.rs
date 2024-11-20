@@ -12,7 +12,7 @@ mod log_segment;
 mod queue;
 mod splitter;
 
-use crate::message::{LogAppendInfo, MemoryRecords, TopicPartition};
+use crate::message::{MemoryRecords, TopicPartition};
 use crate::AppError::IllegalStateError;
 use crate::{AppError, AppResult};
 use std::borrow::Cow;
@@ -29,8 +29,8 @@ use tokio::sync::oneshot;
 ///
 /// Returns the calculated overhead as a u32.
 pub fn calculate_journal_log_overhead(topic_partition: &TopicPartition) -> u32 {
-    //  offset + tpstr size + tpstr
-    8 + topic_partition.protocol_size()
+    //  offset + tpstr size + tpstr + i64(first_batch_queue_base_offset)+i64(last_batch_queue_base_offset)+u32(records_count)
+    8 + topic_partition.protocol_size() + 8 + 8 + 4
 }
 
 pub trait Log: Debug {
@@ -52,16 +52,22 @@ pub enum LogType {
 pub enum FileOp {
     AppendJournal(
         (
-            i64,
+            i64, // journal offset
             TopicPartition,
+            i64, // first batch queue base offset
+            i64, // last batch queue base offset
+            u32, // records count
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,
         ),
     ),
     AppendQueue(
         (
-            i64,
+            i64, // journal offset
             TopicPartition,
+            i64, // first batch queue base offset
+            i64, // last batch queue base offset
+            u32, // records count
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,
         ),
@@ -72,3 +78,13 @@ pub enum FileOp {
 const RECOVERY_POINT_FILE_NAME: &str = ".recovery_checkpoints";
 const SPLIT_POINT_FILE_NAME: &str = ".split_checkpoints";
 const NEXT_OFFSET_CHECKPOINT_FILE_NAME: &str = ".next_offset_checkpoints";
+
+#[derive(Debug, Clone)]
+pub struct LogAppendInfo {
+    pub first_offset: i64,
+    pub last_offset: i64,
+    pub max_timestamp: i64,
+    pub offset_of_max_timestamp: i64,
+    pub log_append_time: i64,
+    pub records_count: u32,
+}

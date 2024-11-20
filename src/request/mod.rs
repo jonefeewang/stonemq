@@ -22,8 +22,8 @@ use crate::request::metadata::{MetaDataRequest, MetadataResponse};
 use crate::request::produce::{ProduceRequest, ProduceResponse};
 use crate::service::Node;
 use crate::AppError::IllegalStateError;
-use crate::ReplicaManager;
-use crate::{AppError, AppResult};
+
+use crate::{AppError, AppResult, ReplicaManager};
 
 mod create_topic;
 

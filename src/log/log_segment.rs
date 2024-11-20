@@ -120,16 +120,24 @@ impl LogSegment {
         &self,
         log_type: LogType,
         records_package: (
-            i64,
+            i64, //
             TopicPartition,
+            i64, // first batch queue base offset
+            i64, // last batch queue base offset
+            u32, // records count
             MemoryRecords,
             oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
         // 计算是否更新index file
-        let memory_records = &records_package.2;
-        let records_size = memory_records.size();
-        let relative_offset = records_package.0 - self.base_offset;
+
+        let records_size = records_package.5.size();
+        let first_offset = match log_type {
+            LogType::Journal => records_package.0, // journal offset
+            LogType::Queue => records_package.2,   // first batch queue base offset
+        };
+        let relative_offset = first_offset - self.base_offset;
+
         let index_interval = match log_type {
             LogType::Journal => global_config().log.journal_index_interval_bytes,
             LogType::Queue => global_config().log.queue_index_interval_bytes,
@@ -151,7 +159,7 @@ impl LogSegment {
                     .as_ref()
                     .unwrap()
                     .add_entry(
-                        (records_package.0 - self.base_offset) as u32,
+                        (first_offset - self.base_offset) as u32,
                         self.file_records.size() as u32,
                     )
                     .await?;

@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::log::{Log, PositionInfo};
-use crate::message::records::MemoryRecords;
+use crate::log::{Log, LogAppendInfo, PositionInfo};
+use crate::message::memory_records::MemoryRecords;
 use crate::{global_config, AppError, AppResult};
 
-use super::replica::JournalReplica;
-use super::{LogFetchInfo, QueueReplica};
+use super::replica::{JournalReplica, QueueReplica};
+use super::LogFetchInfo;
 
 #[derive(Debug)]
 pub struct JournalPartition {
@@ -20,12 +20,6 @@ pub struct JournalPartition {
 pub struct QueuePartition {
     pub topic_partition: TopicPartition,
     pub assigned_replicas: DashMap<i32, Arc<QueueReplica>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LogAppendInfo {
-    pub base_offset: i64,
-    pub log_append_time: i64,
 }
 
 impl JournalPartition {
@@ -52,7 +46,7 @@ impl JournalPartition {
         drop(replica);
 
         log_clone
-            .append_records((queue_topic_partition, 0, record))
+            .append_records((queue_topic_partition, record))
             .await
     }
 
@@ -68,23 +62,6 @@ impl QueuePartition {
         }
     }
 
-    pub async fn append_record_to_leader(
-        &self,
-        record: MemoryRecords,
-        queue_topic_partition: TopicPartition,
-    ) -> AppResult<LogAppendInfo> {
-        let local_replica_id = global_config().general.id;
-
-        let replica = self
-            .assigned_replicas
-            .get(&local_replica_id)
-            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
-
-        replica
-            .log
-            .append_records((queue_topic_partition, 0, record))
-            .await
-    }
     pub async fn read_records(&self, offset: i64, max_bytes: i32) -> AppResult<LogFetchInfo> {
         if max_bytes <= 0 {
             return Ok(LogFetchInfo {
