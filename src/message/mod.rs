@@ -1,5 +1,5 @@
 pub use delayed_fetch::DelayedFetch;
-pub use records::{MemoryRecordBuilder, MemoryRecords};
+pub use records::{MemoryRecords, RecordBatchBuilder};
 pub use replica::{JournalReplica, QueueReplica, ReplicaManager};
 pub use topic_partition::{LogAppendInfo, PartitionMsgData, TopicData, TopicPartition};
 
