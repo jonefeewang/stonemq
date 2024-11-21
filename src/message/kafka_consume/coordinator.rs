@@ -739,14 +739,21 @@ impl GroupCoordinator {
         member_id: &str,
         generation_id: i32,
         group_assignment: HashMap<String, Bytes>,
+        request_context: &mut RequestContext<'_>,
     ) -> KafkaResult<SyncGroupResponse> {
         if !self.active.load() {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
         let group = self.group_manager.get_group(group_id);
         if let Some(group) = group {
-            self.do_sync_group(group, member_id, generation_id, group_assignment)
-                .await
+            self.do_sync_group(
+                group,
+                member_id,
+                generation_id,
+                group_assignment,
+                request_context,
+            )
+            .await
         } else {
             Err(KafkaError::UnknownMemberId(member_id.to_string()))
         }
@@ -757,6 +764,7 @@ impl GroupCoordinator {
         member_id: &str,
         generation_id: i32,
         mut group_assignment: HashMap<String, Bytes>,
+        request_context: &mut RequestContext<'_>,
     ) -> KafkaResult<SyncGroupResponse> {
         trace!("do sync group");
 
@@ -854,6 +862,8 @@ impl GroupCoordinator {
                         debug!("not leader, wait for leader to send response");
                         drop(write_lock);
                     }
+                    // 通知processor继续处理, 此处的等待不会阻塞processor
+                    request_context.notify_processor_proceed().await;
                     Ok(rx.await.unwrap())
                 }
             };

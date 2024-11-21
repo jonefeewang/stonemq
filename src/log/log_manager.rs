@@ -17,7 +17,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
@@ -350,15 +350,17 @@ impl LogManager {
                 (tp.clone(), queue_log)
             })
             .collect();
-        let read_wait_interval = global_config().log.splitter_wait_interval;
-        let read_wait_interval =
-            tokio::time::interval(Duration::from_millis(read_wait_interval as u64));
+
+        let read_wait_interval = global_config().log.splitter_wait_interval as u64;
+
+        let read_wait_interval = tokio::time::interval(Duration::from_millis(read_wait_interval));
         let mut splitter = SplitterTask::new(
             journal_log,
             queue_logs,
             journal_topic_partition.clone(),
             read_wait_interval,
         );
+
         splitter.run(shutdown).await?;
         // tokio::time::sleep(Duration::from_secs(10)).await;
         Ok(())

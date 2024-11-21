@@ -1,5 +1,5 @@
-use std::fmt::{Debug, Display, Formatter};
 use chrono::{Local, TimeZone};
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct BatchHeader {
@@ -7,7 +7,7 @@ pub struct BatchHeader {
     pub length: i32,
     pub partition_leader_epoch: i32,
     pub magic: i8,
-    pub crc: i32,
+    pub crc: u32,
     pub attributes: i16,
     pub last_offset_delta: i32,
     pub first_timestamp: i64,
@@ -15,6 +15,7 @@ pub struct BatchHeader {
     pub producer_id: i64,
     pub producer_epoch: i16,
     pub first_sequence: i32,
+    pub records_count: i32,
 }
 
 impl Display for BatchHeader {
@@ -34,6 +35,7 @@ impl Display for BatchHeader {
             .field("producer_id", &self.producer_id)
             .field("producer_epoch", &self.producer_epoch)
             .field("first_sequence", &self.first_sequence)
+            .field("records_count", &self.records_count)
             .finish()
     }
-} 
+}

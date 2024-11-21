@@ -263,7 +263,7 @@ impl FileRecords {
     pub fn size(&self) -> usize {
         self.size.load()
     }
-    /// 将文件指针移动到指定的offset位置
+    /// 通过index 文件找目标offset所在的segment，然后移动文件指针到segment的offset位置
     /// 如果报错，很有可能是当前内容还未落盘，所以读取不到，可以sleep一会再读取
     pub async fn seek(
         mut file: File,
@@ -289,16 +289,10 @@ impl FileRecords {
                     LogType::Journal => {
                         match Self::seek_to_target_offset_journal(&mut file, target_offset).await {
                             Ok(position) => {
-                                if position > 0 {
-                                    let mut new_pos = ref_pos;
-                                    new_pos.position = position;
-                                    new_pos.offset = target_offset;
-                                    return Ok((file, new_pos));
-                                } else {
-                                    //当前offset已经大于目标offset，则退出，（不应该出现的情况）
-                                    error!("查找offset,当前offset已经大于目标offset,不应该出现的情况，退出");
-                                    break;
-                                }
+                                let mut new_pos = ref_pos;
+                                new_pos.position = position as i64;
+                                new_pos.offset = target_offset;
+                                return Ok((file, new_pos));
                             }
                             Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
                                 if retry == MAX_RETRIES - 1 {
@@ -354,7 +348,7 @@ impl FileRecords {
     async fn seek_to_target_offset_journal(
         file: &mut File,
         target_offset: i64,
-    ) -> std::io::Result<i64> {
+    ) -> std::io::Result<u64> {
         let mut buffer = [0u8; 12];
 
         loop {
@@ -368,9 +362,12 @@ impl FileRecords {
             match current_offset.cmp(&target_offset) {
                 std::cmp::Ordering::Equal => {
                     let current_position = file.seek(SeekFrom::Current(-12)).await?;
-                    return Ok(current_position as i64);
+                    return Ok(current_position);
                 }
-                std::cmp::Ordering::Greater => return Ok(-1),
+                // 当前offset大于目标offset，则返回-1，表示找不到,splitter 在读取下一个offset时，这个offset还未生产出来，或者还未落盘
+                std::cmp::Ordering::Greater => {
+                    return Err(Error::new(ErrorKind::NotFound, "目标偏移量未找到"))
+                }
                 std::cmp::Ordering::Less => {
                     file.seek(SeekFrom::Current(batch_size as i64 - 12)).await?;
                 }

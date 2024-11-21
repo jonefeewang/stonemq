@@ -79,13 +79,7 @@ impl ReplicaManager {
                         ))))?;
                 // 这里没做journal_partition的复制，占用了一下dashmap的锁，不过问题不大，因为你真正的底层耗时操作log.append之前已经
                 // 释放了读锁
-                let LogAppendInfo {
-                    first_offset,
-                    last_offset,
-                    max_timestamp,
-                    offset_of_max_timestamp,
-                    ..
-                } = journal_partition
+                let LogAppendInfo { first_offset, .. } = journal_partition
                     .append_record_to_leader(partition.message_set, topic_partition)
                     .await?;
 
@@ -216,11 +210,6 @@ impl ReplicaManager {
 
         // 启动journal log splitter
         for (journal_tp, queue_tps) in journal_to_queues {
-            trace!(
-                "starting splitter task for journal: {} and queues: {:?}",
-                journal_tp.id(),
-                queue_tps.iter().map(|tp| tp.id()).collect::<Vec<String>>()
-            );
             let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
             let log_manager = self.log_manager.clone();
             rt.spawn(async move {

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 
 #[derive(Debug)]
 pub struct CheckPointFile {
@@ -24,6 +24,10 @@ impl CheckPointFile {
     }
 
     pub async fn write_checkpoints(&self, points: HashMap<TopicPartition, i64>) -> AppResult<()> {
+        debug!(
+            "write checkpoints to {}, with values: {:?}",
+            self.file_name, points
+        );
         let write_file = OpenOptions::new()
             .create(true)
             .truncate(true)

@@ -3,7 +3,6 @@ mod read;
 use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;
-use crate::log::Log;
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
@@ -12,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use tokio::runtime::Runtime;
 use tokio::sync::{oneshot, RwLock};
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{LogAppendInfo, LogType, PositionInfo};
 
@@ -343,6 +342,13 @@ impl QueueLog {
         memory_records: &MemoryRecords,
         active_segment_offset_index_full: bool,
     ) -> bool {
+        debug!(
+            "active_seg_size: {}, memory_records size: {}, global config size: {},active_segment_offset_index_full: {}",
+            active_seg_size,
+            memory_records.size() as u32,
+            global_config().log.queue_segment_size as u32,
+            active_segment_offset_index_full
+        );
         active_seg_size + memory_records.size() as u32
             >= global_config().log.queue_segment_size as u32
             || active_segment_offset_index_full
@@ -377,7 +383,7 @@ impl QueueLog {
         )
         .await?;
         segments.insert(new_base_offset, new_seg);
-        trace!(
+        debug!(
             "Rolled queue log segment to new base offset: {}",
             new_base_offset
         );

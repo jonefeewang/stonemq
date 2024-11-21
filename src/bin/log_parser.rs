@@ -1,5 +1,5 @@
 use bytes::{Buf, BytesMut};
-use chrono::TimeZone;
+use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -51,10 +51,20 @@ async fn main() -> AppResult<()> {
     }
 }
 
-fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
-    let file = File::open(file)?;
-    let mut reader = BufReader::new(file);
+fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
+    let file = File::open(&file_path)?;
+    let mut reader = BufReader::new(&file);
     let mut buffer = BytesMut::with_capacity(1024);
+
+    // 输出解析结果
+    println!("┌──────────────────────────────────────────────────────────────────────────────┐");
+    println!("│                                  日志解析器                                    │");
+    println!("├──────────────────────────────────────────────────────────────────────────────┤");
+    println!("│ 打印时间: {:<70} │", Local::now().format("%Y-%m-%d %H:%M:%S"));
+    println!("│ 文件路径: {:<70} │", file_path.to_str().unwrap_or(""));
+    println!("└──────────────────────────────────────────────────────────────────────────────┘");
+
+    let mut batch_count = 0;
 
     loop {
         // 读取batch大小
@@ -92,10 +102,23 @@ fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
         // records count
         let records_count: u32 = buffer.get_u32();
 
-        // println!("Journal Batch size: {}", batch_size);
+        batch_count += 1;
+
+        println!("--------------------------------------------------");
+        println!("journal 批次: {}", batch_count);
+        println!("--------------------------------------------------");
+
         println!("Journal Offset: {}", journal_offset);
         println!("Queue Topic Name: {}", queue_topic_name);
-
+        println!(
+            "Queue first batch baseoffset: {}",
+            first_batch_queue_base_offset
+        );
+        println!(
+            "Queue last batch baseoffset: {}",
+            last_batch_queue_base_offset
+        );
+        println!("Records count: {}", records_count);
         // 使用MemoryRecords解析剩余的buffer内容
         let memory_records = MemoryRecords::new(buffer.clone());
 
@@ -110,11 +133,14 @@ fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
         // 解析batch header
         let batch_header = first_batch.header();
         // println!("Batch Header:");
-        println!("Queue baseoffset: {}", batch_header.first_offset);
-        println!(
-            "Queue last offset delta: {}",
-            batch_header.last_offset_delta
-        );
+        // println!(
+        //     "Queue first batch baseoffset: {}",
+        //     batch_header.first_offset
+        // );
+        // println!(
+        //     "Queue first batch offset delta: {}",
+        //     batch_header.last_offset_delta
+        // );
         // println!(
         //     "  First Timestamp: {}",
         //     format_timestamp(batch_header.first_timestamp)
@@ -126,22 +152,20 @@ fn parse_journal_log(file: &PathBuf) -> AppResult<()> {
 
         // 解析records
         let records = first_batch.records();
-        print!("Records:");
+        println!("Records:");
         for (_i, record) in records.iter().enumerate() {
-            // println!("  Record {}:", i + 1);
-            // println!("    Offset Delta: {}", record.offset_delta);
-            // println!("    Timestamp Delta: {}", record.timestamp_delta);
-            // if let Some(key) = &record.key {
-            //     println!("    Key: {}", String::from_utf8_lossy(key));
-            // }
             if let Some(value) = &record.value {
-                print!("    Value: {}", String::from_utf8_lossy(value));
+                print!("Value: {}", String::from_utf8_lossy(value));
+                if (_i + 1) % 10 == 0 {
+                    println!();
+                } else {
+                    print!("\t");
+                }
             }
         }
+        println!();
 
         // 输出解析结果
-
-        println!("\n---");
     }
 
     Ok(())
@@ -173,7 +197,10 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
                 let batch_header = batchs.first().unwrap().header();
                 println!("batch_header: {}", batch_header);
                 let records = batchs.first().unwrap().records();
-                println!("records: {:?}", records.len());
+                for record in records {
+                    let value = record.value.as_ref().map(|v| String::from_utf8_lossy(v));
+                    println!("record: {:?}", value);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 println!("读取到文件末尾");

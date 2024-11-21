@@ -432,6 +432,7 @@ impl RequestProcessor {
                 &request.member_id,
                 request.generation_id,
                 group_assignment,
+                request_context,
             )
             .await;
         debug!("sync group response: {:?}", sync_group_result);

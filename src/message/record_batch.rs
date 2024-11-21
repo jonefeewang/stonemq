@@ -27,7 +27,7 @@ impl RecordBatch {
             length: cursor.get_i32(),
             partition_leader_epoch: cursor.get_i32(),
             magic: cursor.get_i8(),
-            crc: cursor.get_i32(),
+            crc: cursor.get_u32(),
             attributes: cursor.get_i16(),
             last_offset_delta: cursor.get_i32(),
             first_timestamp: cursor.get_i64(),
@@ -35,6 +35,7 @@ impl RecordBatch {
             producer_id: cursor.get_i64(),
             producer_epoch: cursor.get_i16(),
             first_sequence: cursor.get_i32(),
+            records_count: cursor.get_i32(),
         }
     }
     // 将批次的 buffer 合并回原始 MemoryRecords
@@ -106,6 +107,7 @@ impl RecordBatch {
         // deserialize batch header
         let base_offset = cursor.get_i64();
         let batch_size = cursor.get_i32();
+        let _ = cursor.get_i32(); // partition leader epoch
         let magic = cursor.get_i8();
 
         let max_msg_size = global_config().general.max_msg_size;
@@ -138,15 +140,15 @@ impl RecordBatch {
             ))));
         }
 
-        let crc = cursor.get_i32();
+        let batch_crc = cursor.get_u32();
         // validate crc
         cursor.set_position(ATTRIBUTES_OFFSET as u64);
-        let crc_parts = &cursor.get_ref()[..];
-        let crc_value = crc32c::crc32c(crc_parts);
-        if crc_value as i32 != crc {
+        let crc_parts = &cursor.get_ref()[cursor.position() as usize..];
+        let compute_crc = crc32c::crc32c(crc_parts);
+        if compute_crc != batch_crc {
             return Err(AppError::RequestError(Cow::Owned(format!(
                 "CRC mismatch: expected {}, but found {}",
-                crc_value, crc
+                compute_crc, batch_crc
             ))));
         }
         //validate record count

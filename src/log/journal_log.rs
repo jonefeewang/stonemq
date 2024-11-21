@@ -89,6 +89,19 @@ impl JournalLog {
             &mut memory_records,
         )?;
 
+        {
+            let dashmap_value = self
+                .queue_next_offset_info
+                .get(&queue_topic_partition)
+                .unwrap();
+            trace!(
+                "topic partition: {} append_records 结束offset: {},dashmap中的topic partition entry value: {:?}",
+                queue_topic_partition.id(),
+                self.next_offset.load(),
+                *dashmap_value
+            );
+        }
+
         let (active_seg_size, active_segment_offset_index_full) =
             self.get_active_segment_info().await?;
 
@@ -112,8 +125,11 @@ impl JournalLog {
         )
         .await?;
 
-        self.update_offsets(queue_topic_partition.clone(), log_append_info.records_count)
-            .await;
+        // 追加一个批次，偏移量加1
+        self.next_offset.fetch_add(1);
+
+        // self.update_offsets(queue_topic_partition.clone(), log_append_info.records_count)
+        //     .await;
 
         drop(_write_guard);
 
@@ -197,35 +213,49 @@ impl JournalLog {
         let mut records_count: u32 = 0;
         let mut queue_next_offset = self
             .queue_next_offset_info
-            .get_mut(queue_topic_partition)
-            .unwrap();
+            .entry(queue_topic_partition.clone())
+            .or_insert(0);
+
+        trace!(
+            "validate_records_and_assign_offset 开始offset: {}, topic partition: {}",
+            *queue_next_offset,
+            queue_topic_partition.id()
+        );
+
         if first_offset == -1 {
             first_offset = *queue_next_offset;
         }
         for mut batch in record_batches {
-            &batch.validate_batch()?;
+            let _ = &batch.validate_batch()?;
             let records = batch.records();
             for record in records {
                 // todo: validate records
                 records_count += 1;
-                let offset = *queue_next_offset + 1;
+                *queue_next_offset += 1;
                 let record_time_stamp = batch.base_timestamp() + record.timestamp_delta;
                 if record_time_stamp > max_timestamp {
                     max_timestamp = record_time_stamp;
-                    offset_of_max_timestamp = offset;
+                    offset_of_max_timestamp = *queue_next_offset;
                 }
-                *queue_next_offset = offset;
             }
 
-            batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1);
+            batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1)?;
             last_offset = batch.base_offset();
             // batch.set_first_timestamp(max_timestamp);
-            debug!(
-                "validate_records_and_assign_offset: {}",
-                batch.base_offset()
+            trace!(
+                "batch xxx topic partition: {}, base_offset: {}, queue_next_offset: {}",
+                queue_topic_partition.id(),
+                batch.base_offset(),
+                *queue_next_offset
             );
             batch.unsplit(memory_records);
         }
+
+        trace!(
+            "validate_records_and_assign_offset 结束offset:{:?}",
+            *queue_next_offset,
+        );
+
         Ok(LogAppendInfo {
             first_offset,
             last_offset,
@@ -258,6 +288,12 @@ impl JournalLog {
     async fn flush_segment(&self, active_seg: &Arc<LogSegment>) -> AppResult<()> {
         active_seg.flush().await?;
         self.recover_point.store(self.next_offset.load() - 1);
+        debug!(
+            "topic partition: {} flush_segment 结束offset: {},recover_point: {}",
+            self.topic_partition.id(),
+            self.next_offset.load(),
+            self.recover_point.load()
+        );
         Ok(())
     }
 
@@ -339,6 +375,11 @@ impl JournalLog {
             + memory_records.size() as u32
             + active_seg_size;
 
+        debug!(
+            "total_size: {},config size: {}, active_seg_index_full: {}",
+            total_size, config.journal_segment_size, active_segment_offset_index_full
+        );
+
         total_size >= config.journal_segment_size as u32 || active_segment_offset_index_full
     }
 
@@ -380,7 +421,7 @@ impl JournalLog {
             None,
         ));
         segments.insert(new_base_offset, new_seg);
-        trace!("日志段滚动到新的基准偏移量: {}", new_base_offset);
+        debug!("日志段滚动到新的基准偏移量: {}", new_base_offset);
         Ok(())
     }
 
@@ -433,17 +474,18 @@ impl JournalLog {
     ///
     /// * `queue_topic_partition` - 主题分区。
     /// * `record_count` - 追加的记录数。
-    async fn update_offsets(&self, queue_topic_partition: TopicPartition, record_count: u32) {
-        let mut queue_next_offset = self
-            .queue_next_offset_info
-            .entry(queue_topic_partition.clone())
-            .or_insert(0);
-        *queue_next_offset += record_count as i64;
+    // async fn update_offsets(&self, queue_topic_partition: TopicPartition, record_count: u32) {
+    //     let mut queue_next_offset = self
+    //         .queue_next_offset_info
+    //         .entry(queue_topic_partition.clone())
+    //         .or_insert(0);
+    //     *queue_next_offset += record_count as i64;
 
-        self.next_offset.fetch_add(record_count as i64);
-        trace!("更新journal log偏移量: {}", self.next_offset.load());
-        trace!("更新queue next offset: {}", *queue_next_offset);
-    }
+    //     // journal 的 批次是一个大批次(journal 批次头+MemoryRecords)，所以每次追加一个批次，偏移量加1
+    //     self.next_offset.fetch_add(1);
+    //     trace!("更新journal log偏移量: {}", self.next_offset.load());
+    //     trace!("更新queue next offset: {}", *queue_next_offset);
+    // }
 
     /// 确定下一个段的基准偏移量。
     ///

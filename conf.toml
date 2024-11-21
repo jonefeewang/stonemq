@@ -18,14 +18,14 @@ max_package_size = 10_048_576
 [log]
 
 ###### general config
-recovery_checkpoint_interval = 30
+recovery_checkpoint_interval = 10
 file_records_comm_channel_size = 100
 ## default 8192(8kb)
 splitter_read_buffer_size = 8192
-splitter_wait_interval = 100_1000
-
-
 # default 100ms
+splitter_wait_interval = 10_000
+
+
 ###### journal config
 # default segment size 10M
 journal_segment_size = 10_240

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 use tokio::time::Interval;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
@@ -43,8 +43,17 @@ impl SplitterTask {
     }
     #[instrument(name = "splitter_run", skip_all, fields(target_offset))]
     pub async fn run(&mut self, mut shutdown: Shutdown) -> AppResult<()> {
+        debug!(
+            "splitter task for journal: {} and queues: {:?}",
+            self.topic_partition.id(),
+            self.queue_logs
+                .keys()
+                .map(|tp| tp.id())
+                .collect::<Vec<String>>()
+        );
         while !shutdown.is_shutdown() {
             let target_offset = self.journal_log.split_offset.load() + 1;
+            debug!("循环开始，读取目标offset: {}", target_offset);
 
             match self
                 .process_target_offset(target_offset, &mut shutdown)
@@ -52,16 +61,29 @@ impl SplitterTask {
             {
                 Ok(()) => continue,
                 Err(e) if self.is_retrievable_error(&e) => {
+                    trace!(
+                        "读取目标offset失败，可恢复中: {}，interval: {:?}",
+                        e,
+                        self.read_wait_interval
+                    );
                     if shutdown.is_shutdown() {
                         return Ok(());
                     }
                     tokio::select! {
-                        _ = self.read_wait_interval.tick() => {},
-                        _ = shutdown.recv() => return Ok(()),
+                        _ = self.read_wait_interval.tick() => {
+                            trace!("等待继续读取......");
+                        },
+                        _ = shutdown.recv() => {
+                            println!("shutdown 收到信号");
+                            return Ok(());
+                        }
                     }
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    error!("读取目标offset失败，不no no可恢复: {}", e);
+                    return Err(e);
+                }
             }
         }
         Ok(())
@@ -72,10 +94,6 @@ impl SplitterTask {
         target_offset: i64,
         shutdown: &mut Shutdown,
     ) -> AppResult<()> {
-        trace!(
-            "splitter 进入循环，split offset: {}",
-            self.journal_log.split_offset.load()
-        );
         let position_info = self
             .journal_log
             .get_relative_position_info(target_offset)
@@ -238,7 +256,7 @@ impl SplitterTask {
 
         self.journal_log.split_offset.store(journal_offset);
         trace!(
-            "写入queue log成功,{}, 更新split offset: {}",
+            "d,{}, 更新split offset: {}",
             records_count,
             self.journal_log.split_offset.load()
         );

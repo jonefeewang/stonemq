@@ -15,6 +15,7 @@ fn test_batch_header_display() {
         producer_id: -1,
         producer_epoch: -1,
         first_sequence: -1,
+        records_count: 1,
     };
 
     let display_str = format!("{}", header);
