@@ -6,7 +6,7 @@ use std::{
 use once_cell::sync::Lazy;
 
 use crate::{
-    message::TopicPartition,
+    message::{MemoryRecords, TopicPartition},
     protocol::{
         array::ArrayType,
         primary_types::{PBytes, PString, I16, I32, I64, I8},
@@ -100,10 +100,10 @@ pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| 
     let fields_desc = vec![
         (
             0,
-            "header",
+            "partition_header",
             DataType::Schema(FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA.clone()),
         ),
-        (1, "records", DataType::PBytes(PBytes::default())),
+        (1, "record_set", DataType::Records(MemoryRecords::empty())),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
@@ -291,7 +291,7 @@ impl FetchResponse {
                     topic_value_set.sub_valueset_of_ary_field("partition_responses")?;
 
                 let mut header_value_set =
-                    partition_value_set.sub_valueset_of_schema_field("header")?;
+                    partition_value_set.sub_valueset_of_schema_field("partition_header")?;
 
                 header_value_set
                     .append_field_value("partition", topic_partition.partition.into())?;
@@ -322,8 +322,10 @@ impl FetchResponse {
                 header_value_set.append_field_value("aborted_transactions", aborted_txns_array)?;
 
                 // 追加header
-                partition_value_set.append_field_value("header", header_value_set.into())?;
-                partition_value_set.append_field_value("records", partition_data.records.into())?;
+                partition_value_set
+                    .append_field_value("partition_header", header_value_set.into())?;
+                partition_value_set
+                    .append_field_value("record_set", partition_data.records.into())?;
 
                 partition_responses.push(partition_value_set.into());
             }

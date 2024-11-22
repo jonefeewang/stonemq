@@ -19,6 +19,8 @@ use std::borrow::Cow;
 use std::fmt::Debug;
 use tokio::sync::oneshot;
 
+pub use log_segment::NO_POSITION_INFO;
+
 /// Calculates the overhead for a journal log record.
 ///
 /// # Arguments

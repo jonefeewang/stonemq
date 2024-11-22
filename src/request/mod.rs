@@ -194,7 +194,7 @@ impl RequestProcessor {
             }
             ApiRequest::SyncGroup(request) => {
                 Self::handle_sync_group_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+
                 Ok(())
             }
             ApiRequest::LeaveGroup(request) => {
@@ -252,6 +252,15 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_fetch_request(
         request_context: &mut RequestContext<'_>,
         request: FetchRequest,
@@ -500,6 +509,15 @@ impl RequestProcessor {
         debug!("finished heartbeat response ");
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_offset_commit_request(
         request_context: &mut RequestContext<'_>,
         request: OffsetCommitRequest,
@@ -527,6 +545,15 @@ impl RequestProcessor {
             .await?;
         Ok(())
     }
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            client_id = request_context.request_header.client_id,
+            correlation_id = request_context.request_header.correlation_id,
+            client_host = request_context.conn.client_ip,
+        )
+    )]
     pub async fn handle_fetch_offsets_request(
         request_context: &mut RequestContext<'_>,
         request: FetchOffsetsRequest,

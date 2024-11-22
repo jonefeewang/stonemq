@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use tracing::error;
+
 use super::ReplicaManager;
 use crate::log::PositionInfo;
 use crate::message::delayed_fetch::DelayedFetch;
@@ -13,8 +15,13 @@ impl ReplicaManager {
         self: Arc<ReplicaManager>,
         request: FetchRequest,
     ) -> AppResult<FetchResponse> {
-        let read_result = self.do_fetch(&request).await?;
+        let read_result = self.do_fetch(&request).await;
+        if read_result.is_err() {
+            error!("fetch_message do_fetch is err");
+            return Ok(FetchResponse::from(BTreeMap::new()));
+        }
 
+        let read_result = read_result.unwrap();
         let total_size = read_result
             .values()
             .map(|log_fetch_info| log_fetch_info.records.size() as i32)

@@ -21,6 +21,11 @@ pub struct LogSegment {
     offset_index: IndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
+pub const NO_POSITION_INFO: PositionInfo = PositionInfo {
+    base_offset: 0,
+    offset: 0,
+    position: 0,
+};
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PositionInfo {
     pub base_offset: i64,

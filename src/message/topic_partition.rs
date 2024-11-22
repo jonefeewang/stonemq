@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use tracing::trace;
 
 use crate::log::{Log, LogAppendInfo, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
@@ -63,6 +64,12 @@ impl QueuePartition {
     }
 
     pub async fn read_records(&self, offset: i64, max_bytes: i32) -> AppResult<LogFetchInfo> {
+        trace!(
+            "topic partition: {} read_records offset: {}, max_bytes: {}",
+            self.topic_partition.id(),
+            offset,
+            max_bytes
+        );
         if max_bytes <= 0 {
             return Ok(LogFetchInfo {
                 records: MemoryRecords::empty(),

@@ -219,7 +219,9 @@ impl GroupCoordinator {
                             group.clone(),
                         )
                         .await;
+                    
                         request_context.notify_processor_proceed().await;
+                        debug!("notified processor processing ");
                         Ok(rx.await.unwrap())
                     }
                 }
@@ -267,6 +269,7 @@ impl GroupCoordinator {
                             )
                             .await;
                             request_context.notify_processor_proceed().await;
+                            debug!("notified processor processing ");
                             Ok(rx.await.unwrap())
                         }
                     }
@@ -302,6 +305,7 @@ impl GroupCoordinator {
                             )
                             .await;
                             request_context.notify_processor_proceed().await;
+                            debug!("notified processor processing ");
                             Ok(rx.await.unwrap())
                         } else {
                             // member is not the leader and has not changed protocol, just return current group information
@@ -373,6 +377,7 @@ impl GroupCoordinator {
 
         // 通知request processor 可以处理下一个
         request_context.notify_processor_proceed().await;
+        debug!("notified processor processing ");
         // 等待加入结果
         Ok(rx.await.unwrap())
     }
@@ -863,6 +868,7 @@ impl GroupCoordinator {
                         drop(write_lock);
                     }
                     // 通知processor继续处理, 此处的等待不会阻塞processor
+                    debug!("notified processor processing ");
                     request_context.notify_processor_proceed().await;
                     Ok(rx.await.unwrap())
                 }

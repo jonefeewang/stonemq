@@ -1,4 +1,6 @@
-use crate::log::PositionInfo;
+use std::sync::{Arc, LazyLock};
+
+use crate::log::{PositionInfo, NO_POSITION_INFO};
 
 mod batch_header;
 mod constants;

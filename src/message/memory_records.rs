@@ -25,7 +25,9 @@ impl MemoryRecords {
     }
 
     pub fn empty() -> Self {
-        MemoryRecords { buffer: None }
+        MemoryRecords {
+            buffer: Some(BytesMut::with_capacity(0)),
+        }
     }
 
     fn next_batch_size(&self) -> Option<usize> {
