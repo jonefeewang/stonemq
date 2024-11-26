@@ -85,6 +85,7 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 ] }
 tracing-opentelemetry = "=0.24.0"
 tracing-core = "0.1.28"
+tracing-appender = "0.2"
 
 [dev-dependencies]
 fake = "2.9.2"

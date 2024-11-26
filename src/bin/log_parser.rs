@@ -2,12 +2,13 @@ use bytes::{Buf, BytesMut};
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use stonemq::log::CheckPointFile;
+use stonemq::log::{CheckPointFile, IndexFile};
 use stonemq::message::MemoryRecords;
 use stonemq::service::setup_tracing;
 use stonemq::AppResult;
+use tokio::runtime::Runtime;
 
 #[derive(Parser)]
 #[command(version)]
@@ -35,6 +36,12 @@ enum Commands {
         #[arg(short, long)]
         file: PathBuf,
     },
+    Batch {
+        #[arg(short, long)]
+        file: PathBuf,
+        #[arg(short, long)]
+        offset: i64,
+    },
 }
 
 #[tokio::main]
@@ -48,7 +55,28 @@ async fn main() -> AppResult<()> {
         Commands::Queue { file } => parse_queue_log(file),
         Commands::Index { file } => parse_index(file),
         Commands::Checkpoint { file } => parse_checkpoint(file).await,
+        Commands::Batch { file, offset } => find_record(file, *offset),
     }
+}
+
+fn find_record(file: &PathBuf, offset: i64) -> AppResult<()> {
+    let rt = Runtime::new()?;
+    let index_file_name = file.with_extension("index");
+    let base_offset = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    let file = File::open(file)?;
+
+    // let offset_index = IndexFile::new(index_file_name, 2048, false).await?;
+    // let ref_position = offset_index.lookup((offset - base_offset) as u32).await?;
+    let mut reader = BufReader::new(file);
+    let mut buffer = BytesMut::with_capacity(1024);
+    // reader.seek(SeekFrom::Start(ref_position.1 as u64))?;
+    let buffer = vec![0; 12];
+
+    todo!()
 }
 
 fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
@@ -60,7 +88,10 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
     println!("┌──────────────────────────────────────────────────────────────────────────────┐");
     println!("│                                  日志解析器                                    │");
     println!("├──────────────────────────────────────────────────────────────────────────────┤");
-    println!("│ 打印时间: {:<70} │", Local::now().format("%Y-%m-%d %H:%M:%S"));
+    println!(
+        "│ 打印时间: {:<70} │",
+        Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
     println!("│ 文件路径: {:<70} │", file_path.to_str().unwrap_or(""));
     println!("└──────────────────────────────────────────────────────────────────────────────┘");
 
@@ -69,6 +100,8 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
     loop {
         // 读取batch大小
         buffer.resize(4, 0);
+        let position = reader.stream_position()?;
+
         match reader.read_exact(&mut buffer) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -102,10 +135,10 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         // records count
         let records_count: u32 = buffer.get_u32();
 
-        batch_count += 1;
-
         println!("--------------------------------------------------");
-        println!("journal 批次: {}", batch_count);
+        println!("journal 批次(以0开始): {}", batch_count);
+        println!("批次开头位置: {}", position);
+        println!("批次大小(不包含开头size大小4个字节): {}", batch_size);
         println!("--------------------------------------------------");
 
         println!("Journal Offset: {}", journal_offset);
@@ -164,6 +197,7 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
             }
         }
         println!();
+        batch_count += 1;
 
         // 输出解析结果
     }
@@ -179,6 +213,7 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
 
     loop {
         // 读取batch大小
+        let position = reader.stream_position()?;
 
         match reader.read_exact(&mut offset_and_length) {
             Ok(_) => {
@@ -195,7 +230,9 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
                 }
 
                 let batch_header = batchs.first().unwrap().header();
-                println!("batch_header: {}", batch_header);
+                println!("批次开头位置: {}", position);
+                println!("第一个batch header: {}", batch_header);
+
                 let records = batchs.first().unwrap().records();
                 for record in records {
                     let value = record.value.as_ref().map(|v| String::from_utf8_lossy(v));

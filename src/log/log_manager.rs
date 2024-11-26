@@ -305,6 +305,11 @@ impl LogManager {
                 .write_checkpoints(split_checkpoints)
                 .await?;
 
+            for entry in self.journal_logs.iter() {
+                let log = entry.value();
+                log.checkpoint_next_offset().await?;
+            }
+
             if shutdown.is_shutdown() {
                 break;
             }

@@ -342,13 +342,13 @@ impl QueueLog {
         memory_records: &MemoryRecords,
         active_segment_offset_index_full: bool,
     ) -> bool {
-        debug!(
-            "active_seg_size: {}, memory_records size: {}, global config size: {},active_segment_offset_index_full: {}",
-            active_seg_size,
-            memory_records.size() as u32,
-            global_config().log.queue_segment_size as u32,
-            active_segment_offset_index_full
-        );
+        // debug!(
+        //     "active_seg_size: {}, memory_records size: {}, global config size: {},active_segment_offset_index_full: {}",
+        //     active_seg_size,
+        //     memory_records.size() as u32,
+        //     global_config().log.queue_segment_size as u32,
+        //     active_segment_offset_index_full
+        // );
         active_seg_size + memory_records.size() as u32
             >= global_config().log.queue_segment_size as u32
             || active_segment_offset_index_full

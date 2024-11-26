@@ -506,7 +506,7 @@ impl RequestProcessor {
                 request_context.request_header.correlation_id,
             )
             .await?;
-        debug!("finished heartbeat response ");
+        // debug!("finished heartbeat response ");
         Ok(())
     }
     #[instrument(

@@ -43,9 +43,11 @@ impl MemoryRecords {
     }
     pub fn first_batch_base_offset(&self) -> Option<i64> {
         if let Some(buf) = &self.buffer {
-            let mut cursor = Cursor::new(buf.as_ref());
-            let _ = cursor.get_i64();
-            return Some(cursor.get_i64());
+            if !buf.is_empty() {
+                let mut cursor = Cursor::new(buf.as_ref());
+                let base_offset = cursor.get_i64();
+                return Some(base_offset);
+            }
         }
         None
     }

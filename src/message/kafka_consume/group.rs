@@ -11,7 +11,7 @@ use tokio::{
     sync::{oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
 };
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 use crate::{
     global_config,
@@ -777,7 +777,8 @@ impl GroupMetadataManager {
                     group_id, member_id, e
                 )));
             } else {
-                let result = db.put(key, value.unwrap());
+                let value = value.unwrap();
+                let result = db.put(&key, &value);
                 if result.is_err() {
                     let error_msg = format!(
                         "group id:{}  member id:{} 存储offset失败: {:?}",
@@ -787,6 +788,8 @@ impl GroupMetadataManager {
                     );
                     error!("{}", error_msg);
                     return Err(KafkaError::Unknown(error_msg));
+                } else {
+                    trace!("存储offset成功: {}, value: {:?}", key, value);
                 }
             }
         }
@@ -837,6 +840,7 @@ impl GroupMetadataManager {
                 );
             }
         }
+        trace!("获取offset成功: {:?}", offsets);
         Ok(offsets)
     }
     pub fn load() -> Self {

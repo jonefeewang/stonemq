@@ -49,7 +49,7 @@ impl FileRecords {
     pub async fn open<P: AsRef<Path>>(file_name: P) -> AppResult<Self> {
         let file = OpenOptions::new()
             .create(true)
-            .truncate(false)
+            .append(true)
             .write(true)
             .open(&file_name)
             .await?;
@@ -73,7 +73,7 @@ impl FileRecords {
         &self,
         file: File,
         mut rx: Receiver<FileOp>,
-        total_size: Arc<AtomicCell<usize>>,
+        size: Arc<AtomicCell<usize>>,
     ) {
         let file_name = self.file_name.clone();
         tokio::spawn(async move {
@@ -104,7 +104,7 @@ impl FileRecords {
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
-                                total_size.fetch_add(total_write);
+                                size.fetch_add(total_write);
                                 resp_tx.send(Ok(())).unwrap_or_else(|_| {
                                     error!("send success  response error");
                                 });
@@ -141,7 +141,7 @@ impl FileRecords {
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
-                                total_size.fetch_add(total_write);
+                                size.fetch_add(total_write);
                                 resp_tx.send(Ok(())).unwrap_or_else(|_| {
                                     error!("send success  response error");
                                 });
@@ -157,11 +157,9 @@ impl FileRecords {
 
                     FileOp::Flush(sender) => match writer.get_ref().sync_all().await {
                         Ok(_) => {
-                            sender
-                                .send(Ok(total_size.load() as u64))
-                                .unwrap_or_else(|_| {
-                                    error!("send flush success response error");
-                                });
+                            sender.send(Ok(size.load() as u64)).unwrap_or_else(|_| {
+                                error!("send flush success response error");
+                            });
                             trace!("{} file flush finished .", &file_name);
                         }
                         Err(error) => {
@@ -235,19 +233,13 @@ impl FileRecords {
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
 
-        Ok(total_size as usize)
+        // total write size = total_size + 4
+        Ok(total_size as usize + 4)
     }
 
     pub async fn append_queue_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (
-            journal_offset,
-            topic_partition,
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
-            records,
-        ): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
+        (_, topic_partition, _, _, _, records): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> AppResult<usize> {
         let topic_partition_id = topic_partition.id();
         let total_write = records.size();
@@ -382,7 +374,7 @@ impl FileRecords {
 
         loop {
             file.read_exact(&mut buffer).await?;
-            let length = u32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
+            let length = i32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
             let current_offset = i64::from_be_bytes([
                 buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6],
                 buffer[7],
@@ -390,7 +382,7 @@ impl FileRecords {
 
             match current_offset.cmp(&target_offset) {
                 std::cmp::Ordering::Equal => {
-                    let current_position = file.seek(SeekFrom::Current(-8)).await?;
+                    let current_position = file.seek(SeekFrom::Current(-12)).await?;
                     return Ok(current_position as i64);
                 }
                 std::cmp::Ordering::Greater => return Ok(-1),
@@ -399,5 +391,121 @@ impl FileRecords {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use tempfile::tempdir;
+    use tokio::fs::File;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn test_seek_journal() -> std::io::Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test.log");
+        let mut file = File::create(&file_path).await?;
+
+        // 写入3条测试记录
+        // 记录1: batch_size=20, offset=1
+        file.write_all(&[0, 0, 0, 20]).await?; // batch size
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).await?; // offset
+        file.write_all(&[1; 20]).await?; // data
+
+        // 记录2: batch_size=30, offset=2
+        file.write_all(&[0, 0, 0, 30]).await?;
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).await?;
+        file.write_all(&[2; 30]).await?;
+
+        // 记录3: batch_size=40, offset=3
+        file.write_all(&[0, 0, 0, 40]).await?;
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 3]).await?;
+        file.write_all(&[3; 40]).await?;
+
+        let mut file = File::open(&file_path).await?;
+
+        // 测试查找存在的offset
+        let position = FileRecords::seek_to_target_offset_journal(&mut file, 2).await?;
+        assert_eq!(position, 32);
+
+        // 测试查找不存在的offset
+        let result = FileRecords::seek_to_target_offset_journal(&mut file, 4).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::NotFound);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_seek_queue() -> std::io::Result<()> {
+        let dir = tempdir()?;
+        let file_path = dir.path().join("test.log");
+        let mut file = File::create(&file_path).await?;
+
+        // 写入3条测试记录
+        // 记录1: offset=1, length=20
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).await?; // offset
+        file.write_all(&[0, 0, 0, 20]).await?; // length
+        file.write_all(&[1; 20]).await?; // data
+
+        // 记录2: offset=2, length=30
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).await?;
+        file.write_all(&[0, 0, 0, 30]).await?;
+        file.write_all(&[2; 30]).await?;
+
+        // 记录3: offset=3, length=40
+        file.write_all(&[0, 0, 0, 0, 0, 0, 0, 3]).await?;
+        file.write_all(&[0, 0, 0, 40]).await?;
+        file.write_all(&[3; 40]).await?;
+
+        let mut file = File::open(&file_path).await?;
+
+        // 测试查找存在的offset
+        let position = FileRecords::seek_to_target_offset_queue(&mut file, 2).await?;
+        assert_eq!(position, 32);
+
+        // 测试查找不存在的offset
+        let position = FileRecords::seek_to_target_offset_queue(&mut file, 4).await?;
+        assert_eq!(position, -1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_seek_queue_seg() -> std::io::Result<()> {
+        let file_path =
+            PathBuf::from("/Users/wangjunfei/projects/stonemq/test_data/queue/topic_a-0/0.log");
+        let file = File::open(&file_path).await?;
+
+        // 测试查找存在的offset
+        let ref_pos = PositionInfo {
+            base_offset: 0,
+            offset: 164,
+            position: 1883,
+        };
+        let (file, position) = FileRecords::seek(file, 200, ref_pos, LogType::Queue).await?;
+        assert_eq!(position.position, 2268);
+
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_seek_journal_seg() -> std::io::Result<()> {
+        let file_path =
+            PathBuf::from("/Users/wangjunfei/projects/stonemq/test_data/journal/journal-0/0.log");
+        let file = File::open(&file_path).await?;
+
+        // 测试查找存在的offset
+        let ref_pos = PositionInfo {
+            base_offset: 0,
+            offset: 3,
+            position: 882,
+        };
+        let (file, position) = FileRecords::seek(file, 4, ref_pos, LogType::Journal).await?;
+        assert_eq!(position.position, 1000);
+
+        Ok(())
     }
 }

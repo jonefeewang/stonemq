@@ -219,7 +219,7 @@ impl GroupCoordinator {
                             group.clone(),
                         )
                         .await;
-                    
+
                         request_context.notify_processor_proceed().await;
                         debug!("notified processor processing ");
                         Ok(rx.await.unwrap())
@@ -698,10 +698,8 @@ impl GroupCoordinator {
                     }
                     GroupState::PreparingRebalance => {
                         if !locked_read_group.has_member(member_id) {
-                            trace!("member not found in preparing rebalance");
                             Err(KafkaError::UnknownMemberId(member_id.to_string()))
                         } else if generation_id != locked_read_group.generation_id() {
-                            trace!("generation id not match");
                             Err(KafkaError::IllegalGeneration(group_id.to_string()))
                         } else {
                             // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
@@ -711,7 +709,7 @@ impl GroupCoordinator {
                                 member_id,
                             )
                             .await;
-                            debug!("heartbeat found group is in preparing rebalance");
+                            info!("heartbeat found group is in preparing rebalance");
                             Err(KafkaError::RebalanceInProgress(group_id.to_string()))
                         }
                     }

@@ -547,6 +547,10 @@ impl JournalLog {
         let queue_next_offset_checkpoints = CheckPointFile::new(queue_next_offset_checkpoint_path);
 
         let queue_next_offset = rt.block_on(queue_next_offset_checkpoints.read_checkpoints())?;
+        trace!(
+            "load journal log queue_next_offset: {:?}",
+            queue_next_offset
+        );
 
         let log_start_offset = segments
             .first_key_value()
@@ -568,6 +572,14 @@ impl JournalLog {
             topic_partition: topic_partition.clone(),
             index_file_max_size,
         };
+
+        info!(
+            "load journal log:{} next_offset:{},recover_point:{},split_offset:{}",
+            topic_partition.id(),
+            log.next_offset.load(),
+            log.recover_point.load(),
+            log.split_offset.load()
+        );
 
         Ok(log)
     }
@@ -661,5 +673,16 @@ impl JournalLog {
         }
 
         Ok(segments)
+    }
+
+    pub async fn checkpoint_next_offset(&self) -> AppResult<()> {
+        let queue_next_offset_info = self
+            .queue_next_offset_info
+            .iter()
+            .map(|entry| (entry.key().clone(), *entry.value()))
+            .collect();
+        self.queue_next_offset_checkpoints
+            .write_checkpoints(queue_next_offset_info)
+            .await
     }
 }

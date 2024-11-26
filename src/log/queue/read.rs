@@ -10,7 +10,8 @@ use crate::{global_config, AppResult};
 use bytes::BytesMut;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tracing::{error, trace};
+use tokio::time::error::Elapsed;
+use tracing::{debug, error, trace};
 
 impl QueueLog {
     async fn next_segment_base_offset(&self, current_base_offset: i64) -> Option<i64> {
@@ -37,6 +38,18 @@ impl QueueLog {
         segment.get_relative_position(offset).await
     }
 
+    pub async fn calc_max_read_size(&self, base_offset: i64) -> Option<usize> {
+        let segments = self.segments.read().await;
+        let floor_segment = segments.range(..=base_offset).next_back();
+        if floor_segment.is_some() {
+            // active segment
+            let (_, active_segment) = floor_segment.unwrap();
+            Some(active_segment.size())
+        } else {
+            None
+        }
+    }
+
     pub async fn read_records(
         &self,
         topic_partition: &TopicPartition,
@@ -50,6 +63,7 @@ impl QueueLog {
             max_size
         );
         let ref_position_info = self.get_reference_position_info(start_offset).await?;
+        trace!("ref_position_info: {:?}", ref_position_info);
         let queue_topic_dir =
             PathBuf::from(global_config().log.queue_base_dir.clone()).join(topic_partition.id());
         let segment_path = queue_topic_dir.join(format!("{}.log", ref_position_info.base_offset));
@@ -64,15 +78,13 @@ impl QueueLog {
         )
         .await;
 
+        trace!("seek_result: {:?}", seek_result);
+
         if seek_result.is_err() {
-            error!(
-                "queue read_records seek_result is err: {:?}",
-                seek_result.err().unwrap()
-            );
             return Ok(LogFetchInfo {
                 records: MemoryRecords::empty(),
-                log_start_offset: 0,
-                log_end_offset: 0,
+                log_start_offset: self.log_start_offset,
+                log_end_offset: self.last_offset.load(),
                 position_info: NO_POSITION_INFO,
             });
         }
@@ -80,13 +92,32 @@ impl QueueLog {
         let (mut segment_file, current_position) = seek_result.unwrap();
 
         let total_len = segment_file.metadata().await?.len();
-        let left_len = total_len - current_position.position as u64;
 
-        trace!(
+        // 如果是非活动段的话，直接取到末尾，就是一个record完整结束，如果是活动段的话，可能会截断
+        let max_position = if let Some(max_read_size) =
+            self.calc_max_read_size(ref_position_info.base_offset).await
+        {
+            // 活动段，需要取到最后一个record的结束
+            max_read_size as u64
+        } else {
+            total_len
+        };
+
+        let left_len = max_position - current_position.position as u64;
+
+        debug!(
             "queue read_records topic partition: {}, left_len: {}",
             topic_partition.id(),
             left_len
         );
+        if left_len == 0 {
+            return Ok(LogFetchInfo {
+                records: MemoryRecords::empty(),
+                log_start_offset: self.log_start_offset,
+                log_end_offset: self.last_offset.load(),
+                position_info: current_position,
+            });
+        }
 
         if left_len < max_size as u64 {
             // 剩余长度小于max_size，则直接读取剩余所有消息,
@@ -95,6 +126,10 @@ impl QueueLog {
             let _ = segment_file.read(&mut buffer).await?;
 
             let records = MemoryRecords::new(buffer);
+            trace!(
+                "get records first batch base offset: {:?}",
+                records.first_batch_base_offset()
+            );
             return Ok(LogFetchInfo {
                 records,
                 log_start_offset: self.log_start_offset,
@@ -103,9 +138,14 @@ impl QueueLog {
             });
         }
 
+        // 这里需要把max_size转换为真实record的最终截断位置，而不是在record的中间
         let mut buffer = BytesMut::zeroed(max_size as usize);
         let _ = segment_file.read(&mut buffer).await?;
         let records = MemoryRecords::new(buffer);
+        trace!(
+            "get records first batch base offset enough---: {:?}",
+            records.first_batch_base_offset()
+        );
         Ok(LogFetchInfo {
             records,
             log_start_offset: self.log_start_offset,

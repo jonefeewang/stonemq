@@ -17,7 +17,6 @@ impl ReplicaManager {
     ) -> AppResult<FetchResponse> {
         let read_result = self.do_fetch(&request).await;
         if read_result.is_err() {
-            error!("fetch_message do_fetch is err");
             return Ok(FetchResponse::from(BTreeMap::new()));
         }
 
