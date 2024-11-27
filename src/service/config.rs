@@ -272,6 +272,12 @@ pub enum AppError {
 
     #[error("InsufficientData")]
     InsufficientData,
+
+    #[error("Send channel error: {0}")]
+    SendChannelError(String),
+
+    #[error("task error: {0}")]
+    TaskError(String),
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}

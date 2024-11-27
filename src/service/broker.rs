@@ -135,7 +135,7 @@ impl Broker {
         let mut server = Server::new(
             bind_result?,
             Arc::new(Semaphore::new(max_connection)),
-            notify_shutdown,
+            notify_shutdown.clone(),
             shutdown_complete_tx,
             replica_manager.clone(),
             dynamic_config.clone(),

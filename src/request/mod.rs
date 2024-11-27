@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, instrument, trace};
 
 use crate::message::GroupCoordinator;
-use crate::network::Connection;
+use crate::network::{Connection, RequestFrame};
 use crate::protocol::api_schemas::SUPPORTED_API_VERSIONS;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::{MetaDataRequest, MetadataResponse};
@@ -83,32 +83,22 @@ impl RequestHeader {
 }
 
 #[derive(Debug)]
-pub struct RequestContext<'c> {
-    pub conn: &'c mut Connection,
-    pub request_header: RequestHeader,
-    socket_read_ch_tx: mpsc::Sender<()>,
+pub struct RequestContext {
     pub replica_manager: Arc<ReplicaManager>,
     pub group_coordinator: Arc<GroupCoordinator>,
+    pub request_header: RequestHeader,
 }
-impl<'c> RequestContext<'c> {
+impl RequestContext {
     pub fn new(
-        conn: &'c mut Connection,
         request_header: RequestHeader,
-        socket_read_ch_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
         group_coordinator: Arc<GroupCoordinator>,
     ) -> Self {
         RequestContext {
-            conn,
             request_header,
-            socket_read_ch_tx,
             replica_manager,
             group_coordinator,
         }
-    }
-    pub async fn notify_processor_proceed(&self) {
-        let sender = &self.socket_read_ch_tx;
-        let _ = sender.send(()).await;
     }
 }
 
@@ -154,8 +144,8 @@ pub struct RequestProcessor {}
 impl RequestProcessor {
     pub async fn process_request(
         request: ApiRequest,
-        request_context: &mut RequestContext<'_>,
-    ) -> AppResult<()> {
+        request_context: &mut RequestContext,
+    ) -> Bytes {
         trace!(
             "Processing request: {:?} with request header{:?}",
             request,
@@ -163,9 +153,7 @@ impl RequestProcessor {
         );
         match request {
             ApiRequest::Produce(request) => {
-                Self::handle_produce_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
-                Ok(())
+                Self::handle_produce_request(request_context, request).await
             }
             ApiRequest::Fetch(request) => {
                 Self::handle_fetch_request(request_context, request).await?;
@@ -232,7 +220,7 @@ impl RequestProcessor {
     pub async fn handle_produce_request(
         request_context: &mut RequestContext<'_>,
         request: ProduceRequest,
-    ) -> AppResult<()> {
+    ) -> Bytes {
         let tp_response = request_context
             .replica_manager
             .append_records(request.topic_data)
@@ -587,7 +575,7 @@ impl RequestProcessor {
     pub(crate) async fn respond_invalid_request(
         error: AppError,
         request_context: &RequestContext<'_>,
-    ) -> AppResult<()> {
+    ) -> Bytes {
         error!(
             "Invalid request with api key: {:?}, correlation id: {}",
             request_context.request_header.api_key, request_context.request_header.correlation_id

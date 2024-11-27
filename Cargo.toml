@@ -28,6 +28,7 @@ tokio = { version = "1.33", features = [
 
 ] }
 tokio-stream = "0.1.11"
+futures = "0.3.35"
 futures-util = { version = "0.3.28" }
 
 serde = { version = "1.0.188", features = ["derive"] }

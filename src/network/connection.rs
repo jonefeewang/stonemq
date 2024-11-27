@@ -1,8 +1,9 @@
 use std::io::{self, ErrorKind};
 
 use bytes::BytesMut;
-use tokio::io::{AsyncReadExt, BufWriter};
-use tokio::net::TcpStream;
+use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
+use tokio::net::tcp::OwnedReadHalf;
 
 use crate::network::RequestFrame;
 use crate::AppResult;
@@ -14,9 +15,8 @@ use crate::DynamicConfig;
 /// It also holds a reference to the dynamic configuration of the server.
 #[derive(Debug)]
 pub struct Connection {
-    pub writer: BufWriter<TcpStream>,
+    pub reader: BufReader<OwnedReadHalf>,
     pub buffer: BytesMut,
-    pub compression_buffer: BytesMut,
     dynamic_config: DynamicConfig,
     pub client_ip: String,
 }
@@ -26,13 +26,12 @@ impl Connection {
     ///
     /// The `TcpStream` is wrapped in a `BufWriter` for efficient writing, and a `BytesMut` buffer
     /// is created with an initial capacity of 4KB for reading data from the stream.
-    pub fn new(socket: TcpStream, dynamic_config: DynamicConfig) -> Connection {
-        let peer_addr = socket.peer_addr().unwrap();
+    pub fn new(reader: OwnedReadHalf, dynamic_config: DynamicConfig) -> Connection {
+        let peer_addr = reader.peer_addr().unwrap();
         let client_ip = peer_addr.ip().to_string();
         Connection {
-            writer: BufWriter::new(socket),
+            reader: BufReader::new(reader),
             buffer: BytesMut::with_capacity(4 * 1024),
-            compression_buffer: BytesMut::with_capacity(4 * 1024),
             dynamic_config,
             client_ip,
         }
@@ -52,7 +51,7 @@ impl Connection {
             if let Some(frame) = RequestFrame::parse(&mut self.buffer, &self.dynamic_config)? {
                 return Ok(Some(frame));
             }
-            if 0 == self.writer.read_buf(&mut self.buffer).await? {
+            if 0 == self.reader.read_buf(&mut self.buffer).await? {
                 return if self.buffer.is_empty() {
                     // client has closed the connection gracefully
                     Ok(None)
