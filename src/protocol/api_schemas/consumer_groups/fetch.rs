@@ -145,7 +145,7 @@ use std::borrow::Cow;
 use tokio::io::AsyncWriteExt;
 
 impl ProtocolCodec<FetchRequest> for FetchRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -157,7 +157,7 @@ impl ProtocolCodec<FetchRequest> for FetchRequest {
         todo!()
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchRequest> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchRequest> {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Fetch);
         let value_set = schema.read_from(buffer)?;
         FetchRequest::decode_from_value_set(value_set)
@@ -165,7 +165,7 @@ impl ProtocolCodec<FetchRequest> for FetchRequest {
 }
 
 impl ProtocolCodec<FetchResponse> for FetchResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -186,7 +186,7 @@ impl ProtocolCodec<FetchResponse> for FetchResponse {
         Ok(())
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchResponse> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchResponse> {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::Fetch);
         let value_set = schema.read_from(buffer)?;
         FetchResponse::decode_from_value_set(value_set)

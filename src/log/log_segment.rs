@@ -3,6 +3,7 @@ use crate::log::index_file::IndexFile;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
+use crate::request::errors::KafkaResult;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::path::Path;
@@ -153,15 +154,12 @@ impl LogSegment {
         {
             //正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
-                .add_entry(
-                    relative_offset as u32,
-                    (self.file_records.size()) as u32,
-                )
+                .add_entry(relative_offset as u32, (self.file_records.size()) as u32)
                 .await?;
             trace!(
                 "write index entry: {},{},{:?}",
                 relative_offset,
-                self.file_records.size() ,
+                self.file_records.size(),
                 self.offset_index
             );
             if self.time_index.is_some() {

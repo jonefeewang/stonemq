@@ -7,6 +7,7 @@ use std::string::FromUtf8Error;
 use std::{borrow::Cow, time::Duration};
 
 use crate::log::FileOp;
+use crate::request::errors::KafkaError;
 use crate::AppError::InvalidValue;
 
 use getset::{CopyGetters, Getters};
@@ -238,8 +239,6 @@ pub enum AppError {
     RequestError(Cow<'static, str>),
     #[error("error in convention : {0}")]
     ConventionError(#[from] FromUtf8Error),
-    #[error("IllegalState : {0}")]
-    IllegalStateError(Cow<'static, str>),
     ParseError(#[from] std::num::ParseIntError),
     #[error("invalid provided {0} value = {1}")]
     InvalidValue(&'static str, String),
@@ -276,8 +275,36 @@ pub enum AppError {
     #[error("Send channel error: {0}")]
     SendChannelError(String),
 
+    #[error("connection error: {0}")]
+    ConnectionError(String),
+
     #[error("task error: {0}")]
     TaskError(String),
+
+    ////////////////////////////
+    #[error("unknown error: {0}")]
+    Unknown(String),
+
+    #[error("corrupt message: {0}")]
+    CorruptMessage(String),
+
+    #[error("message too large: {0}")]
+    MessageTooLarge(String),
+
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+
+    #[error("illegal state: {0}")]
+    IllegalStateError(String),
+}
+
+impl From<AppError> for KafkaError {
+    fn from(value: AppError) -> Self {
+        match value {
+            AppError::Unknown(s) => KafkaError::Unknown(s),
+            _ => KafkaError::Unknown(value.to_string()),
+        }
+    }
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}

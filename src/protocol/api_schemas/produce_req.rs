@@ -29,7 +29,7 @@ pub const PARTITION_KEY_NAME: &str = "partition";
 pub const RECORD_SET_KEY_NAME: &str = "record_set";
 
 impl ProtocolCodec<ProduceRequest> for ProduceRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         buffer: &mut W,
         api_version: &ApiVersion,
@@ -44,7 +44,7 @@ impl ProtocolCodec<ProduceRequest> for ProduceRequest {
         produce_req_value_set.write_to(buffer).await
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
         trace!("ProduceRequest read start");
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
         trace!("ProduceRequest schema read start ----{:?}", schema);
@@ -458,11 +458,11 @@ mod tests {
         let api_version = ApiVersion::default();
         let produce_request_clone = produce_request.clone();
         produce_request
-            .write_to(&mut buffer, &api_version, 0)
+            .encode(&mut buffer, &api_version, 0)
             .await
             .unwrap();
         let mut buffer = BytesMut::from(&buffer[..]);
-        let target_produce_request = ProduceRequest::read_from(&mut buffer, &api_version).unwrap();
+        let target_produce_request = ProduceRequest::decode(&mut buffer, &api_version).unwrap();
         assert_eq!(produce_request_clone, target_produce_request);
     }
 }

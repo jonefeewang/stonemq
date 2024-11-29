@@ -124,13 +124,9 @@ impl ValueSet {
     /// 将values写进stream, 消耗掉自己，方法调用后，自己就不能再使用了
     ///
     ///
-    pub fn write_to<W>(self, writer: &mut W) -> BoxFuture<'_, AppResult<()>>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
-        async move {
-            for (_, value) in self.values {
-                match value {
+    pub fn write_to(self, writer: &mut BytesMut) -> AppResult<()> {
+        for (_, value) in self.values {
+            match value {
                     DataType::Bool(bool) => bool.write_to(writer).await?,
                     DataType::I8(i8) => i8.write_to(writer).await?,
                     DataType::I16(i16) => i16.write_to(writer).await?,
@@ -153,12 +149,10 @@ impl ValueSet {
                         ))));
                     }
                     // 只允许value set嵌套 valueset 或 array
-                    DataType::ValueSet(sub_value_set) => sub_value_set.write_to(writer).await?,
-                }
+                DataType::ValueSet(sub_value_set) => sub_value_set.write_to(writer)?,
             }
-            Ok(())
         }
-        .boxed()
+        Ok(())
     }
 }
 

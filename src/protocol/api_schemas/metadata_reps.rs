@@ -309,7 +309,7 @@ impl MetadataResponse {
 }
 
 impl ProtocolCodec<MetadataResponse> for MetadataResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -337,7 +337,7 @@ impl ProtocolCodec<MetadataResponse> for MetadataResponse {
         Ok(())
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetadataResponse> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetadataResponse> {
         todo!()
     }
 }

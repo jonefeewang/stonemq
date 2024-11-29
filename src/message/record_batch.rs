@@ -3,10 +3,12 @@ use integer_encoding::VarInt;
 use std::borrow::Cow;
 use std::io::{Cursor, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::error;
 
 use crate::message::batch_header::BatchHeader;
 use crate::message::constants::*;
 use crate::message::record::{Record, RecordHeader};
+use crate::request::errors::{KafkaError, KafkaResult};
 use crate::{global_config, AppError, AppResult};
 
 use super::MemoryRecords;
@@ -68,11 +70,10 @@ impl RecordBatch {
         getter(&mut cursor)
     }
 
-    pub fn set_base_offset(&mut self, base_offset: i64) -> AppResult<()> {
+    pub fn set_base_offset(&mut self, base_offset: i64) {
         let mut cursor = Cursor::new(self.buffer.as_mut());
         cursor.set_position(BASE_OFFSET_OFFSET as u64);
-        cursor.write_all(&base_offset.to_be_bytes())?;
-        Ok(())
+        cursor.write_all(&base_offset.to_be_bytes()).unwrap();
     }
     pub fn set_first_timestamp(&mut self, first_timestamp: i64) -> AppResult<()> {
         let mut cursor = Cursor::new(self.buffer.as_mut());
@@ -99,9 +100,10 @@ impl RecordBatch {
 
         let remaining = cursor.remaining();
         if remaining == 0 || remaining < LOG_OVERHEAD {
-            return Err(AppError::RequestError(Cow::Borrowed(
-                "MemoryRecord is empty",
-            )));
+            error!("MemoryRecord is empty");
+            return Err(AppError::InvalidRequest(
+                "memoryRecord is empty".to_string(),
+            ));
         }
 
         // deserialize batch header
@@ -113,31 +115,31 @@ impl RecordBatch {
         let max_msg_size = global_config().general.max_msg_size;
 
         if base_offset != 0 {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::InvalidRequest(format!(
                 "Base offset should be 0, but found {}",
                 base_offset
-            ))));
+            )));
         }
 
         if batch_size > max_msg_size {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::MessageTooLarge(format!(
                 "Message size {} exceeds the maximum message size {}",
                 batch_size, max_msg_size
-            ))));
+            )));
         }
         if batch_size < RECORD_BATCH_OVERHEAD {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::CorruptMessage(format!(
                 "Message size {} is less than the record batch overhead {}",
                 batch_size, RECORD_BATCH_OVERHEAD
-            ))));
+            )));
         }
 
         // currently only support with magic 2
         if (0..=1).contains(&magic) {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::InvalidRequest(format!(
                 "StoneMQ currently only support Magic 2, but found {}",
                 magic
-            ))));
+            )));
         }
 
         let batch_crc = cursor.get_u32();
@@ -146,20 +148,20 @@ impl RecordBatch {
         let crc_parts = &cursor.get_ref()[cursor.position() as usize..];
         let compute_crc = crc32c::crc32c(crc_parts);
         if compute_crc != batch_crc {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::CorruptMessage(format!(
                 "CRC mismatch: expected {}, but found {}",
                 compute_crc, batch_crc
-            ))));
+            )));
         }
         //validate record count
         cursor.set_position(RECORDS_COUNT_OFFSET as u64);
         let record_count = cursor.get_i32();
 
         if record_count < 0 {
-            return Err(AppError::RequestError(Cow::Owned(format!(
+            return Err(AppError::CorruptMessage(format!(
                 "Record count should be non-negative, but found {}",
                 record_count
-            ))));
+            )));
         }
 
         Ok(())

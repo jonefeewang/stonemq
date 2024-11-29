@@ -4,17 +4,17 @@ use bytes::BytesMut;
 use once_cell::sync::Lazy;
 use tokio::io::AsyncWriteExt;
 
-use crate::AppResult;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::{Bool, PString};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::MetaDataRequest;
+use crate::AppResult;
 
 impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -29,7 +29,7 @@ impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
         metadata_req_value_set.write_to(writer).await
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetaDataRequest> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetaDataRequest> {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata);
         let metadata_req_value_set = schema.read_from(buffer)?;
         let produce_request = MetaDataRequest::decode_from_value_set(metadata_req_value_set)?;

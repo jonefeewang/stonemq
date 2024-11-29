@@ -1,17 +1,18 @@
 use std::collections::HashMap;
+use std::io::BufWriter;
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
-use crate::AppResult;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::produce::{PartitionResponse, ProduceResponse};
+use crate::AppResult;
 
 // 定义全局常量
 const RESPONSES_KEY_NAME: &str = "responses";
@@ -202,25 +203,24 @@ impl ProduceResponse {
 }
 
 impl ProtocolCodec<ProduceResponse> for ProduceResponse {
-    async fn write_to<W>(
+    fn encode(
         self,
-        writer: &mut W,
+        writer: &mut BytesMut,
         api_version: &ApiVersion,
         correlation_id: i32,
     ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
     {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::Produce);
         let mut value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size();
+        let body_size = value_set.size()?;
+        let mut writer = BytesMut::with_capacity(4 + body_size);
+
         // correlation_id + response_total_size
-        let response_total_size = 4 + body_size?;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        writer.flush().await?;
+        let response_total_size = 4 + body_size;
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer)?;
         trace!(
             "write response total size:{} with correlation_id:{}",
             response_total_size,
@@ -229,7 +229,7 @@ impl ProtocolCodec<ProduceResponse> for ProduceResponse {
         Ok(())
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceResponse> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceResponse> {
         todo!()
     }
 }

@@ -25,59 +25,57 @@ impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
         match request_header.api_key {
             ApiKey::Produce => {
                 let produce_request =
-                    ProduceRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    ProduceRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::Produce(produce_request))
             }
             ApiKey::Fetch => {
                 let fetch_request =
-                    FetchRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    FetchRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::Fetch(fetch_request))
             }
             ApiKey::Metadata => {
                 let metadata_request =
-                    MetaDataRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    MetaDataRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::Metadata(metadata_request))
             }
             ApiKey::ApiVersion => {
                 let api_version_request =
-                    ApiVersionRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    ApiVersionRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::ApiVersion(api_version_request))
             }
             ApiKey::JoinGroup => {
                 let join_group_request =
-                    JoinGroupRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    JoinGroupRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::JoinGroup(join_group_request))
             }
             ApiKey::SyncGroup => {
                 let sync_group_request =
-                    SyncGroupRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    SyncGroupRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::SyncGroup(sync_group_request))
             }
             ApiKey::LeaveGroup => {
                 let leave_group_request =
-                    LeaveGroupRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    LeaveGroupRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::LeaveGroup(leave_group_request))
             }
             ApiKey::Heartbeat => {
                 let heartbeat_request =
-                    HeartbeatRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    HeartbeatRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::Heartbeat(heartbeat_request))
             }
             ApiKey::OffsetCommit => {
                 let offset_commit_request =
-                    OffsetCommitRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    OffsetCommitRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::OffsetCommit(offset_commit_request))
             }
             ApiKey::OffsetFetch => {
                 let fetch_offsets_request =
-                    FetchOffsetsRequest::read_from(&mut request_body, &request_header.api_version)?;
+                    FetchOffsetsRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::FetchOffsets(fetch_offsets_request))
             }
             ApiKey::FindCoordinator => {
-                let find_coordinator_request = FindCoordinatorRequest::read_from(
-                    &mut request_body,
-                    &request_header.api_version,
-                )?;
+                let find_coordinator_request =
+                    FindCoordinatorRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::FindCoordinator(find_coordinator_request))
             }
         }

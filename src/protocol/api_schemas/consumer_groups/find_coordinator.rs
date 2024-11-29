@@ -16,7 +16,7 @@ use crate::request::consumer_group::{FindCoordinatorRequest, FindCoordinatorResp
 use super::{COORDINATOR_KEY_KEY_NAME, COORDINATOR_TYPE_KEY_NAME};
 
 impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -28,7 +28,7 @@ impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
         todo!()
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FindCoordinatorRequest> {
@@ -48,7 +48,7 @@ impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
 }
 
 impl ProtocolCodec<FindCoordinatorResponse> for FindCoordinatorResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -70,7 +70,7 @@ impl ProtocolCodec<FindCoordinatorResponse> for FindCoordinatorResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FindCoordinatorResponse> {

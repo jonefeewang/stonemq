@@ -216,7 +216,7 @@ pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<ApiVersionRequest> for ApiVersionRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         buffer: &mut W,
         api_version: &ApiVersion,
@@ -228,12 +228,12 @@ impl ProtocolCodec<ApiVersionRequest> for ApiVersionRequest {
         todo!()
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionRequest> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionRequest> {
         Ok(ApiVersionRequest::new(api_version.clone()))
     }
 }
 impl ProtocolCodec<ApiVersionResponse> for ApiVersionResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -259,7 +259,7 @@ impl ProtocolCodec<ApiVersionResponse> for ApiVersionResponse {
         Ok(())
     }
 
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionResponse> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionResponse> {
         todo!()
     }
 }

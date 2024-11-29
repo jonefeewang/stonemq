@@ -7,6 +7,7 @@ use tracing::trace;
 
 use crate::log::{Log, LogAppendInfo, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
+use crate::request::errors::KafkaResult;
 use crate::{global_config, AppError, AppResult};
 
 use super::replica::{JournalReplica, QueueReplica};
@@ -38,17 +39,18 @@ impl JournalPartition {
     ) -> AppResult<LogAppendInfo> {
         let local_replica_id = global_config().general.id;
 
-        let replica = self
-            .assigned_replicas
-            .get(&local_replica_id)
-            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
-        let log_clone = replica.log.clone();
-        // 释放dashmap的读锁
-        drop(replica);
+        let log = {
+            let replica = self.assigned_replicas.get(&local_replica_id);
+            if replica.is_none() {
+                return Err(AppError::InvalidValue(
+                    "replica",
+                    local_replica_id.to_string(),
+                ));
+            }
+            replica.unwrap().log.clone()
+        };
 
-        log_clone
-            .append_records((queue_topic_partition, record))
-            .await
+        log.append_records((queue_topic_partition, record)).await
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: JournalReplica) {

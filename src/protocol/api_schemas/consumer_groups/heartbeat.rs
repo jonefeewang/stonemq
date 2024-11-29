@@ -42,7 +42,7 @@ pub static HEARTBEAT_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<HeartbeatRequest> for HeartbeatRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -54,7 +54,7 @@ impl ProtocolCodec<HeartbeatRequest> for HeartbeatRequest {
         todo!()
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<HeartbeatRequest> {
@@ -82,7 +82,7 @@ impl HeartbeatRequest {
 }
 
 impl ProtocolCodec<HeartbeatResponse> for HeartbeatResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -104,7 +104,7 @@ impl ProtocolCodec<HeartbeatResponse> for HeartbeatResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<HeartbeatResponse> {

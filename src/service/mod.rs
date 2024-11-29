@@ -3,7 +3,7 @@ pub use config::{
     global_config, setup_local_tracing, setup_tracing, AppError, AppResult, BrokerConfig,
     DynamicConfig, GroupConfig, GLOBAL_CONFIG,
 };
-pub use server::Server;
+pub use server::{RequestHandler, RequestTask, Server};
 pub use shutdown::Shutdown;
 
 mod broker;

@@ -3,6 +3,7 @@ use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{TopicData, TopicPartition};
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
+use crate::request::errors::{ErrorCode, KafkaError};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::{IllegalStateError, InvalidValue};
@@ -50,7 +51,14 @@ impl ReplicaManager {
     pub async fn append_records(
         &self,
         topics_data: Vec<TopicData>,
-    ) -> AppResult<BTreeMap<TopicPartition, PartitionResponse>> {
+    ) -> BTreeMap<TopicPartition, PartitionResponse> {
+        let error_response =
+            |topic_partition: &TopicPartition, error_code: i16| PartitionResponse {
+                partition: topic_partition.partition,
+                error_code,
+                base_offset: 0,
+                log_append_time: -1,
+            };
         let mut tp_response = BTreeMap::new();
         for topic_data in topics_data {
             let topic_name = &topic_data.topic_name;
@@ -60,41 +68,57 @@ impl ReplicaManager {
                     partition: partition.partition,
                 };
 
-                // 一次循环形成一个dashmap的entry value的作用域，尽快释放读锁
-                let journal_tp =
-                    self.queue_2_journal
-                        .get(&topic_partition)
-                        .ok_or(IllegalStateError(Cow::Owned(format!(
-                            "No corresponding journal partition.:{}",
-                            topic_partition
-                        ))))?;
-                let journal_tp_clone = journal_tp.clone();
-                drop(journal_tp);
-                let journal_partition =
-                    self.all_journal_partitions
-                        .get(&journal_tp_clone)
-                        .ok_or(IllegalStateError(Cow::Owned(format!(
-                            "corresponding journal partition not found.:{}",
-                            journal_tp_clone
-                        ))))?;
-                // 这里没做journal_partition的复制，占用了一下dashmap的锁，不过问题不大，因为你真正的底层耗时操作log.append之前已经
-                // 释放了读锁
-                let LogAppendInfo { first_offset, .. } = journal_partition
-                    .append_record_to_leader(partition.message_set, topic_partition)
-                    .await?;
+                let journal_tp_clone = {
+                    let journal_tp = self.queue_2_journal.get(&topic_partition);
+                    if journal_tp.is_none() {
+                        tp_response.insert(
+                            topic_partition.clone(),
+                            error_response(
+                                &topic_partition,
+                                ErrorCode::UnknownTopicOrPartition as i16,
+                            ),
+                        );
+                        continue;
+                    }
+                    journal_tp.unwrap().clone()
+                };
 
-                tp_response.insert(
-                    TopicPartition {
-                        topic: topic_name.clone(),
-                        partition: partition.partition,
-                    },
-                    PartitionResponse {
-                        partition: partition.partition,
-                        error_code: 0,
-                        base_offset: first_offset,
-                        log_append_time: None,
-                    },
-                );
+                let journal_partition = {
+                    let journal_partition = self.all_journal_partitions.get(&journal_tp_clone);
+                    if journal_partition.is_none() {
+                        tp_response.insert(
+                            topic_partition.clone(),
+                            error_response(
+                                &topic_partition,
+                                ErrorCode::UnknownTopicOrPartition as i16,
+                            ),
+                        );
+                        continue;
+                    }
+                    journal_partition.unwrap().clone()
+                };
+                let append_result = journal_partition
+                    .append_record_to_leader(partition.message_set, topic_partition.clone())
+                    .await;
+                if let Ok(LogAppendInfo { first_offset, .. }) = append_result {
+                    tp_response.insert(
+                        topic_partition.clone(),
+                        PartitionResponse {
+                            partition: partition.partition,
+                            error_code: 0,
+                            base_offset: first_offset,
+                            log_append_time: -1,
+                        },
+                    );
+                } else if let Err(e) = append_result {
+                    tp_response.insert(
+                        topic_partition.clone(),
+                        error_response(
+                            &topic_partition,
+                            ErrorCode::from(&KafkaError::from(e)) as i16,
+                        ),
+                    );
+                }
             }
         }
         for (tp, _) in tp_response.iter() {
@@ -102,7 +126,7 @@ impl ReplicaManager {
                 .check_and_complete(tp.to_string().as_str())
                 .await;
         }
-        Ok(tp_response)
+        tp_response
     }
     ///
     /// Since the current StoneMQ operates on a single-machine for production and consumption,

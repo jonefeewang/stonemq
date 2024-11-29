@@ -32,7 +32,7 @@ use super::{
 };
 
 impl ProtocolCodec<FetchOffsetsRequest> for FetchOffsetsRequest {
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FetchOffsetsRequest> {
@@ -43,7 +43,7 @@ impl ProtocolCodec<FetchOffsetsRequest> for FetchOffsetsRequest {
         Ok(fetch_offsets_request)
     }
 
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -123,7 +123,7 @@ impl FetchOffsetsRequest {
 }
 
 impl ProtocolCodec<FetchOffsetsResponse> for FetchOffsetsResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -144,7 +144,7 @@ impl ProtocolCodec<FetchOffsetsResponse> for FetchOffsetsResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FetchOffsetsResponse> {
@@ -229,7 +229,7 @@ impl FetchOffsetsResponse {
 }
 
 impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -249,7 +249,7 @@ impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<OffsetCommitRequest> {
@@ -348,7 +348,7 @@ impl OffsetCommitRequest {
 }
 
 impl ProtocolCodec<OffsetCommitResponse> for OffsetCommitResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -369,7 +369,7 @@ impl ProtocolCodec<OffsetCommitResponse> for OffsetCommitResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<OffsetCommitResponse> {

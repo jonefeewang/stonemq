@@ -20,7 +20,7 @@ use crate::protocol::api_schemas::SUPPORTED_API_VERSIONS;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::{MetaDataRequest, MetadataResponse};
 use crate::request::produce::{ProduceRequest, ProduceResponse};
-use crate::service::Node;
+use crate::service::{Node, RequestTask};
 use crate::AppError::IllegalStateError;
 
 use crate::{AppError, AppResult, ReplicaManager};
@@ -144,65 +144,65 @@ pub struct RequestProcessor {}
 impl RequestProcessor {
     pub async fn process_request(
         request: ApiRequest,
-        request_context: &mut RequestContext,
+        request_header: &RequestHeader,
+        replica_manager: Arc<ReplicaManager>,
+        group_coordinator: Arc<GroupCoordinator>,
     ) -> Bytes {
         trace!(
             "Processing request: {:?} with request header{:?}",
             request,
-            &request_context.request_header
+            request_header
         );
         match request {
-            ApiRequest::Produce(request) => {
-                Self::handle_produce_request(request_context, request).await
-            }
+            ApiRequest::Produce(request) => Self::handle_produce_request(request, request).await,
             ApiRequest::Fetch(request) => {
-                Self::handle_fetch_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_fetch_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::Metadata(request) => {
-                Self::handle_metadata_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_metadata_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::ApiVersion(request) => {
-                Self::handle_api_version_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_api_version_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::FindCoordinator(request) => {
-                Self::handle_find_coordinator_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_find_coordinator_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::JoinGroup(request) => {
                 // join group 的信号在handle_join_group_request中发送
-                Self::handle_join_group_request(request_context, request).await?;
+                Self::handle_join_group_request(request, request).await?;
                 Ok(())
             }
             ApiRequest::SyncGroup(request) => {
-                Self::handle_sync_group_request(request_context, request).await?;
+                Self::handle_sync_group_request(request, request).await?;
 
                 Ok(())
             }
             ApiRequest::LeaveGroup(request) => {
-                Self::handle_leave_group_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_leave_group_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::Heartbeat(request) => {
-                Self::handle_heartbeat_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_heartbeat_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::OffsetCommit(request) => {
-                Self::handle_offset_commit_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_offset_commit_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
             ApiRequest::FetchOffsets(request) => {
-                Self::handle_fetch_offsets_request(request_context, request).await?;
-                request_context.socket_read_ch_tx.send(()).await?;
+                Self::handle_fetch_offsets_request(request, request).await?;
+                request.socket_read_ch_tx.send(()).await?;
                 Ok(())
             }
         }
@@ -218,13 +218,13 @@ impl RequestProcessor {
         )
     )]
     pub async fn handle_produce_request(
-        request_context: &mut RequestContext<'_>,
-        request: ProduceRequest,
+        produce_request: ProduceRequest,
+        request_header: &RequestHeader,
+        replica_manager: Arc<ReplicaManager>,
     ) -> Bytes {
-        let tp_response = request_context
-            .replica_manager
-            .append_records(request.topic_data)
-            .await?;
+        let tp_response = replica_manager
+            .append_records(produce_request.topic_data)
+            .await;
         let response = ProduceResponse {
             responses: tp_response,
             throttle_time: None,
@@ -232,7 +232,7 @@ impl RequestProcessor {
         trace!("produce response: {:?}", response);
 
         response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -261,7 +261,7 @@ impl RequestProcessor {
             .await?;
         debug!("fetch response: {:?}", fetch_response);
         fetch_response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -286,7 +286,7 @@ impl RequestProcessor {
         let response = request.process()?;
         debug!("api versions request");
         response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -319,7 +319,7 @@ impl RequestProcessor {
         // send metadata to client
         let metadata_reps = MetadataResponse::new(metadata, Node::new_localhost());
         metadata_reps
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -345,7 +345,7 @@ impl RequestProcessor {
             .find_coordinator(request)
             .await?;
         response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -393,7 +393,7 @@ impl RequestProcessor {
         );
         debug!("join group response");
         join_group_response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -436,7 +436,7 @@ impl RequestProcessor {
         match sync_group_result {
             Ok(response) => {
                 response
-                    .write_to(
+                    .encode(
                         &mut request_context.conn.writer,
                         &request_context.request_header.api_version,
                         request_context.request_header.correlation_id,
@@ -447,7 +447,7 @@ impl RequestProcessor {
             Err(e) => {
                 let error_code = ErrorCode::from(&e);
                 SyncGroupResponse::new(error_code, 0, Bytes::new())
-                    .write_to(
+                    .encode(
                         &mut request_context.conn.writer,
                         &request_context.request_header.api_version,
                         request_context.request_header.correlation_id,
@@ -488,7 +488,7 @@ impl RequestProcessor {
         };
 
         response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -525,7 +525,7 @@ impl RequestProcessor {
         debug!("offset commit result: {:?}", result);
         let response = OffsetCommitResponse::new(0, result);
         response
-            .write_to(
+            .encode(
                 &mut request_context.conn.writer,
                 &request_context.request_header.api_version,
                 request_context.request_header.correlation_id,
@@ -554,7 +554,7 @@ impl RequestProcessor {
         if let Ok(offsets) = result {
             let response = FetchOffsetsResponse::new(KafkaError::None, offsets);
             response
-                .write_to(
+                .encode(
                     &mut request_context.conn.writer,
                     &request_context.request_header.api_version,
                     request_context.request_header.correlation_id,
@@ -562,7 +562,7 @@ impl RequestProcessor {
                 .await?;
         } else {
             FetchOffsetsResponse::new(result.err().unwrap(), HashMap::new())
-                .write_to(
+                .encode(
                     &mut request_context.conn.writer,
                     &request_context.request_header.api_version,
                     request_context.request_header.correlation_id,

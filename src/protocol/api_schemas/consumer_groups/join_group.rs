@@ -99,7 +99,7 @@ pub static JOIN_GROUP_RESPONSE_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<JoinGroupRequest> for JoinGroupRequest {
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &crate::protocol::ApiVersion,
     ) -> AppResult<JoinGroupRequest> {
@@ -109,7 +109,7 @@ impl ProtocolCodec<JoinGroupRequest> for JoinGroupRequest {
         Ok(join_group_request)
     }
 
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         buffer: &mut W,
         api_version: &ApiVersion,
@@ -173,7 +173,7 @@ impl JoinGroupRequest {
 }
 
 impl ProtocolCodec<JoinGroupResponse> for JoinGroupResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -195,7 +195,7 @@ impl ProtocolCodec<JoinGroupResponse> for JoinGroupResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<JoinGroupResponse> {

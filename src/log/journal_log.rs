@@ -18,6 +18,7 @@ use super::{
 };
 use crate::log::log_segment::LogSegment;
 use crate::message::{MemoryRecords, RecordBatch, TopicPartition};
+use crate::request::errors::{KafkaError, KafkaResult};
 use crate::AppError::{self, CommonError};
 use crate::{global_config, AppResult};
 
@@ -239,7 +240,7 @@ impl JournalLog {
                 }
             }
 
-            batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1)?;
+            batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1);
             last_offset = batch.base_offset();
             // batch.set_first_timestamp(max_timestamp);
             trace!(
@@ -342,10 +343,13 @@ impl JournalLog {
     /// 返回包含段大小和偏移索引是否已满的 `AppResult<(u32, bool)>`。
     async fn get_active_segment_info(&self) -> AppResult<(u32, bool)> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments
-            .values()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
+        let active_seg = segments.values().next_back().ok_or_else(|| {
+            error!("未找到活动段，主题分区: {}", self.topic_partition.id());
+            AppError::IllegalStateError(format!(
+                "未找到活动段，主题分区: {}",
+                self.topic_partition.id()
+            ))
+        })?;
         Ok((
             active_seg.size() as u32,
             active_seg.offset_index_full().await?,
@@ -444,10 +448,12 @@ impl JournalLog {
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments
-            .values()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
+        let active_seg = segments.values().next_back().ok_or_else(|| {
+            AppError::IllegalStateError(format!(
+                "active segment not found for topic partition: {}",
+                self.topic_partition.id()
+            ))
+        })?;
 
         let (tx, rx) = oneshot::channel();
         active_seg

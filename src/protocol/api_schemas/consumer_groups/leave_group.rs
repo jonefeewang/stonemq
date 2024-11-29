@@ -15,7 +15,7 @@ use tokio::io::AsyncWriteExt;
 use super::{GROUP_ID_KEY_NAME, MEMBER_ID_KEY_NAME};
 
 impl ProtocolCodec<LeaveGroupRequest> for LeaveGroupRequest {
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<LeaveGroupRequest> {
@@ -26,7 +26,7 @@ impl ProtocolCodec<LeaveGroupRequest> for LeaveGroupRequest {
         Ok(leave_group_request)
     }
 
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -52,7 +52,7 @@ impl LeaveGroupRequest {
 }
 
 impl ProtocolCodec<LeaveGroupResponse> for LeaveGroupResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -73,7 +73,7 @@ impl ProtocolCodec<LeaveGroupResponse> for LeaveGroupResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<LeaveGroupResponse> {

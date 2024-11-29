@@ -64,7 +64,7 @@ pub struct PartitionResponse {
     // If CreateTime is used for the topic, the timestamp will be -1.
     // If LogAppendTime is used for the topic, the timestamp will be
     // the broker local time when the messages are appended
-    pub log_append_time: Option<i64>,
+    pub log_append_time: i64,
 }
 #[derive(Debug)]
 pub struct ProduceResponse {

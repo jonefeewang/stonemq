@@ -52,15 +52,14 @@ mod value_set;
 pub trait ProtocolCodec<T> {
     ///
     /// 为了防止数据复制clone，这里直接消耗掉self，调用完成之后，self就无法再使用了
-    async fn write_to<W>(
+    fn encode(
         self,
-        writer: &mut W,
+        writer: &mut BytesMut,
         api_version: &ApiVersion,
         correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send;
-    fn read_from(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<T>;
+    ) -> AppResult<()>;
+
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<T>;
 
     fn fetch_request_schema_for_api(api_version: &ApiVersion, api_key: &ApiKey) -> Arc<Schema> {
         match api_key {

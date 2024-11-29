@@ -27,8 +27,11 @@ tokio = { version = "1.33", features = [
     "test-util",
 
 ] }
+
+num_cpus = "1.16"
+
 tokio-stream = "0.1.11"
-futures = "0.3.35"
+futures = "0.3"
 futures-util = { version = "0.3.28" }
 
 serde = { version = "1.0.188", features = ["derive"] }
@@ -65,6 +68,8 @@ memmap2 = "0.9.4"
 chrono = "0.4"
 
 dotenv = "0.15.0"
+
+async-channel = "2.3"
 
 
 opentelemetry = { version = "0.23", features = ["trace", "metrics"] }

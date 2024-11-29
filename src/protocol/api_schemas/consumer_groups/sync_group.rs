@@ -69,7 +69,7 @@ pub static SYNC_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<SyncGroupRequest> for SyncGroupRequest {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -78,7 +78,7 @@ impl ProtocolCodec<SyncGroupRequest> for SyncGroupRequest {
         todo!()
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<SyncGroupRequest> {
@@ -126,7 +126,7 @@ impl SyncGroupRequest {
 }
 
 impl ProtocolCodec<SyncGroupResponse> for SyncGroupResponse {
-    async fn write_to<W>(
+    async fn encode<W>(
         self,
         writer: &mut W,
         api_version: &ApiVersion,
@@ -148,7 +148,7 @@ impl ProtocolCodec<SyncGroupResponse> for SyncGroupResponse {
         Ok(())
     }
 
-    fn read_from(
+    fn decode(
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<SyncGroupResponse> {
