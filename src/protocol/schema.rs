@@ -54,43 +54,40 @@ impl Schema {
         }
     }
 
-    pub fn read_from(self: Arc<Schema>, buffer: &mut BytesMut) -> AppResult<ValueSet> {
+    pub fn read_from(self: Arc<Schema>, buffer: &mut BytesMut) -> ValueSet {
         let mut value_set = ValueSet::new(self.clone());
         for field in &self.fields {
             // trace!("read field:{}", field.name);
             let result = match &field.p_type {
-                DataType::Bool(_) => Bool::read_from(buffer),
-                DataType::I8(_) => I8::read_from(buffer),
-                DataType::I16(_) => I16::read_from(buffer),
-                DataType::I32(_) => I32::read_from(buffer),
-                DataType::U32(_) => U32::read_from(buffer),
-                DataType::I64(_) => I64::read_from(buffer),
-                DataType::PString(_) => PString::read_from(buffer),
-                DataType::NPString(_) => NPString::read_from(buffer),
-                DataType::PBytes(_) => PBytes::read_from(buffer),
-                DataType::NPBytes(_) => NPBytes::read_from(buffer),
-                DataType::PVarInt(_) => PVarInt::read_from(buffer),
-                DataType::PVarLong(_) => PVarLong::read_from(buffer),
-                DataType::Array(array) => array.read_from(buffer),
-                DataType::Records(_) => MemoryRecords::read_from(buffer),
+                DataType::Bool(_) => Bool::decode(buffer),
+                DataType::I8(_) => I8::decode(buffer),
+                DataType::I16(_) => I16::decode(buffer),
+                DataType::I32(_) => I32::decode(buffer),
+                DataType::U32(_) => U32::decode(buffer),
+                DataType::I64(_) => I64::decode(buffer),
+                DataType::PString(_) => PString::decode(buffer),
+                DataType::NPString(_) => NPString::decode(buffer),
+                DataType::PBytes(_) => PBytes::decode(buffer),
+                DataType::NPBytes(_) => NPBytes::decode(buffer),
+                DataType::PVarInt(_) => PVarInt::decode(buffer),
+                DataType::PVarLong(_) => PVarLong::decode(buffer),
+                DataType::Array(array) => array.decode(buffer),
+                DataType::Records(_) => MemoryRecords::decode(buffer),
                 //should never happen
                 DataType::ValueSet(value_set) => {
-                    return Err(NetworkReadError(Cow::Owned(format!(
-                        "unexpected type schema:{:?}",
-                        value_set
-                    ))));
+                    panic!("unexpected type schema:{:?}", value_set);
                 }
 
                 // 只允许schema嵌套schema/array
                 DataType::Schema(schema) => {
                     let schema_clone = schema.clone();
-                    let sub_value_set = schema_clone.read_from(buffer)?;
-                    Ok(DataType::ValueSet(sub_value_set))
+                    let sub_value_set = schema_clone.read_from(buffer);
+                    DataType::ValueSet(sub_value_set)
                 }
             };
-            value_set.append_field_value(field.name, result?)?;
+            value_set.append_field_value(field.name, result);
         }
-        Ok(value_set)
+        value_set
     }
 
     fn size(&self) -> usize {
@@ -99,20 +96,14 @@ impl Schema {
 
     //
     // Retrieve the schema of an array field
-    pub fn sub_schema_of_ary_field(
-        self: Arc<Schema>,
-        name: &'static str,
-    ) -> AppResult<Arc<Schema>> {
+    pub fn sub_schema_of_ary_field(self: Arc<Schema>, name: &'static str) -> Arc<Schema> {
         let field = self.get_field(name)?;
         let array_type: &ArrayType = (&field.p_type).try_into()?;
 
         if let DataType::Schema(schema) = array_type.p_type.as_ref() {
             Ok(schema.clone())
         } else {
-            Err(NetworkReadError(Cow::Owned(format!(
-                "not a schema field:{:?}",
-                array_type.p_type.as_ref()
-            ))))
+            panic!("not a schema field:{:?}", array_type.p_type.as_ref());
         }
     }
 
@@ -123,18 +114,15 @@ impl Schema {
             Err(ProtocolError(Cow::Owned(format!("unknown field:{}", name))))
         };
     }
-    pub fn get_field(&self, name: &'static str) -> AppResult<&Field> {
+    pub fn get_field(&self, name: &'static str) -> &Field {
         return if let Some(index) = self.fields_index_by_name.get(name) {
             if let Some(field) = self.fields.get(*index as usize) {
-                Ok(field)
+                field
             } else {
-                Err(ProtocolError(Cow::Owned(format!(
-                    "can not find field in schema vec {}",
-                    name
-                ))))
+                panic!("can not find field in schema vec {}", name);
             }
         } else {
-            Err(ProtocolError(Cow::Owned(format!("unknown field:{}", name))))
+            panic!("can not find field in schema vec {}", name);
         };
     }
 }

@@ -1,3 +1,4 @@
+use std::any::type_name;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -9,13 +10,15 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
-use tracing::{error, warn};
+use tracing::error;
 
 use crate::message::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
 use crate::request::{ApiRequest, RequestProcessor};
 use crate::{AppError, DynamicConfig};
 use crate::{AppResult, ReplicaManager};
+
+use super::Shutdown;
 
 // 用于生成唯一的连接ID
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
@@ -32,25 +35,28 @@ pub struct RequestTask {
     frame: RequestFrame,
     response_tx: oneshot::Sender<Bytes>,
 }
+fn get_type_name<T>(_: &T) -> &'static str {
+    type_name::<T>()
+}
 
 fn start_request_handler(
     replica_manager: Arc<ReplicaManager>,
     group_coordinator: Arc<GroupCoordinator>,
     num_workers: usize,
 ) -> async_channel::Sender<RequestTask> {
-    // 启动监控线程监控worker状态
-    // let monitor_tx = request_tx.clone();
-    // let monitor_workers = workers.clone();
     let (request_tx, request_rx) = async_channel::bounded(1024);
     tokio::spawn(async move {
         let mut workers = HashMap::with_capacity(num_workers);
 
-        // 启动固定数量的工作线程
+        // CAUTION: There is a potential risk here: handling client-initiated requests might lead to intentional or unintentional panics,
+        // causing widespread processor exits. Although recovery mechanisms can be implemented,
+        // such incidents may still result in fluctuations in request processing.
+
+        // 处理客户端上来的请求时，特别是解析协议时，需要做防护，防止客户端故意造成panic
         for i in 0..num_workers {
             let rx: async_channel::Receiver<RequestTask> = request_rx.clone();
             let replica_manager = replica_manager.clone();
             let group_coordinator = group_coordinator.clone();
-
             let handle = tokio::spawn(async move {
                 while let Ok(request) = rx.recv().await {
                     process_request(request, replica_manager.clone(), group_coordinator.clone())
@@ -62,31 +68,70 @@ fn start_request_handler(
 
         // 启动监控线程监控worker状态
         loop {
-            for (i, worker) in workers.iter_mut() {
-                if worker.is_finished() {
-                    warn!("Worker {} exited unexpectedly, starting a new one", i);
+            // 遍历任务并检查状态
+            for id in 0..workers.len() {
+                if let Some(handle) = workers.remove(&id) {
+                    // 提取出 JoinHandle 并检查其运行状态
+                    match time::timeout(Duration::from_millis(200), handle).await {
+                        Ok(join_result) => {
+                            match join_result {
+                                Ok(_) => {
+                                    // ignore, task is completed
+                                }
+                                Err(join_error) => {
+                                    if join_error.is_panic() {
+                                        let payload = join_error.into_panic();
+                                        if let Some(message) =
+                                            payload.downcast_ref::<&'static str>()
+                                        {
+                                            error!(
+                                                "Processor Task panicked with message: {}",
+                                                message
+                                            );
+                                        } else if let Some(message) =
+                                            payload.downcast_ref::<String>()
+                                        {
+                                            error!(
+                                                "Processor Task panicked with message: {}",
+                                                message
+                                            );
+                                        } else {
+                                            // 打印动态类型的名称
+                                            error!(
+                                                "Processor Task panicked with an unknown type: {}",
+                                                get_type_name(&payload)
+                                            );
+                                        }
+                                        // 重新生成一个新的任务
+                                        let rx = request_rx.clone();
+                                        let replica_manager = replica_manager.clone();
+                                        let group_coordinator = group_coordinator.clone();
 
-                    // 创建新的worker替换退出的worker
-                    let rx = request_rx.clone();
-                    let replica_manager = replica_manager.clone();
-                    let group_coordinator = group_coordinator.clone();
-
-                    let new_worker = tokio::spawn(async move {
-                        while let Ok(request) = rx.recv().await {
-                            process_request(
-                                request,
-                                replica_manager.clone(),
-                                group_coordinator.clone(),
-                            )
-                            .await;
+                                        let new_worker = tokio::spawn(async move {
+                                            while let Ok(request) = rx.recv().await {
+                                                process_request(
+                                                    request,
+                                                    replica_manager.clone(),
+                                                    group_coordinator.clone(),
+                                                )
+                                                .await;
+                                            }
+                                        });
+                                        workers.insert(id, new_worker);
+                                    } else {
+                                        error!("Processor Task failed for unknown reasons.");
+                                    }
+                                }
+                            }
                         }
-                    });
-
-                    // 替换原来的worker
-                    *worker = new_worker;
+                        Err(_) => {
+                            // ignore, task is running
+                        }
+                    }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
     request_tx
@@ -132,6 +177,8 @@ async fn process_request(
 
 // 每个连接的处理器
 struct ConnectionHandler {
+    notify_shutdown: broadcast::Sender<()>,
+    shutdown_complete_tx: mpsc::Sender<()>,
     connection_id: u64,
     connection: Connection,
     writer: BufWriter<OwnedWriteHalf>,
@@ -141,9 +188,17 @@ struct ConnectionHandler {
 
 impl ConnectionHandler {
     async fn handle_connection(&mut self) -> AppResult<()> {
+        let mut shutdown = Shutdown::new(self.notify_shutdown.subscribe());
         loop {
             // 读取请求 如果客户端优雅关闭连接，则返回None，如果意外关闭，则返回Err
-            let frame = match self.connection.read_frame().await? {
+            let maybe_frame = tokio::select! {
+                res = self.connection.read_frame() => res?,
+                _ = shutdown.recv() => {
+                    return Ok(());
+                }
+            };
+
+            let frame = match maybe_frame {
                 Some(frame) => frame,
                 // client close the connection gracefully
                 None => break,
@@ -213,6 +268,24 @@ impl Server {
         }
     }
 
+    /// Asynchronously runs the server, handling incoming connections and requests.
+    ///
+    /// This function starts the request handler, accepts incoming connections, and processes them.
+    /// It acquires a permit for each connection to limit the number of concurrent connections.
+    /// Each connection is assigned a unique connection ID and handled by a separate ConnectionHandler.
+    /// Any errors encountered during connection handling are logged.
+    ///
+    /// Graceful shutdown sequence:  
+    /// 1. The run loop terminates upon receiving the shutdown signal from the upper layer.  
+    /// 2. The connection handler shuts down, but only after all requests on the connection have been fully processed and the responses sent.  
+    /// 3. Once all connection handlers have exited, the receiver in the request handler receives the shutdown signal and exits by returning an error.  
+    /// 4. The main process waits for the connection handler to drop, during which its `shutdown_complete_tx` field is also automatically dropped, before gracefully exiting.
+    ///
+    /// # Returns
+    /// Under normal operations, continuously accept new connections.  
+    /// Exit with an error if failing to accept new connections.
+    ///
+    /// Returns `AppResult<()>` indicating the success or failure of running the server.
     pub async fn run(&self) -> AppResult<()> {
         let request_sender = start_request_handler(
             self.replica_manager.clone(),
@@ -232,7 +305,12 @@ impl Server {
             let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
             let (reader, writer) = socket.into_split();
 
+            let notify_shutdown_clone = self.notify_shutdown.clone();
+            let shutdown_complete_tx = self.shutdown_complete_tx.clone();
+
             let mut handler = ConnectionHandler {
+                shutdown_complete_tx,
+                notify_shutdown: notify_shutdown_clone,
                 connection_id,
                 connection: Connection::new(reader, self.dynamic_config.read().await.clone()),
                 writer: BufWriter::new(writer),
