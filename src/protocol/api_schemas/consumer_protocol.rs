@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use once_cell::sync::Lazy;
 use tracing::debug;
 
@@ -33,9 +33,7 @@ pub static CONSUMER_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 pub static CONSUMER_PROTOCOL_V0_HEADER: Lazy<ValueSet> = Lazy::new(|| {
     let mut value_set = ValueSet::new(CONSUMER_PROTOCOL_V0_SCHEMA.clone());
-    value_set
-        .append_field_value(VERSION_KEY_NAME, DataType::I16(I16::default()))
-        .unwrap();
+    value_set.append_field_value(VERSION_KEY_NAME, DataType::I16(I16::default()));
     value_set
 });
 pub static SUBSCRIPTION_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
@@ -121,42 +119,6 @@ pub static STICKY_ASSIGNOR_USER_DATA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(schema)
 });
 
-struct TopicAssignmentSticky {}
-impl TopicAssignmentSticky {
-    pub fn read_from(mut buf: BytesMut) -> AppResult<Vec<TopicPartition>> {
-        let mut value_set = STICKY_ASSIGNOR_USER_DATA.clone().read_from(&mut buf)?;
-        let previous_assignment: ArrayType = value_set
-            .get_field_value(PREVIOUS_ASSIGNMENT_KEY_NAME)?
-            .try_into()?;
-        let previous_assignment =
-            previous_assignment
-                .values
-                .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                    "previous_assignment is empty",
-                )))?;
-        let mut partitions_vec: Vec<TopicPartition> = Vec::with_capacity(previous_assignment.len());
-        for topic_assignment in previous_assignment {
-            let mut topic_assignment: ValueSet = topic_assignment.try_into()?;
-            let topic: String = topic_assignment
-                .get_field_value(TOPIC_KEY_NAME)?
-                .try_into()?;
-            let partitions: ArrayType = topic_assignment
-                .get_field_value(PARTITIONS_KEY_NAME)?
-                .try_into()?;
-            let partitions = partitions
-                .values
-                .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                    "partitions is empty",
-                )))?;
-
-            for partition in partitions {
-                partitions_vec.push(TopicPartition::new(topic.clone(), partition.try_into()?));
-            }
-        }
-        Ok(partitions_vec)
-    }
-}
-
 /////////////////---consumer protocol---/////////////////
 
 pub struct ConsumerProtocol {}
@@ -187,20 +149,18 @@ pub struct Subscription {
 impl Subscription {
     pub fn read_from(mut buf: BytesMut) -> AppResult<Self> {
         let mut value_set = CONSUMER_PROTOCOL_V0_SCHEMA.clone().read_from(&mut buf)?;
-        let version: i16 = value_set.get_field_value(VERSION_KEY_NAME)?.try_into()?;
+        let version: i16 = value_set.get_field_value(VERSION_KEY_NAME).into();
         debug!("version:{}", version);
 
         let mut subscription = SUBSCRIPTION_V0.clone().read_from(&mut buf)?;
-        let topics: ArrayType = subscription.get_field_value(TOPIC_KEY_NAME)?.try_into()?;
-        let user_data: NPBytes = subscription
-            .get_field_value(USER_DATA_KEY_NAME)?
-            .try_into()?;
+        let topics: ArrayType = subscription.get_field_value(TOPIC_KEY_NAME).into();
+        let user_data: NPBytes = subscription.get_field_value(USER_DATA_KEY_NAME).into();
         let topics = topics
             .values
             .ok_or(AppError::ProtocolError(Cow::Borrowed("topics is empty")))?;
         let mut topics_vec: Vec<String> = Vec::with_capacity(topics.len());
         for topic in topics {
-            topics_vec.push(topic.try_into()?);
+            topics_vec.push(topic.into());
         }
         if let Some(user_data) = user_data.value {
             Ok(Self {
@@ -219,14 +179,14 @@ impl Subscription {
 impl TopicAssignment {
     pub fn read_from(mut buf: BytesMut) -> AppResult<Self> {
         let mut value_set = CONSUMER_PROTOCOL_V0_SCHEMA.clone().read_from(&mut buf)?;
-        let version: i16 = value_set.get_field_value(VERSION_KEY_NAME)?.try_into()?;
+        let version: i16 = value_set.get_field_value(VERSION_KEY_NAME).into();
         debug!("version:{}", version);
 
-        let user_data: NPBytes = value_set.get_field_value(USER_DATA_KEY_NAME)?.try_into()?;
+        let user_data: NPBytes = value_set.get_field_value(USER_DATA_KEY_NAME).into();
         let mut topic_assignment = ASSIGNMENT_V0.clone().read_from(&mut buf)?;
         let topic_partitions: ArrayType = topic_assignment
-            .get_field_value(TOPIC_PARTITIONS_KEY_NAME)?
-            .try_into()?;
+            .get_field_value(TOPIC_PARTITIONS_KEY_NAME)
+            .into();
         let topic_partitions =
             topic_partitions
                 .values
@@ -235,13 +195,9 @@ impl TopicAssignment {
                 )))?;
         let mut topic_assignment_vec = Vec::with_capacity(topic_partitions.len());
         for topic_partition in topic_partitions {
-            let mut topic_partition: ValueSet = topic_partition.try_into()?;
-            let topic: String = topic_partition
-                .get_field_value(TOPIC_KEY_NAME)?
-                .try_into()?;
-            let partitions: ArrayType = topic_partition
-                .get_field_value(PARTITIONS_KEY_NAME)?
-                .try_into()?;
+            let mut topic_partition: ValueSet = topic_partition.into();
+            let topic: String = topic_partition.get_field_value(TOPIC_KEY_NAME).into();
+            let partitions: ArrayType = topic_partition.get_field_value(PARTITIONS_KEY_NAME).into();
             let partitions = partitions
                 .values
                 .ok_or(AppError::ProtocolError(Cow::Borrowed(
@@ -249,8 +205,7 @@ impl TopicAssignment {
                 )))?;
 
             for partition in partitions {
-                let partition: i32 = partition.try_into()?;
-                topic_assignment_vec.push(TopicPartition::new(topic.clone(), partition));
+                topic_assignment_vec.push(TopicPartition::new(topic.clone(), partition.into()));
             }
         }
         if let Some(user_data) = user_data.value {

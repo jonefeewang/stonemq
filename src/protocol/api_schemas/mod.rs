@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
 use crate::protocol::schema::Schema;
@@ -49,17 +48,14 @@ impl RequestHeader {
     /// # Returns
     ///
     /// * `AppResult<()>` - An application-specific result type
-    pub async fn write_to<W>(self, writer: &mut W) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    pub async fn write_to(self, writer: &mut BytesMut) {
         let schema = Arc::clone(&REQUEST_HEADER_SCHEMA);
         let mut schema_data = ValueSet::new(schema);
-        schema_data.append_field_value(API_KEY, self.api_key.into())?;
-        schema_data.append_field_value(API_VERSION_KEY_NAME, self.api_version.into())?;
-        schema_data.append_field_value(CORRELATION_ID_KEY_NAME, self.correlation_id.into())?;
-        schema_data.append_field_value(CLIENT_ID_KEY_NAME, self.client_id.clone().into())?;
-        schema_data.write_to(writer).await
+        schema_data.append_field_value(API_KEY, self.api_key.into());
+        schema_data.append_field_value(API_VERSION_KEY_NAME, self.api_version.into());
+        schema_data.append_field_value(CORRELATION_ID_KEY_NAME, self.correlation_id.into());
+        schema_data.append_field_value(CLIENT_ID_KEY_NAME, self.client_id.clone().into());
+        schema_data.write_to(writer)
     }
 
     /// Reads a request header from a byte stream
@@ -75,16 +71,15 @@ impl RequestHeader {
         let schema = Arc::clone(&REQUEST_HEADER_SCHEMA);
         let mut schema_data: ValueSet = schema.read_from(stream)?;
 
-        let api_key = schema_data.get_field_value(API_KEY)?.try_into_i16_type()?;
-        let api_version = schema_data
-            .get_field_value(API_VERSION_KEY_NAME)?
-            .try_into_i16_type()?;
-        let correlation_id = schema_data
-            .get_field_value(CORRELATION_ID_KEY_NAME)?
-            .try_into()?;
-        let client_id = schema_data
-            .get_field_value(CLIENT_ID_KEY_NAME)?
-            .try_into()?;
+        let api_key_field_value: i16 = schema_data.get_field_value(API_KEY).into();
+        let api_key = api_key_field_value.try_into()?;
+
+        let api_version_field_value: i16 = schema_data.get_field_value(API_VERSION_KEY_NAME).into();
+        let api_version = api_version_field_value.try_into()?;
+
+        let correlation_id = schema_data.get_field_value(CORRELATION_ID_KEY_NAME).into();
+        let client_id = schema_data.get_field_value(CLIENT_ID_KEY_NAME).into();
+
         Ok(RequestHeader {
             api_key,
             api_version,
@@ -97,7 +92,7 @@ impl RequestHeader {
 pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(
-        ApiKey::ApiVersion.into(),
+        ApiKey::ApiVersionKey.into(),
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
@@ -216,50 +211,34 @@ pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<ApiVersionRequest> for ApiVersionRequest {
-    async fn encode<W>(
-        self,
-        buffer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
         todo!()
     }
 
-    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionRequest> {
+    fn decode(_buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionRequest> {
         Ok(ApiVersionRequest::new(api_version.clone()))
     }
 }
 impl ProtocolCodec<ApiVersionResponse> for ApiVersionResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
-        let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::ApiVersion);
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
+        let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::ApiVersionKey);
         let mut apiversion_reps_value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut apiversion_reps_value_set)?;
+        self.encode_to_value_set(&mut apiversion_reps_value_set);
         // correlation_id + response_total_size
-        let response_total_size = 4 + apiversion_reps_value_set.size()?;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        apiversion_reps_value_set.write_to(writer).await?;
-        writer.flush().await?;
+        let response_total_size = 4 + apiversion_reps_value_set.size();
+        let mut writer = BytesMut::with_capacity(response_total_size);
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        apiversion_reps_value_set.write_to(&mut writer);
         trace!(
             "write response total size:{} with correlation_id:{}",
             response_total_size,
             correlation_id
         );
-        Ok(())
+        writer
     }
 
-    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionResponse> {
+    fn decode(_buffer: &mut BytesMut, _api_version: &ApiVersion) -> AppResult<ApiVersionResponse> {
         todo!()
     }
 }
@@ -269,27 +248,24 @@ impl ApiVersionResponse {
         self,
         apiversion_reps_value_set: &mut ValueSet,
     ) -> AppResult<()> {
-        apiversion_reps_value_set
-            .append_field_value(ERROR_CODE_KEY_NAME, self.error_code.into())?;
+        apiversion_reps_value_set.append_field_value(ERROR_CODE_KEY_NAME, self.error_code.into());
         let mut versions_ary = Vec::with_capacity(self.api_versions.len());
         for (api_code, supported_versions) in self.api_versions {
             let mut version_value_set =
-                apiversion_reps_value_set.sub_valueset_of_ary_field(API_VERSIONS_KEY_NAME)?;
-            version_value_set.append_field_value(API_KEY_NAME, api_code.into())?;
-            version_value_set
-                .append_field_value(MIN_VERSION_KEY_NAME, supported_versions.0.into())?;
-            version_value_set
-                .append_field_value(MAX_VERSION_KEY_NAME, supported_versions.1.into())?;
+                apiversion_reps_value_set.sub_valueset_of_ary_field(API_VERSIONS_KEY_NAME);
+            version_value_set.append_field_value(API_KEY_NAME, api_code.into());
+            version_value_set.append_field_value(MIN_VERSION_KEY_NAME, supported_versions.0.into());
+            version_value_set.append_field_value(MAX_VERSION_KEY_NAME, supported_versions.1.into());
             versions_ary.push(DataType::ValueSet(version_value_set));
         }
         let versions_ary_schema = apiversion_reps_value_set
             .schema
             .clone()
-            .sub_schema_of_ary_field(API_VERSIONS_KEY_NAME)?;
+            .sub_schema_of_ary_field(API_VERSIONS_KEY_NAME);
         apiversion_reps_value_set.append_field_value(
             API_VERSIONS_KEY_NAME,
             DataType::array_of_value_set(versions_ary, versions_ary_schema),
-        )?;
+        );
 
         if apiversion_reps_value_set
             .schema
@@ -297,7 +273,7 @@ impl ApiVersionResponse {
             .contains_key(THROTTLE_TIME_KEY_NAME)
         {
             apiversion_reps_value_set
-                .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into())?;
+                .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
         }
 
         Ok(())

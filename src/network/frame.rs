@@ -38,7 +38,7 @@ impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
                     MetaDataRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::Metadata(metadata_request))
             }
-            ApiKey::ApiVersion => {
+            ApiKey::ApiVersionKey => {
                 let api_version_request =
                     ApiVersionRequest::decode(&mut request_body, &request_header.api_version)?;
                 Ok(ApiRequest::ApiVersion(api_version_request))

@@ -1,10 +1,8 @@
 use std::borrow::Cow;
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use bytes::BytesMut;
 use once_cell::sync::Lazy;
-use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
 use crate::message::TopicData;
@@ -29,19 +27,14 @@ pub const PARTITION_KEY_NAME: &str = "partition";
 pub const RECORD_SET_KEY_NAME: &str = "record_set";
 
 impl ProtocolCodec<ProduceRequest> for ProduceRequest {
-    async fn encode<W>(
-        self,
-        buffer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
         let mut produce_req_value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut produce_req_value_set)?;
-        produce_req_value_set.write_to(buffer).await
+        self.encode_to_value_set(&mut produce_req_value_set)
+            .unwrap();
+        let mut buffer = BytesMut::new();
+        produce_req_value_set.write_to(&mut buffer);
+        buffer
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
@@ -58,32 +51,28 @@ impl ProtocolCodec<ProduceRequest> for ProduceRequest {
 ///
 impl ProduceRequest {
     fn decode_from_value_set(mut produce_req_value_set: ValueSet) -> AppResult<ProduceRequest> {
-        let ack_field_value: i16 = produce_req_value_set
-            .get_field_value(ACKS_KEY_NAME)?
-            .try_into()?;
+        let ack_field_value: i16 = produce_req_value_set.get_field_value(ACKS_KEY_NAME).into();
         let required_acks = Acks::try_from(ack_field_value)?;
 
         let timeout = produce_req_value_set
-            .get_field_value(TIMEOUT_KEY_NAME)?
-            .try_into()?;
+            .get_field_value(TIMEOUT_KEY_NAME)
+            .into();
 
-        let topic_ary_field = produce_req_value_set.get_field_value(TOPIC_DATA_KEY_NAME)?;
-        let topic_ary_type: ArrayType = topic_ary_field.try_into()?;
+        let topic_ary_field = produce_req_value_set.get_field_value(TOPIC_DATA_KEY_NAME);
+        let topic_ary_type: ArrayType = topic_ary_field.into();
         let topic_ary = topic_ary_type
             .values
             .ok_or(ProtocolError(Cow::Borrowed("topic data is empty")))?;
         let mut topic_array = Vec::with_capacity(topic_ary.len());
         for topic_value in topic_ary {
-            let mut topic_data_value_set: ValueSet = topic_value.try_into()?;
+            let mut topic_data_value_set: ValueSet = topic_value.into();
             // "topic" field
-            let topic_name = topic_data_value_set
-                .get_field_value(TOPIC_KEY_NAME)?
-                .try_into()?;
+            let topic_name = topic_data_value_set.get_field_value(TOPIC_KEY_NAME).into();
 
             // "data" field
             let partition_data_field =
-                topic_data_value_set.get_field_value(PARTITION_DATA_KEY_NAME)?;
-            let partition_array_type: ArrayType = partition_data_field.try_into()?;
+                topic_data_value_set.get_field_value(PARTITION_DATA_KEY_NAME);
+            let partition_array_type: ArrayType = partition_data_field.into();
 
             let partition_data = partition_array_type
                 .values
@@ -92,11 +81,10 @@ impl ProduceRequest {
             for partition in partition_data {
                 if let DataType::ValueSet(mut value_set) = partition {
                     // "partition" field
-                    let partition_num: i32 =
-                        value_set.get_field_value(PARTITION_KEY_NAME)?.try_into()?;
+                    let partition_num: i32 = value_set.get_field_value(PARTITION_KEY_NAME).into();
                     // "record_set" field
                     let records: MemoryRecords =
-                        value_set.get_field_value(RECORD_SET_KEY_NAME)?.try_into()?;
+                        value_set.get_field_value(RECORD_SET_KEY_NAME).into();
                     partition_ary.push(PartitionMsgData::new(partition_num, records));
                 }
             }
@@ -134,26 +122,21 @@ impl ProduceRequest {
     ///                      )
     ///  )`
     fn encode_to_value_set(self, produce_req_value_set: &mut ValueSet) -> AppResult<()> {
-        if produce_req_value_set
-            .schema
-            .get_field(TRANSACTIONAL_ID_KEY_NAME)
-            .is_ok()
-        {
-            produce_req_value_set
-                .append_field_value(TRANSACTIONAL_ID_KEY_NAME, self.transactional_id.into())?;
-        }
-        produce_req_value_set.append_field_value(ACKS_KEY_NAME, self.required_acks.into())?;
-        produce_req_value_set.append_field_value(TIMEOUT_KEY_NAME, DataType::from(self.timeout))?;
+        produce_req_value_set
+            .append_field_value(TRANSACTIONAL_ID_KEY_NAME, self.transactional_id.into());
+
+        produce_req_value_set.append_field_value(ACKS_KEY_NAME, self.required_acks.into());
+        produce_req_value_set.append_field_value(TIMEOUT_KEY_NAME, DataType::from(self.timeout));
 
         let topic_data_ary =
-            Self::generate_topic_data_array(self.topic_data, produce_req_value_set)?;
+            Self::generate_topic_data_array(self.topic_data, produce_req_value_set);
         let topic_data_schema = Schema::sub_schema_of_ary_field(
             produce_req_value_set.schema.clone(),
             TOPIC_DATA_KEY_NAME,
-        )?;
+        );
 
         let array = DataType::array_of_value_set(topic_data_ary, topic_data_schema);
-        produce_req_value_set.append_field_value(TOPIC_DATA_KEY_NAME, array)?;
+        produce_req_value_set.append_field_value(TOPIC_DATA_KEY_NAME, array);
         Ok(())
     }
 
@@ -176,28 +159,28 @@ impl ProduceRequest {
     fn generate_topic_data_array(
         topic_data: Vec<TopicData>,
         produce_req_value_set: &mut ValueSet,
-    ) -> AppResult<Vec<DataType>> {
+    ) -> Vec<DataType> {
         let mut topic_data_ary = Vec::with_capacity(topic_data.len());
 
         for data in topic_data {
             let mut topic_data_value_set =
-                produce_req_value_set.sub_valueset_of_ary_field(TOPIC_DATA_KEY_NAME)?;
+                produce_req_value_set.sub_valueset_of_ary_field(TOPIC_DATA_KEY_NAME);
             topic_data_value_set
-                .append_field_value(TOPIC_KEY_NAME, DataType::from(data.topic_name.as_str()))?;
+                .append_field_value(TOPIC_KEY_NAME, DataType::from(data.topic_name.as_str()));
 
             let partition_data_ary =
-                Self::generate_partition_data_array(data.partition_data, &topic_data_value_set)?;
+                Self::generate_partition_data_array(data.partition_data, &topic_data_value_set);
             let partition_ary_schema = Schema::sub_schema_of_ary_field(
                 topic_data_value_set.schema.clone(),
                 PARTITION_DATA_KEY_NAME,
-            )?;
+            );
             let partition_array =
                 DataType::array_of_value_set(partition_data_ary, partition_ary_schema);
-            topic_data_value_set.append_field_value(PARTITION_DATA_KEY_NAME, partition_array)?;
+            topic_data_value_set.append_field_value(PARTITION_DATA_KEY_NAME, partition_array);
             topic_data_ary.push(DataType::ValueSet(topic_data_value_set));
         }
 
-        Ok(topic_data_ary)
+        topic_data_ary
     }
 
     ///
@@ -206,21 +189,21 @@ impl ProduceRequest {
     fn generate_partition_data_array(
         partition_data_vec: Vec<PartitionMsgData>,
         topic_data_value_set: &ValueSet,
-    ) -> AppResult<Vec<DataType>> {
+    ) -> Vec<DataType> {
         let mut partition_data_ary = Vec::with_capacity(partition_data_vec.len());
 
         for partition_data in partition_data_vec {
             let mut partition_value_set =
-                topic_data_value_set.sub_valueset_of_ary_field(PARTITION_DATA_KEY_NAME)?;
+                topic_data_value_set.sub_valueset_of_ary_field(PARTITION_DATA_KEY_NAME);
             partition_value_set
-                .append_field_value(PARTITION_KEY_NAME, partition_data.partition.into())?;
+                .append_field_value(PARTITION_KEY_NAME, partition_data.partition.into());
             partition_value_set.append_field_value(
                 RECORD_SET_KEY_NAME,
                 DataType::Records(partition_data.message_set),
-            )?;
+            );
             partition_data_ary.push(DataType::ValueSet(partition_value_set));
         }
-        Ok(partition_data_ary)
+        partition_data_ary
     }
 }
 
@@ -372,7 +355,7 @@ mod tests {
             ApiVersion::V5 => {
                 //not implemented
                 todo!()
-            },
+            }
         };
         let mut produce_req_value_set = ValueSet::new(schema);
 
@@ -382,42 +365,34 @@ mod tests {
             .unwrap();
 
         // Check the returned Struct instance
-        assert_eq!(
-            produce_req_value_set
-                .get_field_value(ACKS_KEY_NAME)
-                .unwrap(),
-            Acks::default().try_into().unwrap()
-        );
-        assert_eq!(
-            produce_req_value_set
-                .get_field_value(TIMEOUT_KEY_NAME)
-                .unwrap(),
-            1000.into()
-        );
+        let acks_field_value = produce_req_value_set.get_field_value(ACKS_KEY_NAME);
+        assert_eq!(acks_field_value, Acks::default().into());
+
+        let timeout_field_value = produce_req_value_set.get_field_value(TIMEOUT_KEY_NAME);
+        assert_eq!(timeout_field_value, 1000.into());
 
         // Check topic_data field
         let topic_data_field = produce_req_value_set
             .get_field_value(TOPIC_DATA_KEY_NAME)
-            .unwrap();
+            .into();
         if let DataType::Array(array) = topic_data_field {
             assert!(array.values.is_some(), "Topic data should not be empty");
             for (index, item) in array.values.unwrap().into_iter().enumerate() {
                 if let DataType::ValueSet(mut topic_value_set) = item {
+                    let topic_name_field_value = topic_value_set.get_field_value(TOPIC_KEY_NAME);
                     assert_eq!(
-                        topic_value_set.get_field_value(TOPIC_KEY_NAME).unwrap(),
+                        topic_name_field_value,
                         format!("test_topic{}", index + 1).into()
                     );
-                    if let DataType::Array(array) = topic_value_set
-                        .get_field_value(PARTITION_DATA_KEY_NAME)
-                        .unwrap()
-                    {
+                    let partition_data_field_value = topic_value_set.get_field_value(PARTITION_DATA_KEY_NAME);
+                    if let DataType::Array(array) = partition_data_field_value {
                         assert!(array.values.is_some(), "Partition data should not be empty");
                         for (index, item) in array.values.unwrap().into_iter().enumerate() {
                             if let DataType::ValueSet(mut partition_value_set) = item {
+                                let partition_num_field_value =
+                                    partition_value_set.get_field_value(PARTITION_KEY_NAME);
                                 assert_eq!(
-                                    partition_value_set
-                                        .get_field_value(PARTITION_KEY_NAME)
-                                        .unwrap(),
+                                    partition_num_field_value,
                                     (index as i32 + 1).into()
                                 );
                             }
@@ -454,13 +429,9 @@ mod tests {
             .init();
 
         let produce_request = create_test_produce_request();
-        let mut buffer = Vec::new();
         let api_version = ApiVersion::default();
         let produce_request_clone = produce_request.clone();
-        produce_request
-            .encode(&mut buffer, &api_version, 0)
-            .await
-            .unwrap();
+        let buffer = produce_request.encode(&api_version, 0);
         let mut buffer = BytesMut::from(&buffer[..]);
         let target_produce_request = ProduceRequest::decode(&mut buffer, &api_version).unwrap();
         assert_eq!(produce_request_clone, target_produce_request);

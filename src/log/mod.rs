@@ -41,12 +41,6 @@ pub trait Log: Debug {
         &self,
         records: (TopicPartition, i64, MemoryRecords),
     ) -> AppResult<LogAppendInfo>;
-    fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
-        IllegalStateError(Cow::Owned(format!(
-            "no active segment found log:{}",
-            topic_partition,
-        )))
-    }
 }
 pub enum LogType {
     Journal,

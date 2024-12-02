@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use bytes::Bytes;
+use bytes::BytesMut;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
@@ -32,8 +32,9 @@ pub struct RequestHandler {
 #[derive(Debug)]
 pub struct RequestTask {
     connection_id: u64,
+    client_ip: String,
     frame: RequestFrame,
-    response_tx: oneshot::Sender<Bytes>,
+    response_tx: oneshot::Sender<BytesMut>,
 }
 fn get_type_name<T>(_: &T) -> &'static str {
     type_name::<T>()
@@ -148,6 +149,7 @@ async fn process_request(
     } = request.frame;
     let RequestTask {
         connection_id,
+        client_ip,
         response_tx,
         ..
     } = request;
@@ -156,6 +158,7 @@ async fn process_request(
         // 处理请求的具体逻辑
         let response = RequestProcessor::process_request(
             api_request,
+            client_ip,
             &request_header,
             replica_manager,
             group_coordinator,
@@ -210,6 +213,7 @@ impl ConnectionHandler {
             // 发送到全局处理队列
             let request = RequestTask {
                 connection_id: self.connection_id,
+                client_ip: self.connection.client_ip.clone(),
                 frame,
                 response_tx,
             };

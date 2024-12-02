@@ -25,11 +25,9 @@ use crate::{
             PartitionOffsetCommitData, PartitionOffsetData, SyncGroupResponse,
         },
         errors::{ErrorCode, KafkaError, KafkaResult},
-        RequestContext,
     },
     service::{GroupConfig, Node},
     utils::DelayedAsyncOperationPurgatory,
-    AppResult,
 };
 
 use super::{
@@ -113,57 +111,46 @@ impl GroupCoordinator {
         coordinator
     }
 
-    pub async fn find_coordinator(
-        &self,
-        _: FindCoordinatorRequest,
-    ) -> AppResult<FindCoordinatorResponse> {
+    pub async fn find_coordinator(&self, _: FindCoordinatorRequest) -> FindCoordinatorResponse {
         // 因为stonemq目前支持单机，所以coordinator就是自身
         let response: FindCoordinatorResponse = self.node.clone().into();
-        Ok(response)
+        response
     }
-    pub async fn handle_join_group(
-        self: Arc<Self>,
-        mut request: JoinGroupRequest,
-        request_context: &RequestContext<'_>,
-    ) -> KafkaResult<JoinGroupResult> {
-        if let Some(client_id) = request_context.request_header.client_id.clone() {
-            request.client_id = client_id;
-        }
+    pub async fn handle_join_group(self: Arc<Self>, request: JoinGroupRequest) -> JoinGroupResult {
         // 检查请求是否合法
         if request.group_id.is_empty() {
-            return Ok(self.join_error(request.member_id.clone(), ErrorCode::InvalidGroupId));
+            return self.join_error(request.member_id.clone(), ErrorCode::InvalidGroupId);
         } else if !self.active.load() {
-            return Ok(self.join_error(
+            return self.join_error(
                 request.member_id.clone(),
                 ErrorCode::CoordinatorNotAvailable,
-            ));
+            );
         } else if request.session_timeout < self.group_config.group_min_session_timeout
             || request.session_timeout > self.group_config.group_max_session_timeout
         {
-            return Ok(self.join_error(request.member_id.clone(), ErrorCode::InvalidSessionTimeout));
+            return self.join_error(request.member_id.clone(), ErrorCode::InvalidSessionTimeout);
         }
         trace!("handle join group request: {:?}", request);
 
         let group = self.group_manager.get_group(&request.group_id);
         if let Some(group) = group {
             // 加入一个已经存在的组
-            self.do_join_group(request, group, request_context).await
+            self.do_join_group(request, group).await
         } else if request.member_id.is_empty() {
             // 新组，新成员
             let group = GroupMetadata::new(&request.group_id);
             let group = self.group_manager.add_group(group);
-            self.do_join_group(request, group, request_context).await
+            self.do_join_group(request, group).await
         } else {
             // 旧成员加入一个不存在的组
-            Ok(self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId))
+            self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
         }
     }
     async fn do_join_group(
         self: &Arc<Self>,
         request: JoinGroupRequest,
         group: Arc<RwLock<GroupMetadata>>,
-        request_context: &RequestContext<'_>,
-    ) -> KafkaResult<JoinGroupResult> {
+    ) -> JoinGroupResult {
         let locked_group = group.write().await;
 
         if !locked_group.is(GroupState::Empty)
@@ -177,13 +164,13 @@ impl GroupCoordinator {
                 ))
         {
             // new member join group, but group is not empty, and protocol type or supported protocols are not match
-            Ok(self.join_error(
+            self.join_error(
                 request.member_id.clone(),
                 ErrorCode::InconsistentGroupProtocol,
-            ))
+            )
         } else if !request.member_id.is_empty() && !locked_group.has_member(&request.member_id) {
             // member_id is not empty, but not in group
-            Ok(self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId))
+            self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
         } else {
             let coordinator_clone = self.clone();
             let result = match locked_group.state() {
@@ -192,22 +179,15 @@ impl GroupCoordinator {
                     // from the coordinator metadata; this is likely that the group has migrated to some other
                     // coordinator OR the group is in a transient unstable phase. Let the member retry
                     // joining without the specified member id,
-                    return Ok(
-                        self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
-                    );
+                    self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
                 }
                 GroupState::PreparingRebalance => {
                     // group is in rebalancing, new member and existing member are open to join
 
                     if request.member_id.is_empty() {
                         // new member join group
-                        self.add_member_and_rebalance(
-                            request,
-                            locked_group,
-                            group.clone(),
-                            request_context,
-                        )
-                        .await
+                        self.add_member_and_rebalance(request, locked_group, group.clone())
+                            .await
                     } else {
                         // existing member join group
                         let (tx, rx) = oneshot::channel();
@@ -220,21 +200,14 @@ impl GroupCoordinator {
                         )
                         .await;
 
-                        request_context.notify_processor_proceed().await;
-                        debug!("notified processor processing ");
-                        Ok(rx.await.unwrap())
+                        rx.await.unwrap()
                     }
                 }
                 GroupState::AwaitingSync => {
                     if request.member_id.is_empty() {
                         // new member join group
-                        self.add_member_and_rebalance(
-                            request,
-                            locked_group,
-                            group.clone(),
-                            request_context,
-                        )
-                        .await
+                        self.add_member_and_rebalance(request, locked_group, group.clone())
+                            .await
                     } else {
                         let member_id = request.member_id.clone();
                         let leader_id = locked_group.leader_id().unwrap().to_string();
@@ -243,20 +216,20 @@ impl GroupCoordinator {
                             // member is joining with the same metadata (which could be because it failed to
                             // receive the initial JoinGroup response), so just return current group information
                             // for the current generation.
-                            Ok(JoinGroupResult {
+                            JoinGroupResult {
                                 members: {
                                     if request.member_id == leader_id {
-                                        Some(locked_group.current_member_metadata())
+                                        locked_group.current_member_metadata()
                                     } else {
-                                        None
+                                        BTreeMap::new()
                                     }
                                 },
                                 member_id: request.member_id.clone(),
                                 generation_id: locked_group.generation_id(),
                                 sub_protocol: locked_group.protocol().unwrap().to_string(),
                                 leader_id,
-                                error: None,
-                            })
+                                error: ErrorCode::None,
+                            }
                         } else {
                             // member has changed protocol, need rebalance
                             let (tx, rx) = oneshot::channel();
@@ -268,22 +241,15 @@ impl GroupCoordinator {
                                 group.clone(),
                             )
                             .await;
-                            request_context.notify_processor_proceed().await;
-                            debug!("notified processor processing ");
-                            Ok(rx.await.unwrap())
+                            rx.await.unwrap()
                         }
                     }
                 }
                 GroupState::Empty | GroupState::Stable => {
                     if request.member_id.is_empty() {
                         // new member join group, and group is empty
-                        self.add_member_and_rebalance(
-                            request,
-                            locked_group,
-                            group.clone(),
-                            request_context,
-                        )
-                        .await
+                        self.add_member_and_rebalance(request, locked_group, group.clone())
+                            .await
                     } else {
                         // existing member join group
                         let member_id = request.member_id.clone();
@@ -304,19 +270,17 @@ impl GroupCoordinator {
                                 group.clone(),
                             )
                             .await;
-                            request_context.notify_processor_proceed().await;
-                            debug!("notified processor processing ");
-                            Ok(rx.await.unwrap())
+                            rx.await.unwrap()
                         } else {
                             // member is not the leader and has not changed protocol, just return current group information
-                            Ok(JoinGroupResult {
-                                members: None,
+                            JoinGroupResult {
+                                members: BTreeMap::new(),
                                 member_id: request.member_id.clone(),
                                 generation_id: locked_group.generation_id(),
                                 sub_protocol: locked_group.protocol().unwrap().to_string(),
                                 leader_id: locked_group.leader_id().unwrap().to_string(),
-                                error: None,
-                            })
+                                error: ErrorCode::None,
+                            }
                         }
                     }
                 }
@@ -343,8 +307,7 @@ impl GroupCoordinator {
         request: JoinGroupRequest,
         mut locked_group: RwLockWriteGuard<'_, GroupMetadata>,
         group: Arc<RwLock<GroupMetadata>>,
-        request_context: &RequestContext<'_>,
-    ) -> KafkaResult<JoinGroupResult> {
+    ) -> JoinGroupResult {
         let member_id = format!("{}-{}", request.client_id, Uuid::new_v4());
         let mut member = MemberMetadata::new(
             &member_id,
@@ -363,7 +326,7 @@ impl GroupCoordinator {
         let (tx, rx) = oneshot::channel();
         member.set_join_group_callback(tx);
         trace!("add member: {:?}", member);
-        locked_group.add_member(member)?;
+        locked_group.add_member(member);
 
         // update the newMemberAdded flag to indicate that the join group can be further delayed
         if locked_group.is(GroupState::PreparingRebalance) && locked_group.generation_id() == 0 {
@@ -375,11 +338,8 @@ impl GroupCoordinator {
 
         self.maybe_prepare_rebalance(group).await;
 
-        // 通知request processor 可以处理下一个
-        request_context.notify_processor_proceed().await;
-        debug!("notified processor processing ");
         // 等待加入结果
-        Ok(rx.await.unwrap())
+        rx.await.unwrap()
     }
 
     // do_join_group 的辅助函数-2，在获取写锁的情况下，更新成员并触发rebalance，同时延迟的join操作需要一个独立的group
@@ -529,15 +489,15 @@ impl GroupCoordinator {
                 for member in locked_write_group.members() {
                     let join_result = JoinGroupResult {
                         members: if member.id() == leader_id {
-                            Some(all_member_protocols.clone())
+                            all_member_protocols.clone()
                         } else {
-                            None
+                            BTreeMap::new()
                         },
                         member_id: member.id().to_string(),
                         generation_id,
                         sub_protocol: sub_protocol.clone(),
                         leader_id: leader_id.clone(),
-                        error: None,
+                        error: ErrorCode::None,
                     };
                     let _ = member.take_join_group_callback().send(join_result);
                 }
@@ -618,7 +578,11 @@ impl GroupCoordinator {
                 .await;
         }
     }
-    pub async fn on_heartbeat_complete(&self, group: Arc<RwLock<GroupMetadata>>, member_id: &str) {
+    pub async fn on_heartbeat_complete(
+        &self,
+        _group: Arc<RwLock<GroupMetadata>>,
+        _member_id: &str,
+    ) {
         // debug!(
         //     "heartbeat complete for member: {} group: {}",
         //     member_id,
@@ -742,21 +706,14 @@ impl GroupCoordinator {
         member_id: &str,
         generation_id: i32,
         group_assignment: HashMap<String, Bytes>,
-        request_context: &mut RequestContext<'_>,
     ) -> KafkaResult<SyncGroupResponse> {
         if !self.active.load() {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
         let group = self.group_manager.get_group(group_id);
         if let Some(group) = group {
-            self.do_sync_group(
-                group,
-                member_id,
-                generation_id,
-                group_assignment,
-                request_context,
-            )
-            .await
+            self.do_sync_group(group, member_id, generation_id, group_assignment)
+                .await
         } else {
             Err(KafkaError::UnknownMemberId(member_id.to_string()))
         }
@@ -767,7 +724,6 @@ impl GroupCoordinator {
         member_id: &str,
         generation_id: i32,
         mut group_assignment: HashMap<String, Bytes>,
-        request_context: &mut RequestContext<'_>,
     ) -> KafkaResult<SyncGroupResponse> {
         trace!("do sync group");
 
@@ -866,8 +822,6 @@ impl GroupCoordinator {
                         drop(write_lock);
                     }
                     // 通知processor继续处理, 此处的等待不会阻塞processor
-                    debug!("notified processor processing ");
-                    request_context.notify_processor_proceed().await;
                     Ok(rx.await.unwrap())
                 }
             };
@@ -1033,22 +987,22 @@ impl GroupCoordinator {
 
     fn join_error(&self, member_id: String, error: ErrorCode) -> JoinGroupResult {
         JoinGroupResult {
-            members: None,
+            members: BTreeMap::new(),
             member_id,
             generation_id: 0,
             sub_protocol: "".to_string(),
             leader_id: "".to_string(),
-            error: Some(error),
+            error,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct JoinGroupResult {
-    pub members: Option<BTreeMap<String, Bytes>>,
+    pub members: BTreeMap<String, Bytes>,
     pub member_id: String,
     pub generation_id: i32,
     pub sub_protocol: String,
     pub leader_id: String,
-    pub error: Option<ErrorCode>,
+    pub error: ErrorCode,
 }

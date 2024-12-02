@@ -1,20 +1,15 @@
 use crate::message::GroupCoordinator;
-use crate::service::{setup_tracing, Server};
+use crate::service::Server;
 use crate::AppError::IllegalStateError;
 use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
-use crossbeam::atomic::AtomicCell;
-use opentelemetry::global;
-use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::signal;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
-use tokio::{runtime, signal};
 use tracing::{error, info, trace};
-
-use super::config::OtelGuard;
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -113,7 +108,7 @@ impl Broker {
                 listen_address, err
             );
             error!(error_msg);
-            return Err(IllegalStateError(Cow::Owned(error_msg)));
+            return Err(IllegalStateError(error_msg.to_string()));
         }
         info!("tcp server binding to {} for listening", &listen_address);
         let max_connection = {
@@ -132,7 +127,7 @@ impl Broker {
         .await;
         let group_coordinator = Arc::new(group_coordinator);
 
-        let mut server = Server::new(
+        let server = Server::new(
             bind_result?,
             Arc::new(Semaphore::new(max_connection)),
             notify_shutdown.clone(),

@@ -421,7 +421,7 @@ impl GroupMetadata {
     }
 
     /// 添加新成员
-    pub fn add_member(&mut self, member: MemberMetadata) -> Result<(), KafkaError> {
+    pub fn add_member(&mut self, member: MemberMetadata) {
         if self.members.is_empty() {
             self.protocol_type = Some(member.protocol_type.clone());
         }
@@ -430,7 +430,6 @@ impl GroupMetadata {
         }
 
         self.members.insert(member.id.clone(), member);
-        Ok(())
     }
 
     /// 移除成员
@@ -902,7 +901,7 @@ mod tests {
         let mut group = GroupMetadata::new("test-group");
         let member = create_test_member("member-1");
 
-        assert!(group.add_member(member).is_ok());
+        group.add_member(member);
         assert!(group.new_member_added());
 
         let removed = group.remove_member("member-1");
@@ -917,8 +916,8 @@ mod tests {
         let member1 = create_test_member("member-1");
         let member2 = create_test_member("member-2");
 
-        group.add_member(member1).unwrap();
-        group.add_member(member2).unwrap();
+        group.add_member(member1);
+        group.add_member(member2);
 
         let protocol = group.select_protocol();
         assert!(protocol.is_ok());

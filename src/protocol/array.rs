@@ -9,6 +9,7 @@ use crate::protocol::primary_types::{
 };
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::{AppError, AppResult};
 
 ///
 /// 注意: ArrayType作为类型使用的时候，这里的p_type是arrayOf(schema),
@@ -21,9 +22,13 @@ pub struct ArrayType {
 }
 
 impl ArrayType {
-    pub fn decode(&self, buffer: &mut BytesMut) -> DataType {
+    pub fn decode(&self, buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 4 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a array, insufficient data".into(),
+            ));
+        }
         let ary_size = buffer.get_i32();
-        // trace!("array size: {}", ary_size);
         let p_type = match &*self.p_type {
             DataType::Schema(schema) => DataType::ValueSet(ValueSet::new(schema.clone())),
             other_type => other_type.clone(),
@@ -34,27 +39,32 @@ impl ArrayType {
                 p_type: Arc::new(p_type),
                 values: None,
             };
-            return DataType::Array(ary);
+            return Ok(DataType::Array(ary));
         } else if ary_size < 0 {
-            panic!("array size {} can not be negative", ary_size);
+            return Err(AppError::MalformedProtocol(
+                format!("array size {} can not be negative", ary_size).into(),
+            ));
         }
         let mut values: Vec<DataType> = Vec::with_capacity(ary_size as usize);
         for _ in 0..ary_size {
             let result = match &*self.p_type {
-                DataType::Schema(schema) => schema.clone().read_from(buffer).into(),
-                DataType::Bool(_) => Bool::decode(buffer),
-                DataType::I8(_) => I8::decode(buffer),
-                DataType::I16(_) => I16::decode(buffer),
-                DataType::I32(_) => I32::decode(buffer),
-                DataType::U32(_) => U32::decode(buffer),
-                DataType::I64(_) => I64::decode(buffer),
-                DataType::PString(_) => PString::decode(buffer),
-                DataType::NPString(_) => NPString::decode(buffer),
-                DataType::PBytes(_) => PBytes::decode(buffer),
-                DataType::NPBytes(_) => NPBytes::decode(buffer),
-                DataType::PVarInt(_) => PVarInt::decode(buffer),
-                DataType::PVarLong(_) => PVarLong::decode(buffer),
-                DataType::Records(_) => MemoryRecords::decode(buffer),
+                DataType::Schema(schema) => schema
+                    .clone()
+                    .read_from(buffer)
+                    .map(|value_set| DataType::ValueSet(value_set))?,
+                DataType::Bool(_) => Bool::decode(buffer)?,
+                DataType::I8(_) => I8::decode(buffer)?,
+                DataType::I16(_) => I16::decode(buffer)?,
+                DataType::I32(_) => I32::decode(buffer)?,
+                DataType::U32(_) => U32::decode(buffer)?,
+                DataType::I64(_) => I64::decode(buffer)?,
+                DataType::PString(_) => PString::decode(buffer)?,
+                DataType::NPString(_) => NPString::decode(buffer)?,
+                DataType::PBytes(_) => PBytes::decode(buffer)?,
+                DataType::NPBytes(_) => NPBytes::decode(buffer)?,
+                DataType::PVarInt(_) => PVarInt::decode(buffer)?,
+                DataType::PVarLong(_) => PVarLong::decode(buffer)?,
+                DataType::Records(_) => MemoryRecords::decode(buffer)?,
                 //should never happen
                 DataType::Array(_) => {
                     panic!("unexpected array in array");
@@ -69,13 +79,11 @@ impl ArrayType {
             p_type: Arc::new(p_type),
             values: Some(values),
         };
-        DataType::Array(ary)
+        Ok(DataType::Array(ary))
     }
 
-    ///
-    /// 将ArrayType写入到缓冲区, 消耗掉自己，之后不能再使用
-    pub fn encode(&self, writer: &mut BytesMut) {
-        match &self.values {
+    pub fn encode(self, writer: &mut BytesMut) {
+        match self.values {
             None => {
                 writer.put_i32(-1);
             }
@@ -161,7 +169,7 @@ mod tests {
         array.encode(&mut writer);
 
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_array = array_clone.decode(&mut buffer);
+        let read_array = array_clone.decode(&mut buffer).unwrap();
         assert_eq!(read_array, DataType::Array(array_clone));
     }
     #[test]
@@ -176,7 +184,7 @@ mod tests {
         let array_clone = array.clone();
         array.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_array = array_clone.decode(&mut buffer);
+        let read_array = array_clone.decode(&mut buffer).unwrap();
         assert_eq!(read_array, DataType::Array(array_clone));
     }
 }

@@ -293,6 +293,20 @@ pub struct LeaveGroupResponse {
     pub error: KafkaError,
     pub throttle_time_ms: i32,
 }
+impl LeaveGroupResponse {
+    pub fn new(result: KafkaResult<()>) -> Self {
+        match result {
+            Ok(_) => LeaveGroupResponse {
+                error: KafkaError::None,
+                throttle_time_ms: 0,
+            },
+            Err(e) => LeaveGroupResponse {
+                error: e,
+                throttle_time_ms: 0,
+            },
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct OffsetCommitRequest {

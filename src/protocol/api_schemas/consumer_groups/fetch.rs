@@ -9,7 +9,7 @@ use crate::{
     message::{MemoryRecords, TopicPartition},
     protocol::{
         array::ArrayType,
-        primary_types::{PBytes, PString, I16, I32, I64, I8},
+        primary_types::{PString, I16, I32, I64, I8},
         schema::Schema,
         types::DataType,
         value_set::ValueSet,
@@ -140,20 +140,11 @@ pub static FETCH_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use std::borrow::Cow;
-use tokio::io::AsyncWriteExt;
 
 impl ProtocolCodec<FetchRequest> for FetchRequest {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
         todo!()
     }
 
@@ -165,25 +156,17 @@ impl ProtocolCodec<FetchRequest> for FetchRequest {
 }
 
 impl ProtocolCodec<FetchResponse> for FetchResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::Fetch);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size()?;
+        self.encode_to_value_set(&mut value_set);
+        let body_size = value_set.size();
         let total_size = 4 + body_size;
-        writer.write_i32(total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        writer.flush().await?;
-        Ok(())
+        let mut writer = BytesMut::with_capacity(total_size);
+        writer.put_i32(total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer);
+        writer
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchResponse> {
@@ -195,14 +178,14 @@ impl ProtocolCodec<FetchResponse> for FetchResponse {
 
 impl FetchRequest {
     fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<FetchRequest> {
-        let replica_id = value_set.get_field_value("replica_id")?.try_into()?;
-        let max_wait_ms = value_set.get_field_value("max_wait_time")?.try_into()?;
-        let min_bytes = value_set.get_field_value("min_bytes")?.try_into()?;
-        let max_bytes = value_set.get_field_value("max_bytes")?.try_into()?;
-        let isolation_level_i8: i8 = value_set.get_field_value("isolation_level")?.try_into()?;
+        let replica_id = value_set.get_field_value("replica_id").into();
+        let max_wait_ms = value_set.get_field_value("max_wait_time").into();
+        let min_bytes = value_set.get_field_value("min_bytes").into();
+        let max_bytes = value_set.get_field_value("max_bytes").into();
+        let isolation_level_i8: i8 = value_set.get_field_value("isolation_level").into();
         let isolation_level = IsolationLevel::try_from(isolation_level_i8)?;
 
-        let topics_array: ArrayType = value_set.get_field_value("topics")?.try_into()?;
+        let topics_array: ArrayType = value_set.get_field_value("topics").into();
         let topics_values = topics_array
             .values
             .ok_or(AppError::ProtocolError(Cow::Borrowed(
@@ -211,11 +194,10 @@ impl FetchRequest {
 
         let mut topics = Vec::new();
         for topic_value in topics_values {
-            let mut topic_value_set: ValueSet = topic_value.try_into()?;
-            let topic: String = topic_value_set.get_field_value("topic")?.try_into()?;
+            let mut topic_value_set: ValueSet = topic_value.into();
+            let topic: String = topic_value_set.get_field_value("topic").into();
 
-            let partitions_array: ArrayType =
-                topic_value_set.get_field_value("partitions")?.try_into()?;
+            let partitions_array: ArrayType = topic_value_set.get_field_value("partitions").into();
             let partitions_values =
                 partitions_array
                     .values
@@ -225,19 +207,13 @@ impl FetchRequest {
 
             let mut partitions = Vec::new();
             for partition_value in partitions_values {
-                let mut partition_value_set: ValueSet = partition_value.try_into()?;
-                let partition = partition_value_set
-                    .get_field_value("partition")?
-                    .try_into()?;
-                let fetch_offset = partition_value_set
-                    .get_field_value("fetch_offset")?
-                    .try_into()?;
+                let mut partition_value_set: ValueSet = partition_value.into();
+                let partition = partition_value_set.get_field_value("partition").into();
+                let fetch_offset = partition_value_set.get_field_value("fetch_offset").into();
                 let log_start_offset = partition_value_set
-                    .get_field_value("log_start_offset")?
-                    .try_into()?;
-                let max_bytes = partition_value_set
-                    .get_field_value("max_bytes")?
-                    .try_into()?;
+                    .get_field_value("log_start_offset")
+                    .into();
+                let max_bytes = partition_value_set.get_field_value("max_bytes").into();
 
                 partitions.push((partition, fetch_offset, log_start_offset, max_bytes));
             }
@@ -266,7 +242,7 @@ impl FetchRequest {
 }
 
 impl FetchResponse {
-    fn encode_to_value_set(mut self, response_value_set: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, response_value_set: &mut ValueSet) -> AppResult<()> {
         // 按topic分组responses
         let mut topic_responses: HashMap<String, Vec<(TopicPartition, PartitionDataRep)>> =
             HashMap::new();
@@ -276,56 +252,50 @@ impl FetchResponse {
                 .or_default()
                 .push((topic_partition, partition_data));
         }
-        response_value_set.append_field_value("throttle_time_ms", self.throttle_time.into())?;
+        response_value_set.append_field_value("throttle_time_ms", self.throttle_time.into());
 
         // 构建topic responses数组
         let mut topic_responses_array = Vec::new();
         for (topic, partition_data_list) in topic_responses {
-            let mut topic_value_set = response_value_set.sub_valueset_of_ary_field("responses")?;
-            topic_value_set.append_field_value("topic", topic.into())?;
+            let mut topic_value_set = response_value_set.sub_valueset_of_ary_field("responses");
+            topic_value_set.append_field_value("topic", topic.into());
 
             // 构建partition responses数组
             let mut partition_responses = Vec::new();
             for (topic_partition, partition_data) in partition_data_list {
                 let mut partition_value_set =
-                    topic_value_set.sub_valueset_of_ary_field("partition_responses")?;
+                    topic_value_set.sub_valueset_of_ary_field("partition_responses");
 
                 let mut header_value_set =
-                    partition_value_set.sub_valueset_of_schema_field("partition_header")?;
+                    partition_value_set.sub_valueset_of_schema_field("partition_header");
 
+                header_value_set.append_field_value("partition", topic_partition.partition.into());
+                header_value_set.append_field_value("error_code", partition_data.error_code.into());
                 header_value_set
-                    .append_field_value("partition", topic_partition.partition.into())?;
-                header_value_set
-                    .append_field_value("error_code", partition_data.error_code.into())?;
-                header_value_set
-                    .append_field_value("high_watermark", partition_data.high_watermark.into())?;
+                    .append_field_value("high_watermark", partition_data.high_watermark.into());
                 header_value_set.append_field_value(
                     "last_stable_offset",
                     partition_data.last_stable_offset.into(),
-                )?;
-                header_value_set.append_field_value(
-                    "log_start_offset",
-                    partition_data.log_start_offset.into(),
-                )?;
+                );
+                header_value_set
+                    .append_field_value("log_start_offset", partition_data.log_start_offset.into());
 
                 // 处理aborted transactions, 因为当前版本不支持transaction, 所以aborted_transactions为空
                 let aborted_txns_schema = header_value_set
                     .schema
                     .clone()
-                    .sub_schema_of_ary_field("aborted_transactions")?;
+                    .sub_schema_of_ary_field("aborted_transactions");
 
                 let aborted_txns_array = DataType::Array(ArrayType {
                     can_be_empty: false,
                     p_type: Arc::new(DataType::ValueSet(ValueSet::new(aborted_txns_schema))),
                     values: None,
                 });
-                header_value_set.append_field_value("aborted_transactions", aborted_txns_array)?;
+                header_value_set.append_field_value("aborted_transactions", aborted_txns_array);
 
                 // 追加header
-                partition_value_set
-                    .append_field_value("partition_header", header_value_set.into())?;
-                partition_value_set
-                    .append_field_value("record_set", partition_data.records.into())?;
+                partition_value_set.append_field_value("partition_header", header_value_set.into());
+                partition_value_set.append_field_value("record_set", partition_data.records.into());
 
                 partition_responses.push(partition_value_set.into());
             }
@@ -333,11 +303,11 @@ impl FetchResponse {
             let partition_responses_schema = topic_value_set
                 .schema
                 .clone()
-                .sub_schema_of_ary_field("partition_responses")?;
+                .sub_schema_of_ary_field("partition_responses");
             topic_value_set.append_field_value(
                 "partition_responses",
                 DataType::array_of_value_set(partition_responses, partition_responses_schema),
-            )?;
+            );
             topic_responses_array.push(topic_value_set.into());
         }
 
@@ -345,16 +315,16 @@ impl FetchResponse {
         let topic_responses_schema = response_value_set
             .schema
             .clone()
-            .sub_schema_of_ary_field("responses")?;
+            .sub_schema_of_ary_field("responses");
         response_value_set.append_field_value(
             "responses",
             DataType::array_of_value_set(topic_responses_array, topic_responses_schema),
-        )?;
+        );
 
         Ok(())
     }
 
-    fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<FetchResponse> {
+    fn decode_from_value_set(_value_set: ValueSet) -> AppResult<FetchResponse> {
         todo!()
     }
 }

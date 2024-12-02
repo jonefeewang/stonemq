@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use once_cell::sync::Lazy;
 
-use crate::AppResult;
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::AppResult;
 
 const REQUESTS_KEY_NAME: &str = "create_topic_requests";
 const TIMEOUT_KEY_NAME: &str = "timeout";
@@ -33,7 +33,7 @@ pub struct TopicDetails {
     config: HashMap<String, String>,
 }
 impl CreateTopicRequest {
-    pub fn create_from_value_set(mut value_set: ValueSet) -> AppResult<CreateTopicRequest> {
+    pub fn create_from_value_set(mut _value_set: ValueSet) -> AppResult<CreateTopicRequest> {
         todo!()
     }
 }

@@ -227,8 +227,6 @@ pub static GLOBAL_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
 pub enum AppError {
-    #[error("malformed protocol encoding : {0}")]
-    MalformedProtocolEncoding(&'static str),
     #[error("error in reading network stream : {0}")]
     NetworkReadError(Cow<'static, str>),
     #[error("error in writing network stream : {0}")]
@@ -296,6 +294,9 @@ pub enum AppError {
 
     #[error("illegal state: {0}")]
     IllegalStateError(String),
+
+    #[error("malformed protocol : {0}")]
+    MalformedProtocol(String),
 }
 
 impl From<AppError> for KafkaError {

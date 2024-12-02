@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use super::{consumer_protocol::TOPICS_KEY_NAME, ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME};
 use crate::protocol::{
     array::ArrayType,
-    primary_types::{NPBytes, NPString, PBytes, PString, I16, I32, I64, I8},
+    primary_types::{NPBytes, NPString, PString, I16, I32, I64, I8},
     schema::Schema,
     types::DataType,
 };

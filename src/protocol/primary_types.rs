@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 
-use crate::protocol::types::DataType;
+use crate::{protocol::types::DataType, AppError, AppResult};
 
 ///
 /// Define StoneMQ primary types.
@@ -31,11 +31,16 @@ macro_rules! define_type {
 macro_rules! implement_primary_type {
     ($type:ident, $return_type:ident, $read_method:ident, $write_method:ident, $size:expr) => {
         impl PrimaryType for $type {
-            fn decode(buffer: &mut BytesMut) -> DataType {
+            fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+                if buffer.remaining() < $size {
+                    return Err(AppError::MalformedProtocol(
+                        format!("can not read a {}", stringify!($type)).into(),
+                    ));
+                }
                 let value = buffer.$read_method();
-                DataType::$return_type($type { value })
+                Ok(DataType::$return_type($type { value }))
             }
-            fn encode(&self, writer: &mut BytesMut) {
+            fn encode(self, writer: &mut BytesMut) {
                 writer.$write_method(self.value);
             }
             fn wire_format_size(&self) -> usize {
@@ -49,18 +54,20 @@ macro_rules! implement_primary_type {
 macro_rules! implement_var_type {
     ($t:ident, $read_method:path, $write_method:ident, $encode_var_vec:path, $required_space:path, $data_type:ident) => {
         impl PrimaryType for $t {
-            fn decode(buffer: &mut BytesMut) -> DataType {
+            fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
                 let var = $read_method(buffer.as_ref());
                 return if let Some((value, read_size)) = var {
                     // Skip the record length field that was just parsed.
                     buffer.advance(read_size);
-                    DataType::$data_type($t { value })
+                    Ok(DataType::$data_type($t { value }))
                 } else {
-                    panic!("can not read a {}", stringify!($t));
+                    Err(AppError::MalformedProtocol(
+                        format!("can not read a {}", stringify!($t)).into(),
+                    ))
                 };
             }
 
-            fn encode(&self, writer: &mut BytesMut) {
+            fn encode(self, writer: &mut BytesMut) {
                 let var = $encode_var_vec(self.value);
                 writer.put_slice(var.as_slice());
             }
@@ -85,8 +92,8 @@ macro_rules! implement_var_type {
 /// Consequently, the basic(primary type) and composite type(array/schema/schema_data)
 /// have minimal impact,serving merely as a collection of functionalities.
 pub trait PrimaryType {
-    fn decode(buffer: &mut BytesMut) -> DataType;
-    fn encode(&self, writer: &mut BytesMut);
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType>;
+    fn encode(self, writer: &mut BytesMut);
 
     fn wire_format_size(&self) -> usize;
 }
@@ -128,17 +135,24 @@ implement_var_type!(
 );
 
 impl PrimaryType for PBytes {
-    fn decode(buffer: &mut BytesMut) -> DataType {
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 4 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a PBytes, insufficient data".into(),
+            ));
+        }
         let length = buffer.get_i32();
         if length < 0 {
-            panic!("can not read a PBytes, length is negative");
+            Err(AppError::MalformedProtocol(
+                "can not read a PBytes, length is negative".into(),
+            ))
         } else {
-            DataType::PBytes(PBytes {
+            Ok(DataType::PBytes(PBytes {
                 value: buffer.split_to(length as usize),
-            })
+            }))
         }
     }
-    fn encode(&self, writer: &mut BytesMut) {
+    fn encode(self, writer: &mut BytesMut) {
         let length = self.value.remaining();
         writer.put_i32(length as i32);
         writer.put_slice(&self.value);
@@ -150,21 +164,26 @@ impl PrimaryType for PBytes {
 }
 
 impl PrimaryType for NPBytes {
-    fn decode(buffer: &mut BytesMut) -> DataType {
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 4 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a NPBytes, insufficient data".into(),
+            ));
+        }
         let length = buffer.get_i32();
         if length < 0 {
-            DataType::NPBytes(NPBytes { value: None })
+            Ok(DataType::NPBytes(NPBytes { value: None }))
         } else {
-            DataType::NPBytes(NPBytes {
+            Ok(DataType::NPBytes(NPBytes {
                 value: Some(buffer.split_to(length as usize)),
-            })
+            }))
         }
     }
-    fn encode(&self, writer: &mut BytesMut) {
-        if let Some(value) = &self.value {
+    fn encode(self, writer: &mut BytesMut) {
+        if let Some(value) = self.value {
             let length = value.remaining();
             writer.put_i32(length as i32);
-            writer.put_slice(value);
+            writer.put_slice(value.as_ref());
         } else {
             writer.put_i32(-1);
         }
@@ -179,18 +198,27 @@ impl PrimaryType for NPBytes {
 }
 
 impl PrimaryType for PString {
-    fn decode(buffer: &mut BytesMut) -> DataType {
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 2 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a PString, insufficient data".into(),
+            ));
+        }
         let length = buffer.get_i16();
         if length < 0 {
-            panic!("String length: {:?} can not be negative", length);
+            Err(AppError::MalformedProtocol(
+                "String length can not be negative".into(),
+            ))
         } else {
             // trace!("Reading PString with length: {}", length);
-            DataType::PString(PString {
-                value: String::from_utf8(buffer.split_to(length as usize).to_vec()).unwrap(),
-            })
+            Ok(DataType::PString(PString {
+                value: String::from_utf8(buffer.split_to(length as usize).to_vec()).map_err(
+                    |e| AppError::MalformedProtocol(e.to_string().into()),
+                )?,
+            }))
         }
     }
-    fn encode(&self, writer: &mut BytesMut) {
+    fn encode(self, writer: &mut BytesMut) {
         let length = self.value.len();
         writer.put_i16(length as i16);
         writer.put_slice(self.value.as_bytes());
@@ -200,19 +228,24 @@ impl PrimaryType for PString {
     }
 }
 impl PrimaryType for NPString {
-    fn decode(buffer: &mut BytesMut) -> DataType {
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 2 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a NPString, insufficient data".into(),
+            ));
+        }
         let length = buffer.get_i16();
         if length < 0 {
-            DataType::NPString(NPString { value: None })
+            Ok(DataType::NPString(NPString { value: None }))
         } else {
             // trace!("Reading NPString with length: {}", length);
-            DataType::NPString(NPString {
-                value: Some(String::from_utf8(buffer.split_to(length as usize).to_vec()).unwrap()),
-            })
+            Ok(DataType::NPString(NPString {
+                value: Some(String::from_utf8(buffer.split_to(length as usize).to_vec())?),
+            }))
         }
     }
-    fn encode(&self, writer: &mut BytesMut) {
-        if let Some(value) = &self.value {
+    fn encode(self, writer: &mut BytesMut) {
+        if let Some(value) = self.value {
             let length = value.len();
             writer.put_i16(length as i16);
             writer.put_slice(value.as_bytes());
@@ -230,16 +263,23 @@ impl PrimaryType for NPString {
 }
 
 impl PrimaryType for Bool {
-    fn decode(buffer: &mut BytesMut) -> DataType {
+    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+        if buffer.remaining() < 1 {
+            return Err(AppError::MalformedProtocol(
+                "can not read a Bool, insufficient data".into(),
+            ));
+        }
         let value = buffer.get_i8();
         match value {
-            0 => DataType::Bool(Bool { value: false }),
-            1 => DataType::Bool(Bool { value: true }),
-            _ => panic!("Invalid value for bool."),
+            0 => Ok(DataType::Bool(Bool { value: false })),
+            1 => Ok(DataType::Bool(Bool { value: true })),
+            _ => Err(AppError::MalformedProtocol(
+                "Invalid value for bool.".into(),
+            )),
         }
     }
 
-    fn encode(&self, writer: &mut BytesMut) {
+    fn encode(self, writer: &mut BytesMut) {
         let value = if self.value { 1 } else { 0 };
         writer.put_i8(value);
     }
@@ -262,7 +302,7 @@ mod test {
         let bool_value = Bool { value: true };
         bool_value.encode(&mut writer);
         let mut bytes_mut = BytesMut::from(&writer[..]);
-        let read_bool = Bool::decode(&mut bytes_mut);
+        let read_bool = Bool::decode(&mut bytes_mut).unwrap();
         assert_eq!(read_bool, DataType::Bool(Bool { value: true }));
 
         // Test I8
@@ -271,7 +311,7 @@ mod test {
         let i8_value_clone = i8_value.clone();
         i8_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_i8 = I8::decode(&mut buffer);
+        let read_i8 = I8::decode(&mut buffer).unwrap();
         assert_eq!(read_i8, DataType::I8(i8_value_clone));
 
         // Test I16
@@ -280,7 +320,7 @@ mod test {
         let i16_value_clone = i16_value.clone();
         i16_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_i16 = I16::decode(&mut buffer);
+        let read_i16 = I16::decode(&mut buffer).unwrap();
         assert_eq!(read_i16, DataType::I16(i16_value_clone));
 
         // Test I32
@@ -289,7 +329,7 @@ mod test {
         let i32_value_clone = i32_value.clone();
         i32_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_i32 = I32::decode(&mut buffer);
+        let read_i32 = I32::decode(&mut buffer).unwrap();
         assert_eq!(read_i32, DataType::I32(i32_value_clone));
 
         // Test U32
@@ -298,7 +338,7 @@ mod test {
         let u32_value_clone = u32_value.clone();
         u32_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_u32 = U32::decode(&mut buffer);
+        let read_u32 = U32::decode(&mut buffer).unwrap();
         assert_eq!(read_u32, DataType::U32(u32_value_clone));
 
         // Test I64
@@ -309,7 +349,7 @@ mod test {
         let i64_value_clone = i64_value.clone();
         i64_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_i64 = I64::decode(&mut buffer);
+        let read_i64 = I64::decode(&mut buffer).unwrap();
         assert_eq!(read_i64, DataType::I64(i64_value_clone));
 
         // Test PString
@@ -320,7 +360,7 @@ mod test {
         let pstring_value_clone = pstring_value.clone();
         pstring_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_pstring = PString::decode(&mut buffer);
+        let read_pstring = PString::decode(&mut buffer).unwrap();
         assert_eq!(read_pstring, DataType::PString(pstring_value_clone));
 
         // Test NPString
@@ -331,7 +371,7 @@ mod test {
         let npstring_value_clone = npstring_value.clone();
         npstring_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_npstring = NPString::decode(&mut buffer);
+        let read_npstring = NPString::decode(&mut buffer).unwrap();
         assert_eq!(read_npstring, DataType::NPString(npstring_value_clone));
 
         //Test PBytes
@@ -342,7 +382,7 @@ mod test {
         let pbytes_value_clone = pbytes_value.clone();
         pbytes_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_pbytes = PBytes::decode(&mut buffer);
+        let read_pbytes = PBytes::decode(&mut buffer).unwrap();
         assert_eq!(read_pbytes, DataType::PBytes(pbytes_value_clone));
 
         //Test NPBytes
@@ -353,7 +393,7 @@ mod test {
         let npbytes_value_clone = npbytes_value.clone();
         npbytes_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_npbytes = NPBytes::decode(&mut buffer);
+        let read_npbytes = NPBytes::decode(&mut buffer).unwrap();
         assert_eq!(read_npbytes, DataType::NPBytes(npbytes_value_clone));
 
         //Test PVarInt
@@ -362,7 +402,7 @@ mod test {
         let pvarint_value_clone = pvarint_value.clone();
         pvarint_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_pvarint = PVarInt::decode(&mut buffer);
+        let read_pvarint = PVarInt::decode(&mut buffer).unwrap();
         assert_eq!(read_pvarint, DataType::PVarInt(pvarint_value_clone));
 
         //Test PVarLong
@@ -371,7 +411,7 @@ mod test {
         let pvarlong_value_clone = pvarlong_value.clone();
         pvarlong_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_pvarlong = PVarLong::decode(&mut buffer);
+        let read_pvarlong = PVarLong::decode(&mut buffer).unwrap();
         assert_eq!(read_pvarlong, DataType::PVarLong(pvarlong_value_clone));
     }
 }

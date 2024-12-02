@@ -23,7 +23,7 @@ use crate::{
     },
     AppResult,
 };
-use tokio::io::AsyncWriteExt;
+use bytes::{BufMut, BytesMut};
 
 use super::{
     GROUP_GENERATION_ID_KEY_NAME, GROUP_ID_KEY_NAME, MEMBER_ID_KEY_NAME, METADATA_KEY_NAME,
@@ -43,18 +43,7 @@ impl ProtocolCodec<FetchOffsetsRequest> for FetchOffsetsRequest {
         Ok(fetch_offsets_request)
     }
 
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
-        let _ = correlation_id;
-        let _ = api_version;
-        let _ = writer;
+    fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
         todo!()
     }
 }
@@ -69,10 +58,10 @@ impl FetchOffsetsRequest {
     /// * `AppResult<FetchOffsetsRequest>` - The decoded request on success
     fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<FetchOffsetsRequest> {
         // Extract the consumer group ID
-        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME)?.try_into()?;
+        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME).into();
 
         // Get the topics array
-        let topics_array: ArrayType = value_set.get_field_value(TOPICS_KEY_NAME)?.try_into()?;
+        let topics_array: ArrayType = value_set.get_field_value(TOPICS_KEY_NAME).into();
 
         // Return early if no topics specified
         let topics = match topics_array.values {
@@ -88,17 +77,14 @@ impl FetchOffsetsRequest {
         // Process each topic and its partitions
         let mut topic_partitions = Vec::new();
         for topic_value in topics {
-            let mut topic_value_set: ValueSet = topic_value.try_into()?;
+            let mut topic_value_set: ValueSet = topic_value.into();
 
             // Get topic name
-            let topic_name: String = topic_value_set
-                .get_field_value(TOPIC_KEY_NAME)?
-                .try_into()?;
+            let topic_name: String = topic_value_set.get_field_value(TOPIC_KEY_NAME).into();
 
             // Get partitions for this topic
-            let partitions_array: ArrayType = topic_value_set
-                .get_field_value(PARTITIONS_KEY_NAME)?
-                .try_into()?;
+            let partitions_array: ArrayType =
+                topic_value_set.get_field_value(PARTITIONS_KEY_NAME).into();
 
             let partitions = partitions_array
                 .values
@@ -106,10 +92,10 @@ impl FetchOffsetsRequest {
 
             // Process each partition
             for partition_value in partitions {
-                let mut partition_value_set: ValueSet = partition_value.try_into()?;
+                let mut partition_value_set: ValueSet = partition_value.into();
                 let partition_id: i32 = partition_value_set
-                    .get_field_value(PARTITION_KEY_NAME)?
-                    .try_into()?;
+                    .get_field_value(PARTITION_KEY_NAME)
+                    .into();
 
                 topic_partitions.push(TopicPartition::new(topic_name.clone(), partition_id));
             }
@@ -123,25 +109,17 @@ impl FetchOffsetsRequest {
 }
 
 impl ProtocolCodec<FetchOffsetsResponse> for FetchOffsetsResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::OffsetFetch);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size()?;
+        self.encode_to_value_set(&mut value_set).unwrap();
+        let body_size = value_set.size();
         let response_total_size = 4 + body_size;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        writer.flush().await?;
-        Ok(())
+        let mut writer = BytesMut::with_capacity(response_total_size);
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer);
+        writer
     }
 
     fn decode(
@@ -164,8 +142,7 @@ impl FetchOffsetsResponse {
     /// * `AppResult<()>` - Ok if encoding succeeds, Err otherwise
     fn encode_to_value_set(self, response_value_set: &mut ValueSet) -> AppResult<()> {
         // Encode throttle time
-        response_value_set
-            .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into())?;
+        response_value_set.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
 
         // Group offsets by topic for encoding
         let topic_offset_map = self.offsets.into_iter().fold(
@@ -182,22 +159,22 @@ impl FetchOffsetsResponse {
         let mut topic_response_array = Vec::new();
         for (topic_name, partitions) in topic_offset_map {
             let mut topic_value_set =
-                response_value_set.sub_valueset_of_ary_field(RESPONSES_KEY_NAME)?;
-            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_name.into())?;
+                response_value_set.sub_valueset_of_ary_field(RESPONSES_KEY_NAME);
+            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_name.into());
 
             // Build partition responses for this topic
             let mut partition_response_array = Vec::new();
             for (partition_id, partition_data) in partitions {
                 let mut partition_value_set =
-                    topic_value_set.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
-                partition_value_set.append_field_value(PARTITION_KEY_NAME, partition_id.into())?;
+                    topic_value_set.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
+                partition_value_set.append_field_value(PARTITION_KEY_NAME, partition_id.into());
                 partition_value_set
-                    .append_field_value(OFFSET_KEY_NAME, partition_data.offset.into())?;
+                    .append_field_value(OFFSET_KEY_NAME, partition_data.offset.into());
                 partition_value_set
-                    .append_field_value(METADATA_KEY_NAME, partition_data.metadata.into())?;
+                    .append_field_value(METADATA_KEY_NAME, partition_data.metadata.into());
                 let error_code = ErrorCode::from(&partition_data.error);
                 partition_value_set
-                    .append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into())?;
+                    .append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into());
                 partition_response_array.push(DataType::ValueSet(partition_value_set));
             }
 
@@ -205,11 +182,11 @@ impl FetchOffsetsResponse {
             let partition_schema = topic_value_set
                 .schema
                 .clone()
-                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
+                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
             topic_value_set.append_field_value(
                 PARTITION_RESPONSES_KEY_NAME,
                 DataType::array_of_value_set(partition_response_array, partition_schema),
-            )?;
+            );
             topic_response_array.push(DataType::ValueSet(topic_value_set));
         }
 
@@ -217,36 +194,29 @@ impl FetchOffsetsResponse {
         let topic_schema = response_value_set
             .schema
             .clone()
-            .sub_schema_of_ary_field(RESPONSES_KEY_NAME)?;
+            .sub_schema_of_ary_field(RESPONSES_KEY_NAME);
         response_value_set.append_field_value(
             RESPONSES_KEY_NAME,
             DataType::array_of_value_set(topic_response_array, topic_schema),
-        )?;
+        );
         let error_code = ErrorCode::from(&self.error_code);
-        response_value_set.append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into())?;
+        response_value_set.append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into());
         Ok(())
     }
 }
 
 impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size()?;
+        self.encode_to_value_set(&mut value_set).unwrap();
+        let body_size = value_set.size();
         let request_total_size = 4 + body_size;
-        writer.write_i32(request_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        Ok(())
+        let mut writer = BytesMut::with_capacity(request_total_size);
+        writer.put_i32(request_total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer);
+        writer
     }
 
     fn decode(
@@ -270,17 +240,15 @@ impl OffsetCommitRequest {
     /// * `AppResult<OffsetCommitRequest>` - The decoded request on success
     fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<OffsetCommitRequest> {
         // Parse basic fields
-        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME)?.try_into()?;
+        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME).into();
         let generation_id = value_set
-            .get_field_value(GROUP_GENERATION_ID_KEY_NAME)?
-            .try_into()?;
-        let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME)?.try_into()?;
-        let retention_time = value_set
-            .get_field_value(RETENTION_TIME_KEY_NAME)?
-            .try_into()?;
+            .get_field_value(GROUP_GENERATION_ID_KEY_NAME)
+            .into();
+        let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME).into();
+        let retention_time = value_set.get_field_value(RETENTION_TIME_KEY_NAME).into();
 
         // Parse topics array
-        let topic_array: ArrayType = value_set.get_field_value(TOPICS_KEY_NAME)?.try_into()?;
+        let topic_array: ArrayType = value_set.get_field_value(TOPICS_KEY_NAME).into();
         let topic_values = topic_array
             .values
             .ok_or_else(|| ProtocolError(Cow::Borrowed("topics array is empty")))?;
@@ -291,31 +259,26 @@ impl OffsetCommitRequest {
             |mut acc,
              topic_value|
              -> AppResult<HashMap<TopicPartition, PartitionOffsetCommitData>> {
-                let mut topic_value_set: ValueSet = topic_value.try_into()?;
-                let topic_name: String = topic_value_set
-                    .get_field_value(TOPIC_KEY_NAME)?
-                    .try_into()?;
+                let mut topic_value_set: ValueSet = topic_value.into();
+                let topic_name: String = topic_value_set.get_field_value(TOPIC_KEY_NAME).into();
 
                 // Parse partitions array for this topic
-                let partition_array: ArrayType = topic_value_set
-                    .get_field_value(PARTITIONS_KEY_NAME)?
-                    .try_into()?;
+                let partition_array: ArrayType =
+                    topic_value_set.get_field_value(PARTITIONS_KEY_NAME).into();
                 let partition_values = partition_array
                     .values
                     .ok_or_else(|| ProtocolError(Cow::Borrowed("partitions array is empty")))?;
 
                 // Process each partition
                 for partition_value in partition_values {
-                    let mut partition_value_set: ValueSet = partition_value.try_into()?;
+                    let mut partition_value_set: ValueSet = partition_value.into();
                     let partition_id: i32 = partition_value_set
-                        .get_field_value(PARTITION_KEY_NAME)?
-                        .try_into()?;
-                    let offset: i64 = partition_value_set
-                        .get_field_value(OFFSET_KEY_NAME)?
-                        .try_into()?;
+                        .get_field_value(PARTITION_KEY_NAME)
+                        .into();
+                    let offset: i64 = partition_value_set.get_field_value(OFFSET_KEY_NAME).into();
                     let metadata: Option<String> = partition_value_set
-                        .get_field_value(METADATA_KEY_NAME)?
-                        .try_into()?;
+                        .get_field_value(METADATA_KEY_NAME)
+                        .into();
 
                     let partition_data = PartitionOffsetCommitData {
                         partition_id,
@@ -348,25 +311,17 @@ impl OffsetCommitRequest {
 }
 
 impl ProtocolCodec<OffsetCommitResponse> for OffsetCommitResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::OffsetCommit);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size()?;
+        self.encode_to_value_set(&mut value_set).unwrap();
+        let body_size = value_set.size();
         let response_total_size = 4 + body_size;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        writer.flush().await?;
-        Ok(())
+        let mut writer = BytesMut::with_capacity(response_total_size);
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer);
+        writer
     }
 
     fn decode(
@@ -390,27 +345,27 @@ impl OffsetCommitResponse {
     ///     - error_code: error code
     fn encode_to_value_set(self, value_set: &mut ValueSet) -> AppResult<()> {
         // Encode throttle time
-        value_set.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into())?;
+        value_set.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
 
         // Build topic responses array
         let mut topic_responses = Vec::with_capacity(self.responses.len());
         for (topic_partition, partition_errors) in self.responses {
             // Create a sub ValueSet for each topic
-            let mut topic_value_set = value_set.sub_valueset_of_ary_field(RESPONSES_KEY_NAME)?;
-            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_partition.topic.into())?;
+            let mut topic_value_set = value_set.sub_valueset_of_ary_field(RESPONSES_KEY_NAME);
+            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_partition.topic.into());
 
             // Build partition responses array
             let mut partition_responses = Vec::with_capacity(partition_errors.len());
             for (partition_id, error) in partition_errors {
                 // Create a sub ValueSet for each partition
                 let mut partition_value_set =
-                    topic_value_set.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
-                partition_value_set.append_field_value(PARTITION_KEY_NAME, partition_id.into())?;
+                    topic_value_set.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
+                partition_value_set.append_field_value(PARTITION_KEY_NAME, partition_id.into());
 
                 // Convert error to protocol format
                 let error_code = ErrorCode::from(&error);
                 partition_value_set
-                    .append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into())?;
+                    .append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into());
                 partition_responses.push(DataType::ValueSet(partition_value_set));
             }
 
@@ -418,13 +373,13 @@ impl OffsetCommitResponse {
             let partition_schema = topic_value_set
                 .schema
                 .clone()
-                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
+                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
 
             // Add partition responses array to topic ValueSet
             topic_value_set.append_field_value(
                 PARTITION_RESPONSES_KEY_NAME,
                 DataType::array_of_value_set(partition_responses, partition_schema),
-            )?;
+            );
 
             topic_responses.push(DataType::ValueSet(topic_value_set));
         }
@@ -433,19 +388,18 @@ impl OffsetCommitResponse {
         let topic_schema = value_set
             .schema
             .clone()
-            .sub_schema_of_ary_field(RESPONSES_KEY_NAME)?;
+            .sub_schema_of_ary_field(RESPONSES_KEY_NAME);
 
         // Add topic responses array to root ValueSet
         value_set.append_field_value(
             RESPONSES_KEY_NAME,
             DataType::array_of_value_set(topic_responses, topic_schema),
-        )?;
+        );
 
         Ok(())
     }
 
-    fn decode_from_value_set(value_set: ValueSet) -> AppResult<OffsetCommitResponse> {
-        let _ = value_set;
+    fn decode_from_value_set(_value_set: ValueSet) -> AppResult<OffsetCommitResponse> {
         todo!()
     }
 }

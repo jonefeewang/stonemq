@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tracing::error;
-
 use super::ReplicaManager;
 use crate::log::PositionInfo;
 use crate::message::delayed_fetch::DelayedFetch;
@@ -11,13 +9,10 @@ use crate::request::fetch::{FetchRequest, FetchResponse};
 use crate::AppResult;
 
 impl ReplicaManager {
-    pub async fn fetch_message(
-        self: Arc<ReplicaManager>,
-        request: FetchRequest,
-    ) -> AppResult<FetchResponse> {
+    pub async fn fetch_message(self: Arc<ReplicaManager>, request: FetchRequest) -> FetchResponse {
         let read_result = self.do_fetch(&request).await;
         if read_result.is_err() {
-            return Ok(FetchResponse::from(BTreeMap::new()));
+            return FetchResponse::from(BTreeMap::new());
         }
 
         let read_result = read_result.unwrap();
@@ -27,7 +22,7 @@ impl ReplicaManager {
             .sum::<i32>();
 
         if total_size > request.min_bytes {
-            Ok(FetchResponse::from(read_result))
+            FetchResponse::from(read_result)
         } else {
             // 如果读取到的消息小于min_bytes，则将请求加入到delayed_fetch_purgatory中
             let position_infos = read_result
@@ -49,7 +44,7 @@ impl ReplicaManager {
                 .await;
             let result = rx.await.unwrap();
 
-            Ok(FetchResponse::from(result))
+            FetchResponse::from(result)
         }
     }
 

@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -8,8 +7,6 @@ use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::PrimaryType;
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
-use crate::AppError::{NetworkWriteError, ProtocolError};
-use crate::AppResult;
 
 ///
 /// ValueSet是一个schema相对应的值，同样也是一个有序的序列，这里使用BTreeMap来存储
@@ -57,73 +54,56 @@ impl ValueSet {
         total_size
     }
 
-    pub fn sub_valueset_of_ary_field(&self, field_name: &'static str) -> AppResult<ValueSet> {
-        let array_field = self.schema.get_field(field_name)?;
-        let array_type: &ArrayType = (&array_field.p_type).try_into()?;
+    pub fn sub_valueset_of_ary_field(&self, field_name: &'static str) -> ValueSet {
+        let array_field = self.schema.get_field(field_name);
+        let array_type: &ArrayType = (&array_field.p_type).try_into().unwrap();
 
         if let DataType::Schema(ref schema) = &*array_type.p_type {
             let value_set = ValueSet {
                 schema: schema.clone(),
                 values: BTreeMap::new(),
             };
-            Ok(value_set)
+            value_set
         } else {
-            Err(ProtocolError(Cow::Borrowed(
-                "Array type must be schema type",
-            )))
-        }
-    }
-    pub fn sub_valueset_of_schema_field(&self, field_name: &'static str) -> AppResult<ValueSet> {
-        let schema_field = &self.schema.get_field(field_name)?.p_type;
-        if let DataType::Schema(ref schema) = schema_field {
-            Ok(ValueSet::new(schema.clone()))
-        } else {
-            Err(ProtocolError(Cow::Borrowed(
-                "field type must be schema type",
-            )))
+            panic!("Array type must be schema type")
         }
     }
 
-    ///
-    /// Append a field value
-    ///
-    pub fn append_field_value(
-        &mut self,
-        field_name: &'static str,
-        new_value: DataType,
-    ) -> AppResult<()> {
+    pub fn sub_valueset_of_schema_field(&self, field_name: &'static str) -> ValueSet {
+        let schema_field = self.schema.get_field(field_name);
+        if let DataType::Schema(ref schema) = schema_field.p_type {
+            ValueSet::new(schema.clone())
+        } else {
+            panic!("field type must be schema type")
+        }
+    }
+
+    pub fn append_field_value(&mut self, field_name: &'static str, new_value: DataType) {
         //check if field exists
-        let field = self.schema.get_field(field_name)?;
+        let field = self.schema.get_field(field_name);
         self.values.insert(field.index, new_value);
         if field.index + 1 != self.values.len() as i32 {
-            return Err(ProtocolError(Cow::Owned(format!(
+            panic!(
                 "field index not match, expect:{},actual:{} with filed name:{}",
                 field.index + 1,
                 self.values.len(),
                 field_name
-            ))));
-        };
-        Ok(())
-    }
-    ///
-    /// Get a field value
-    ///
-    pub fn get_field_value(&mut self, field_name: &'static str) -> AppResult<DataType> {
-        let index = self.schema.get_field_index(field_name)?;
-        if let Some(field) = self.values.remove(&index) {
-            Ok(field)
-        } else {
-            let error_message = format!("field not found:{} in value set", field_name);
-            Err(ProtocolError(Cow::Owned(error_message)))
+            );
         }
     }
 
-    ///
-    /// 将values写进stream, 消耗掉自己，方法调用后，自己就不能再使用了
-    ///
-    ///
-    pub fn write_to(&self, writer: &mut BytesMut) {
-        for value in self.values.values() {
+    pub fn get_field_value(&mut self, field_name: &'static str) -> DataType {
+        let index = self.schema.get_field_index(field_name);
+        if let Some(field) = self.values.remove(&index) {
+            field
+        } else {
+            let error_message = format!("field not found:{} in value set", field_name);
+            panic!("{}", error_message);
+        }
+    }
+
+    pub fn write_to(self, writer: &mut BytesMut) {
+        for (_, value) in self.values {
             match value {
                 DataType::Bool(bool) => bool.encode(writer),
                 DataType::I8(i8) => i8.encode(writer),
@@ -165,17 +145,13 @@ mod tests {
         ]));
         let schema_clone = Arc::clone(&schema);
         let mut value_set = ValueSet::new(schema);
-        value_set
-            .append_field_value("field1", DataType::I32(I32 { value: 1 }))
-            .unwrap();
-        value_set
-            .append_field_value(
-                "field2",
-                DataType::PString(PString {
-                    value: "test".to_string(),
-                }),
-            )
-            .unwrap();
+        value_set.append_field_value("field1", DataType::I32(I32 { value: 1 }));
+        value_set.append_field_value(
+            "field2",
+            DataType::PString(PString {
+                value: "test".to_string(),
+            }),
+        );
         let value_set_clone = value_set.clone();
 
         // write
@@ -183,7 +159,7 @@ mod tests {
 
         // read
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_value_set = schema_clone.read_from(&mut buffer);
+        let read_value_set = schema_clone.read_from(&mut buffer).unwrap();
         assert_eq!(read_value_set, value_set_clone);
     }
 
@@ -241,31 +217,21 @@ mod tests {
 
         //to structure
         let mut outer_value_set = ValueSet::new(outer_schema.clone());
-        outer_value_set
-            .append_field_value(OUTER_FIELD1, outer.outer_field1.into())
-            .unwrap();
+        outer_value_set.append_field_value(OUTER_FIELD1, outer.outer_field1.into());
 
         let mut inner_array = Vec::with_capacity(outer.outer_field2.len());
         for inner in outer.outer_field2 {
-            let mut inner_value_set = outer_value_set
-                .sub_valueset_of_ary_field(OUTER_FIELD2)
-                .unwrap();
+            let mut inner_value_set = outer_value_set.sub_valueset_of_ary_field(OUTER_FIELD2);
 
-            inner_value_set
-                .append_field_value(INNER_FIELD1, inner.inner_field1.into())
-                .unwrap();
-            inner_value_set
-                .append_field_value(INNER_FIELD2, inner.inner_field2.into())
-                .unwrap();
+            inner_value_set.append_field_value(INNER_FIELD1, inner.inner_field1.into());
+            inner_value_set.append_field_value(INNER_FIELD2, inner.inner_field2.into());
             inner_array.push(DataType::ValueSet(inner_value_set));
         }
 
         let schema = Schema::sub_schema_of_ary_field(outer_value_set.schema.clone(), OUTER_FIELD2);
         let array = DataType::array_of_value_set(inner_array, schema);
 
-        outer_value_set
-            .append_field_value(OUTER_FIELD2, array)
-            .unwrap();
+        outer_value_set.append_field_value(OUTER_FIELD2, array);
 
         let outer_value_set_clone = outer_value_set.clone();
 
@@ -275,7 +241,7 @@ mod tests {
 
         //read from buffer
         let mut buffer = BytesMut::from(&writer[..]);
-        let read_outer_structure = outer_schema.read_from(&mut buffer);
+        let read_outer_structure = outer_schema.read_from(&mut buffer).unwrap();
         //check
         assert_eq!(read_outer_structure, outer_value_set_clone);
     }
@@ -299,30 +265,20 @@ mod tests {
 
         // 创建外部value set
         let mut outer_value_set = ValueSet::new(outer_schema.clone());
-        outer_value_set
-            .append_field_value("outer_field1", DataType::I32(I32 { value: 1 }))
-            .unwrap();
+        outer_value_set.append_field_value("outer_field1", DataType::I32(I32 { value: 1 }));
 
         // 创建内部value set
-        let mut inner_value_set = outer_value_set
-            .sub_valueset_of_schema_field("outer_field2")
-            .unwrap();
-        inner_value_set
-            .append_field_value("inner_field1", DataType::I32(I32 { value: 2 }))
-            .unwrap();
-        inner_value_set
-            .append_field_value(
-                "inner_field2",
-                DataType::PString(PString {
-                    value: "test".to_string(),
-                }),
-            )
-            .unwrap();
+        let mut inner_value_set = outer_value_set.sub_valueset_of_schema_field("outer_field2");
+        inner_value_set.append_field_value("inner_field1", DataType::I32(I32 { value: 2 }));
+        inner_value_set.append_field_value(
+            "inner_field2",
+            DataType::PString(PString {
+                value: "test".to_string(),
+            }),
+        );
 
         // 将内部value set添加到外部value set
-        outer_value_set
-            .append_field_value("outer_field2", DataType::ValueSet(inner_value_set))
-            .unwrap();
+        outer_value_set.append_field_value("outer_field2", DataType::ValueSet(inner_value_set));
 
         let outer_value_set_clone = outer_value_set.clone();
 

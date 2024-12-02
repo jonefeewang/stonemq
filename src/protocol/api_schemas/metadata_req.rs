@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use tokio::io::AsyncWriteExt;
 
 use crate::protocol::array::ArrayType;
 use crate::protocol::primary_types::{Bool, PString};
@@ -14,19 +13,14 @@ use crate::request::metadata::MetaDataRequest;
 use crate::AppResult;
 
 impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata);
         let mut metadata_req_value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut metadata_req_value_set)?;
-        metadata_req_value_set.write_to(writer).await
+        self.encode_to_value_set(&mut metadata_req_value_set);
+        let mut writer = BytesMut::with_capacity(metadata_req_value_set.size());
+        metadata_req_value_set.write_to(&mut writer);
+        writer.put_i32(correlation_id);
+        writer
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetaDataRequest> {
@@ -38,11 +32,11 @@ impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
 }
 impl MetaDataRequest {
     pub fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<MetaDataRequest> {
-        let topics_data_type = value_set.get_field_value(TOPICS_KEY_NAME)?;
+        let topics_data_type = value_set.get_field_value(TOPICS_KEY_NAME);
         let allow_auto_topic_creation: bool = value_set
-            .get_field_value(ALLOW_AUTO_TOPIC_CREATION_KEY_NAME)?
-            .try_into()?;
-        let topics_ary_type: ArrayType = topics_data_type.try_into()?;
+            .get_field_value(ALLOW_AUTO_TOPIC_CREATION_KEY_NAME)
+            .into();
+        let topics_ary_type: ArrayType = topics_data_type.into();
         let topics_ary = topics_ary_type.values;
 
         let topics = match topics_ary {
@@ -65,11 +59,11 @@ impl MetaDataRequest {
     }
     fn encode_to_value_set(self, value_set: &mut ValueSet) -> AppResult<()> {
         let ary_datatype = DataType::array_of(self.topics);
-        value_set.append_field_value(TOPICS_KEY_NAME, ary_datatype)?;
+        value_set.append_field_value(TOPICS_KEY_NAME, ary_datatype);
         value_set.append_field_value(
             ALLOW_AUTO_TOPIC_CREATION_KEY_NAME,
             self.allow_auto_topic_creation.into(),
-        )?;
+        );
         Ok(())
     }
 }

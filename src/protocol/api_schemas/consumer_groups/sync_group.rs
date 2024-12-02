@@ -1,13 +1,13 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 
 use crate::{
     protocol::{
         api_schemas::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
         array::ArrayType,
-        primary_types::{NPBytes, PBytes, PString, I16, I32},
+        primary_types::{PBytes, PString, I16, I32},
         schema::Schema,
         types::DataType,
         value_set::ValueSet,
@@ -16,7 +16,6 @@ use crate::{
     request::consumer_group::{SyncGroupRequest, SyncGroupResponse},
     AppError, AppResult,
 };
-use tokio::io::AsyncWriteExt;
 
 use super::{
     GENERATION_ID_KEY_NAME, GROUP_ASSIGNMENT_KEY_NAME, GROUP_ID_KEY_NAME,
@@ -69,35 +68,24 @@ pub static SYNC_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl ProtocolCodec<SyncGroupRequest> for SyncGroupRequest {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()> {
+    fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
         todo!()
     }
 
-    fn decode(
-        buffer: &mut bytes::BytesMut,
-        api_version: &ApiVersion,
-    ) -> AppResult<SyncGroupRequest> {
+    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<SyncGroupRequest> {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::SyncGroup);
-        let mut value_set = schema.read_from(buffer)?;
+        let value_set = schema.read_from(buffer)?;
         let sync_group_request = SyncGroupRequest::decode_from_value_set(value_set)?;
         Ok(sync_group_request)
     }
 }
 impl SyncGroupRequest {
     fn decode_from_value_set(mut value_set: ValueSet) -> AppResult<SyncGroupRequest> {
-        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME)?.try_into()?;
-        let generation_id = value_set
-            .get_field_value(GENERATION_ID_KEY_NAME)?
-            .try_into()?;
-        let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME)?.try_into()?;
-        let group_assignment: ArrayType = value_set
-            .get_field_value(GROUP_ASSIGNMENT_KEY_NAME)?
-            .try_into()?;
+        let group_id = value_set.get_field_value(GROUP_ID_KEY_NAME).into();
+        let generation_id = value_set.get_field_value(GENERATION_ID_KEY_NAME).into();
+        let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME).into();
+        let group_assignment: ArrayType =
+            value_set.get_field_value(GROUP_ASSIGNMENT_KEY_NAME).into();
         let group_assignment_ary =
             group_assignment
                 .values
@@ -106,13 +94,13 @@ impl SyncGroupRequest {
                 )))?;
         let mut group_assignment = HashMap::with_capacity(group_assignment_ary.len());
         for member_assignment in group_assignment_ary {
-            let mut member_assignment_value_set: ValueSet = member_assignment.try_into()?;
+            let mut member_assignment_value_set: ValueSet = member_assignment.into();
             let member_id = member_assignment_value_set
-                .get_field_value(MEMBER_ID_KEY_NAME)?
-                .try_into()?;
+                .get_field_value(MEMBER_ID_KEY_NAME)
+                .into();
             let member_assignment: PBytes = member_assignment_value_set
-                .get_field_value(MEMBER_ASSIGNMENT_KEY_NAME)?
-                .try_into()?;
+                .get_field_value(MEMBER_ASSIGNMENT_KEY_NAME)
+                .into();
             group_assignment.insert(member_id, member_assignment.value);
         }
 
@@ -126,45 +114,32 @@ impl SyncGroupRequest {
 }
 
 impl ProtocolCodec<SyncGroupResponse> for SyncGroupResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::SyncGroup);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
+        self.encode_to_value_set(&mut value_set).unwrap();
         let body_size = value_set.size();
         // correlation_id + response_total_size
-        let response_total_size = 4 + body_size?;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        value_set.write_to(writer).await?;
-        writer.flush().await?;
-        Ok(())
+        let response_total_size = 4 + body_size;
+        let mut writer = BytesMut::with_capacity(response_total_size);
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        value_set.write_to(&mut writer);
+        writer
     }
 
-    fn decode(
-        buffer: &mut bytes::BytesMut,
-        api_version: &ApiVersion,
-    ) -> AppResult<SyncGroupResponse> {
+    fn decode(_buffer: &mut BytesMut, _api_version: &ApiVersion) -> AppResult<SyncGroupResponse> {
         todo!()
     }
 }
 impl SyncGroupResponse {
     fn encode_to_value_set(self, response_valueset: &mut ValueSet) -> AppResult<()> {
-        response_valueset
-            .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into())?;
-        response_valueset
-            .append_field_value(ERROR_CODE_KEY_NAME, (self.error_code as i16).into())?;
+        response_valueset.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
+        response_valueset.append_field_value(ERROR_CODE_KEY_NAME, (self.error_code as i16).into());
         response_valueset.append_field_value(
             MEMBER_ASSIGNMENT_KEY_NAME,
             BytesMut::from(self.member_assignment).into(),
-        )?;
+        );
         Ok(())
     }
 }

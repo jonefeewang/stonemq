@@ -27,16 +27,7 @@ impl ProduceRequest {
             topic_data,
         }
     }
-    ///
-    /// Create an empty ProduceRequest to accept data from the client
-    pub(crate) fn new_empty() -> ProduceRequest {
-        ProduceRequest {
-            transactional_id: None,
-            required_acks: Acks::All,
-            timeout: 0,
-            topic_data: vec![],
-        }
-    }
+
     pub fn validate(&self) -> AppResult<()> {
         if self.timeout < 0 {
             return Err(AppError::RequestError(Cow::Borrowed(

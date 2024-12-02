@@ -1,17 +1,17 @@
 use std::clone::Clone;
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use tokio::io::AsyncWriteExt;
+
 use tracing::trace;
 
-use crate::AppResult;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::protocol::schema::Schema;
 use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
+use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::MetadataResponse;
+use crate::AppResult;
 
 const BROKERS_KEY_NAME: &str = "brokers";
 const TOPIC_METADATA_KEY_NAME: &str = "topic_metadata";
@@ -178,53 +178,46 @@ impl MetadataResponse {
         // throttle_time_ms
         if metadata_rsp_valueset
             .schema
-            .get_field(THROTTLE_TIME_MS_KEY_NAME)
-            .is_ok()
+            .has_field(THROTTLE_TIME_MS_KEY_NAME)
         {
             metadata_rsp_valueset
-                .append_field_value(THROTTLE_TIME_MS_KEY_NAME, self.throttle_time_ms.into())?;
+                .append_field_value(THROTTLE_TIME_MS_KEY_NAME, self.throttle_time_ms.into());
         }
         // brokers
 
         let mut broker_ary: Vec<DataType> = Vec::with_capacity(self.brokers.len());
         for broker in self.brokers {
             let mut broker_valueset =
-                metadata_rsp_valueset.sub_valueset_of_ary_field(BROKERS_KEY_NAME)?;
-            broker_valueset.append_field_value(NODE_ID_KEY_NAME, broker.node_id.into())?;
-            broker_valueset.append_field_value(HOST_KEY_NAME, broker.host.into())?;
-            broker_valueset.append_field_value(PORT_KEY_NAME, broker.port.into())?;
-            if broker_valueset.schema.get_field(RACK_KEY_NAME).is_ok() {
-                broker_valueset.append_field_value(RACK_KEY_NAME, broker.rack.into())?;
+                metadata_rsp_valueset.sub_valueset_of_ary_field(BROKERS_KEY_NAME);
+            broker_valueset.append_field_value(NODE_ID_KEY_NAME, broker.node_id.into());
+            broker_valueset.append_field_value(HOST_KEY_NAME, broker.host.into());
+            broker_valueset.append_field_value(PORT_KEY_NAME, broker.port.into());
+            if broker_valueset.schema.has_field(RACK_KEY_NAME) {
+                broker_valueset.append_field_value(RACK_KEY_NAME, broker.rack.into());
             }
             broker_ary.push(DataType::ValueSet(broker_valueset));
         }
         let broker_ary_schema = metadata_rsp_valueset
             .schema
             .clone()
-            .sub_schema_of_ary_field(BROKERS_KEY_NAME)?;
+            .sub_schema_of_ary_field(BROKERS_KEY_NAME);
         metadata_rsp_valueset.append_field_value(
             BROKERS_KEY_NAME,
             DataType::array_of_value_set(broker_ary, broker_ary_schema),
-        )?;
+        );
 
         // cluster_id
-        if metadata_rsp_valueset
-            .schema
-            .get_field(CLUSTER_ID_KEY_NAME)
-            .is_ok()
-        {
-            metadata_rsp_valueset
-                .append_field_value(CLUSTER_ID_KEY_NAME, self.cluster_id.into())?;
+        if metadata_rsp_valueset.schema.has_field(CLUSTER_ID_KEY_NAME) {
+            metadata_rsp_valueset.append_field_value(CLUSTER_ID_KEY_NAME, self.cluster_id.into());
         }
 
         // controller_id
         if metadata_rsp_valueset
             .schema
-            .get_field(CONTROLLER_ID_KEY_NAME)
-            .is_ok()
+            .has_field(CONTROLLER_ID_KEY_NAME)
         {
             metadata_rsp_valueset
-                .append_field_value(CONTROLLER_ID_KEY_NAME, self.controller.node_id.into())?;
+                .append_field_value(CONTROLLER_ID_KEY_NAME, self.controller.node_id.into());
         }
 
         // topic_metadata
@@ -232,112 +225,96 @@ impl MetadataResponse {
         for topic_metadata in self.topic_metadata {
             // create valueset for each topic
             let mut topic_metadata_valueset =
-                metadata_rsp_valueset.sub_valueset_of_ary_field(TOPIC_METADATA_KEY_NAME)?;
+                metadata_rsp_valueset.sub_valueset_of_ary_field(TOPIC_METADATA_KEY_NAME);
             // error code
             topic_metadata_valueset.append_field_value(
                 TOPIC_ERROR_CODE_KEY_NAME,
                 topic_metadata.topic_error_code.into(),
-            )?;
+            );
             // internal
-            topic_metadata_valueset
-                .append_field_value(TOPIC_KEY_NAME, topic_metadata.topic.into())?;
+            topic_metadata_valueset.append_field_value(TOPIC_KEY_NAME, topic_metadata.topic.into());
             if topic_metadata_valueset
                 .schema
-                .get_field(IS_INTERNAL_KEY_NAME)
-                .is_ok()
+                .has_field(IS_INTERNAL_KEY_NAME)
             {
                 topic_metadata_valueset
-                    .append_field_value(IS_INTERNAL_KEY_NAME, topic_metadata.is_internal.into())?;
+                    .append_field_value(IS_INTERNAL_KEY_NAME, topic_metadata.is_internal.into());
             }
             // partition_metadata
             let mut partition_metadata_ary: Vec<DataType> =
                 Vec::with_capacity(topic_metadata.partition_metadata.len());
             for partition_metadata in topic_metadata.partition_metadata {
-                let mut partition_metadata_valueset = topic_metadata_valueset
-                    .sub_valueset_of_ary_field(PARTITION_METADATA_KEY_NAME)?;
+                let mut partition_metadata_valueset =
+                    topic_metadata_valueset.sub_valueset_of_ary_field(PARTITION_METADATA_KEY_NAME);
                 partition_metadata_valueset.append_field_value(
                     PARTITION_ERROR_CODE_KEY_NAME,
                     partition_metadata.partition_error_code.into(),
-                )?;
-                partition_metadata_valueset.append_field_value(
-                    PARTITION_KEY_NAME,
-                    partition_metadata.partition_id.into(),
-                )?;
-                partition_metadata_valueset.append_field_value(
-                    LEADER_KEY_NAME,
-                    partition_metadata.leader.node_id.into(),
-                )?;
+                );
+                partition_metadata_valueset
+                    .append_field_value(PARTITION_KEY_NAME, partition_metadata.partition_id.into());
+                partition_metadata_valueset
+                    .append_field_value(LEADER_KEY_NAME, partition_metadata.leader.node_id.into());
                 let replicas_ary = partition_metadata
                     .replicas
                     .iter()
                     .map(|node| node.node_id)
                     .collect();
-                partition_metadata_valueset.append_field_value(
-                    REPLICAS_KEY_NAME,
-                    DataType::array_of(Some(replicas_ary)),
-                )?;
+                partition_metadata_valueset
+                    .append_field_value(REPLICAS_KEY_NAME, DataType::array_of(Some(replicas_ary)));
                 let isr_ary = partition_metadata
                     .isr
                     .iter()
                     .map(|node| node.node_id)
                     .collect();
                 partition_metadata_valueset
-                    .append_field_value(ISR_KEY_NAME, DataType::array_of(Some(isr_ary)))?;
+                    .append_field_value(ISR_KEY_NAME, DataType::array_of(Some(isr_ary)));
                 partition_metadata_ary.push(DataType::ValueSet(partition_metadata_valueset));
             }
             let partition_metadata_schema = topic_metadata_valueset
                 .schema
                 .clone()
-                .sub_schema_of_ary_field(PARTITION_METADATA_KEY_NAME)?;
+                .sub_schema_of_ary_field(PARTITION_METADATA_KEY_NAME);
             topic_metadata_valueset.append_field_value(
                 PARTITION_METADATA_KEY_NAME,
                 DataType::array_of_value_set(partition_metadata_ary, partition_metadata_schema),
-            )?;
+            );
             topic_metadata_ary.push(DataType::ValueSet(topic_metadata_valueset));
         }
         let topic_metadata_schema = metadata_rsp_valueset
             .schema
             .clone()
-            .sub_schema_of_ary_field(TOPIC_METADATA_KEY_NAME)?;
+            .sub_schema_of_ary_field(TOPIC_METADATA_KEY_NAME);
         metadata_rsp_valueset.append_field_value(
             TOPIC_METADATA_KEY_NAME,
             DataType::array_of_value_set(topic_metadata_ary, topic_metadata_schema),
-        )?;
+        );
 
         Ok(())
     }
 }
 
 impl ProtocolCodec<MetadataResponse> for MetadataResponse {
-    async fn encode<W>(
-        self,
-        writer: &mut W,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    where
-        W: AsyncWriteExt + Unpin + Send,
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::Metadata);
         let mut metadata_reps_value_set = ValueSet::new(schema);
         trace!("write response:{:?}", &self);
-        self.encode_to_value_set(&mut metadata_reps_value_set)?;
+        self.encode_to_value_set(&mut metadata_reps_value_set);
         // correlation_id + response_total_size
-        let response_total_size = 4 + metadata_reps_value_set.size()?;
-        writer.write_i32(response_total_size as i32).await?;
-        writer.write_i32(correlation_id).await?;
-        metadata_reps_value_set.write_to(writer).await?;
-        writer.flush().await?;
+        let response_total_size = 4 + metadata_reps_value_set.size();
+        let mut writer = BytesMut::with_capacity(response_total_size);
+        writer.put_i32(response_total_size as i32);
+        writer.put_i32(correlation_id);
+        metadata_reps_value_set.write_to(&mut writer);
         trace!(
             "write response total size:{} with correlation_id:{}",
             response_total_size,
             correlation_id
         );
 
-        Ok(())
+        writer
     }
 
-    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetadataResponse> {
+    fn decode(_buffer: &mut BytesMut, _api_version: &ApiVersion) -> AppResult<MetadataResponse> {
         todo!()
     }
 }

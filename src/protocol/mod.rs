@@ -19,7 +19,6 @@ use api_schemas::consumer_groups::{
     OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
 use bytes::BytesMut;
-use tokio::io::AsyncWriteExt;
 
 use crate::protocol::api_schemas::metadata_reps::{
     METADATA_RESPONSE_V0, METADATA_RESPONSE_V1, METADATA_RESPONSE_V2, METADATA_RESPONSE_V3,
@@ -48,274 +47,128 @@ mod record;
 mod schema;
 mod types;
 mod value_set;
-
+use ApiKey::{
+    ApiVersionKey, Fetch, FindCoordinator, Heartbeat, JoinGroup, LeaveGroup, Metadata,
+    OffsetCommit, OffsetFetch, Produce, SyncGroup,
+};
+use ApiVersion::{V0, V1, V2, V3, V4, V5};
 pub trait ProtocolCodec<T> {
-    ///
-    /// 为了防止数据复制clone，这里直接消耗掉self，调用完成之后，self就无法再使用了
-    fn encode(
-        self,
-        writer: &mut BytesMut,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>;
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut;
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<T>;
 
     fn fetch_request_schema_for_api(api_version: &ApiVersion, api_key: &ApiKey) -> Arc<Schema> {
-        match api_key {
-            ApiKey::Produce => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 | ApiVersion::V2 => {
-                    Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0)
-                }
-                ApiVersion::V3 => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
+        match (api_key, api_version) {
+            // Produce API
+            (Produce, V0 | V1 | V2) => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0),
+            (Produce, V3) => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
+            (Produce, V4 | V5) => todo!("not exist"),
 
-                ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::Fetch => match api_version {
-                ApiVersion::V0
-                | ApiVersion::V1
-                | ApiVersion::V2
-                | ApiVersion::V3
-                | ApiVersion::V4 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V5 => Arc::clone(&FETCH_REQUEST_V5_SCHEMA),
-            },
+            // Fetch API
+            (Fetch, V0 | V1 | V2 | V3 | V4) => todo!("too old, not support"),
+            (Fetch, V5) => Arc::clone(&FETCH_REQUEST_V5_SCHEMA),
 
-            ApiKey::Metadata => match api_version {
-                ApiVersion::V0 => Arc::clone(&METADATA_REQUEST_V0),
-                ApiVersion::V1 | ApiVersion::V2 | ApiVersion::V3 => {
-                    Arc::clone(&METADATA_REQUEST_V1)
-                }
-                ApiVersion::V4 => Arc::clone(&METADATA_REQUEST_V4),
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::ApiVersion => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&API_VERSIONS_REQUEST_V0),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::FindCoordinator => match api_version {
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::JoinGroup => match api_version {
-                ApiVersion::V1 | ApiVersion::V2 => Arc::clone(&JOIN_GROUP_REQUEST_V2_SCHEMA),
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V3 | ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::SyncGroup => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&SYNC_GROUP_REQUEST_V1_SCHEMA),
+            // Metadata API
+            (Metadata, V0) => Arc::clone(&METADATA_REQUEST_V0),
+            (Metadata, V1 | V2 | V3) => Arc::clone(&METADATA_REQUEST_V1),
+            (Metadata, V4) => Arc::clone(&METADATA_REQUEST_V4),
+            (Metadata, V5) => todo!("not exist"),
 
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::LeaveGroup => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::Heartbeat => match api_version {
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V1 => Arc::clone(&HEARTBEAT_REQUEST_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::OffsetCommit => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V2 | ApiVersion::V3 => Arc::clone(&OFFSET_COMMIT_REQUEST_V3_SCHEMA),
-                ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::OffsetFetch => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V3 | ApiVersion::V2 => Arc::clone(&OFFSET_FETCH_REQUEST_V3_SCHEMA),
-                ApiVersion::V4 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
+            // ApiVersion API
+            (ApiVersionKey, V0 | V1) => Arc::clone(&API_VERSIONS_REQUEST_V0),
+            (ApiVersionKey, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // FindCoordinator API
+            (FindCoordinator, V0) => todo!("too old, not support"),
+            (FindCoordinator, V1) => Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA),
+            (FindCoordinator, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // JoinGroup API
+            (JoinGroup, V0) => todo!("too old, not support"),
+            (JoinGroup, V1 | V2) => Arc::clone(&JOIN_GROUP_REQUEST_V2_SCHEMA),
+            (JoinGroup, V3 | V4 | V5) => todo!("not exist"),
+
+            // SyncGroup API
+            (SyncGroup, V0 | V1) => Arc::clone(&SYNC_GROUP_REQUEST_V1_SCHEMA),
+            (SyncGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // LeaveGroup API
+            (LeaveGroup, V0 | V1) => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
+            (LeaveGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // Heartbeat API
+            (Heartbeat, V0) => todo!("too old, not support"),
+            (Heartbeat, V1) => Arc::clone(&HEARTBEAT_REQUEST_V1_SCHEMA),
+            (Heartbeat, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // OffsetCommit API
+            (OffsetCommit, V0 | V1) => todo!("too old, not support"),
+            (OffsetCommit, V2 | V3) => Arc::clone(&OFFSET_COMMIT_REQUEST_V3_SCHEMA),
+            (OffsetCommit, V4 | V5) => todo!("not exist"),
+
+            // OffsetFetch API
+            (OffsetFetch, V0 | V1) => todo!("too old, not support"),
+            (OffsetFetch, V2 | V3) => Arc::clone(&OFFSET_FETCH_REQUEST_V3_SCHEMA),
+            (OffsetFetch, V4 | V5) => todo!("not exist"),
         }
     }
     fn fetch_response_schema_for_api(api_version: &ApiVersion, api_key: &ApiKey) -> Arc<Schema> {
-        match api_key {
-            ApiKey::Produce => match api_version {
-                ApiVersion::V0 => Arc::clone(&PRODUCE_RESPONSE_V0),
-                ApiVersion::V1 => Arc::clone(&PRODUCE_RESPONSE_V1),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 => {
-                    Arc::clone(&PRODUCE_RESPONSE_V2)
-                }
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::Fetch => match api_version {
-                ApiVersion::V0
-                | ApiVersion::V1
-                | ApiVersion::V2
-                | ApiVersion::V3
-                | ApiVersion::V4 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V5 => Arc::clone(&FETCH_RESPONSE_V5_SCHEMA),
-            },
-            ApiKey::Metadata => match api_version {
-                ApiVersion::V0 => Arc::clone(&METADATA_RESPONSE_V0),
-                ApiVersion::V1 => Arc::clone(&METADATA_RESPONSE_V1),
-                ApiVersion::V2 => Arc::clone(&METADATA_RESPONSE_V2),
-                ApiVersion::V3 | ApiVersion::V4 => Arc::clone(&METADATA_RESPONSE_V3),
-                ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::ApiVersion => match api_version {
-                ApiVersion::V0 => Arc::clone(&API_VERSIONS_RESPONSE_V0),
-                ApiVersion::V1 => Arc::clone(&API_VERSIONS_RESPONSE_V1),
-                _ => todo!(),
-            },
-            ApiKey::JoinGroup => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-                ApiVersion::V2 => Arc::clone(&JOIN_GROUP_RESPONSE_V2_SCHEMA),
-            },
-            ApiKey::SyncGroup => match api_version {
-                ApiVersion::V1 => Arc::clone(&SYNC_GROUP_RESPONSE_V1_SCHEMA),
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::Heartbeat => match api_version {
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V1 => Arc::clone(&HEARTBEAT_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::LeaveGroup => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::OffsetFetch => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 | ApiVersion::V2 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V3 => Arc::clone(&OFFSET_FETCH_RESPONSE_V3_SCHEMA),
-                ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::OffsetCommit => match api_version {
-                ApiVersion::V0 | ApiVersion::V1 | ApiVersion::V2 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V3 => Arc::clone(&OFFSET_COMMIT_RESPONSE_V3_SCHEMA),
-                ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
-            ApiKey::FindCoordinator => match api_version {
-                ApiVersion::V0 => {
-                    // too old, not support
-                    todo!()
-                }
-                ApiVersion::V1 => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
-                ApiVersion::V2 | ApiVersion::V3 | ApiVersion::V4 | ApiVersion::V5 => {
-                    // not exist
-                    todo!()
-                }
-            },
+        match (api_key, api_version) {
+            // Produce API
+            (Produce, V0) => Arc::clone(&PRODUCE_RESPONSE_V0),
+            (Produce, V1) => Arc::clone(&PRODUCE_RESPONSE_V1),
+            (Produce, V2 | V3 | V4) => Arc::clone(&PRODUCE_RESPONSE_V2),
+            (Produce, V5) => todo!("not exist"),
+
+            // Fetch API
+            (Fetch, V0 | V1 | V2 | V3 | V4) => todo!("too old, not support"),
+            (Fetch, V5) => Arc::clone(&FETCH_RESPONSE_V5_SCHEMA),
+
+            // Metadata API
+            (Metadata, V0) => Arc::clone(&METADATA_RESPONSE_V0),
+            (Metadata, V1) => Arc::clone(&METADATA_RESPONSE_V1),
+            (Metadata, V2) => Arc::clone(&METADATA_RESPONSE_V2),
+            (Metadata, V3 | V4) => Arc::clone(&METADATA_RESPONSE_V3),
+            (Metadata, V5) => todo!("not exist"),
+
+            // ApiVersion API
+            (ApiVersionKey, V0) => Arc::clone(&API_VERSIONS_RESPONSE_V0),
+            (ApiVersionKey, V1) => Arc::clone(&API_VERSIONS_RESPONSE_V1),
+            (ApiVersionKey, _) => todo!(),
+
+            // JoinGroup API
+            (JoinGroup, V0 | V1) => todo!("too old, not support"),
+            (JoinGroup, V2) => Arc::clone(&JOIN_GROUP_RESPONSE_V2_SCHEMA),
+            (JoinGroup, V3 | V4 | V5) => todo!("not exist"),
+
+            // SyncGroup API
+            (SyncGroup, V0) => todo!("too old, not support"),
+            (SyncGroup, V1) => Arc::clone(&SYNC_GROUP_RESPONSE_V1_SCHEMA),
+            (SyncGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // Heartbeat API
+            (Heartbeat, V0) => todo!("too old, not support"),
+            (Heartbeat, V1) => Arc::clone(&HEARTBEAT_RESPONSE_V1_SCHEMA),
+            (Heartbeat, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // LeaveGroup API
+            (LeaveGroup, V0 | V1) => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
+            (LeaveGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+
+            // OffsetFetch API
+            (OffsetFetch, V0 | V1 | V2) => todo!("too old, not support"),
+            (OffsetFetch, V3) => Arc::clone(&OFFSET_FETCH_RESPONSE_V3_SCHEMA),
+            (OffsetFetch, V4 | V5) => todo!("not exist"),
+
+            // OffsetCommit API
+            (OffsetCommit, V0 | V1 | V2) => todo!("too old, not support"),
+            (OffsetCommit, V3) => Arc::clone(&OFFSET_COMMIT_RESPONSE_V3_SCHEMA),
+            (OffsetCommit, V4 | V5) => todo!("not exist"),
+
+            // FindCoordinator API
+            (FindCoordinator, V0) => todo!("too old, not support"),
+            (FindCoordinator, V1) => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
+            (FindCoordinator, V2 | V3 | V4 | V5) => todo!("not exist"),
         }
     }
 }
@@ -336,7 +189,7 @@ pub enum ApiKey {
     Produce,
     Fetch,
     Metadata,
-    ApiVersion,
+    ApiVersionKey,
     JoinGroup,
     SyncGroup,
     LeaveGroup,
@@ -360,7 +213,7 @@ impl TryFrom<i16> for ApiKey {
             12 => Ok(ApiKey::Heartbeat),
             13 => Ok(ApiKey::LeaveGroup),
             14 => Ok(ApiKey::SyncGroup),
-            18 => Ok(ApiKey::ApiVersion),
+            18 => Ok(ApiKey::ApiVersionKey),
             invalid => Err(InvalidValue("api key", invalid.to_string())),
         }
     }
@@ -378,7 +231,7 @@ impl From<ApiKey> for i16 {
             ApiKey::Heartbeat => 12,
             ApiKey::LeaveGroup => 13,
             ApiKey::SyncGroup => 14,
-            ApiKey::ApiVersion => 18,
+            ApiKey::ApiVersionKey => 18,
         }
     }
 }

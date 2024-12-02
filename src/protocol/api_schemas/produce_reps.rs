@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::io::BufWriter;
 use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use tokio::io::AsyncWriteExt;
 use tracing::trace;
 
 use crate::protocol::schema::Schema;
@@ -135,36 +133,32 @@ impl ProduceResponse {
 
         for (topic, partition_response) in topic_responses_map {
             let mut topic_response =
-                produce_reps_valueset.sub_valueset_of_ary_field(RESPONSES_KEY_NAME)?;
-            topic_response.append_field_value(TOPIC_KEY_NAME, topic.into())?;
+                produce_reps_valueset.sub_valueset_of_ary_field(RESPONSES_KEY_NAME);
+            topic_response.append_field_value(TOPIC_KEY_NAME, topic.into());
 
             let mut partition_response_ary = Vec::with_capacity(partition_response.len());
             for partition_response in partition_response {
                 let mut partition_response_valueset =
-                    topic_response.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
+                    topic_response.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
                 partition_response_valueset
-                    .append_field_value(PARTITION_KEY_NAME, partition_response.partition.into())?;
+                    .append_field_value(PARTITION_KEY_NAME, partition_response.partition.into());
                 partition_response_valueset.append_field_value(
                     ERROR_CODE_KEY_NAME,
                     partition_response.error_code.into(),
-                )?;
+                );
                 partition_response_valueset.append_field_value(
                     BASE_OFFSET_KEY_NAME,
                     partition_response.base_offset.into(),
-                )?;
+                );
 
                 if partition_response_valueset
                     .schema
-                    .get_field(LOG_APPEND_TIME_KEY_NAME)
-                    .is_ok()
+                    .has_field(LOG_APPEND_TIME_KEY_NAME)
                 {
                     partition_response_valueset.append_field_value(
                         LOG_APPEND_TIME_KEY_NAME,
-                        partition_response
-                            .log_append_time
-                            .unwrap_or(DEFAULT_LOG_APPEND_TIME)
-                            .into(),
-                    )?;
+                        partition_response.log_append_time.into(),
+                    );
                 }
 
                 partition_response_ary.push(DataType::ValueSet(partition_response_valueset));
@@ -172,64 +166,57 @@ impl ProduceResponse {
             let partition_schema = topic_response
                 .schema
                 .clone()
-                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME)?;
+                .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
             topic_response.append_field_value(
                 PARTITION_RESPONSES_KEY_NAME,
                 DataType::array_of_value_set(partition_response_ary, partition_schema),
-            )?;
+            );
 
             topic_response_ary.push(DataType::ValueSet(topic_response));
         }
         let topic_schema = produce_reps_valueset
             .schema
             .clone()
-            .sub_schema_of_ary_field(RESPONSES_KEY_NAME)?;
+            .sub_schema_of_ary_field(RESPONSES_KEY_NAME);
         produce_reps_valueset.append_field_value(
             RESPONSES_KEY_NAME,
             DataType::array_of_value_set(topic_response_ary, topic_schema),
-        )?;
+        );
         if produce_reps_valueset
             .schema
-            .get_field(THROTTLE_TIME_MS_KEY_NAME)
-            .is_ok()
+            .has_field(THROTTLE_TIME_MS_KEY_NAME)
         {
             produce_reps_valueset.append_field_value(
                 THROTTLE_TIME_MS_KEY_NAME,
                 self.throttle_time.unwrap_or(0).into(),
-            )?;
+            );
         }
         Ok(())
     }
 }
 
 impl ProtocolCodec<ProduceResponse> for ProduceResponse {
-    fn encode(
-        self,
-        writer: &mut BytesMut,
-        api_version: &ApiVersion,
-        correlation_id: i32,
-    ) -> AppResult<()>
-    {
+    fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::Produce);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set)?;
-        let body_size = value_set.size()?;
+        self.encode_to_value_set(&mut value_set).unwrap();
+        let body_size = value_set.size();
         let mut writer = BytesMut::with_capacity(4 + body_size);
 
         // correlation_id + response_total_size
         let response_total_size = 4 + body_size;
         writer.put_i32(response_total_size as i32);
         writer.put_i32(correlation_id);
-        value_set.write_to(&mut writer)?;
+        value_set.write_to(&mut writer);
         trace!(
             "write response total size:{} with correlation_id:{}",
             response_total_size,
             correlation_id
         );
-        Ok(())
+        writer
     }
 
-    fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceResponse> {
+    fn decode(_buffer: &mut BytesMut, _api_version: &ApiVersion) -> AppResult<ProduceResponse> {
         todo!()
     }
 }
