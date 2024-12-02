@@ -61,6 +61,7 @@ struct Protocol {
 
 impl MemberMetadata {
     /// 创建新的成员元数据
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: impl Into<String>,
         client_id: impl Into<String>,

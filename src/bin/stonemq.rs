@@ -48,7 +48,7 @@ fn main() -> AppResult<()> {
         .set(broker_config)
         .expect("set broker config failed");
 
-    let mut broker = Broker::new();
+    let mut broker = Broker::default();
     broker.start(&rt)?;
 
     Ok(())

@@ -7,15 +7,15 @@ use bytes::BytesMut;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, mpsc, oneshot, RwLock, Semaphore};
+use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tokio::time::{self, Duration};
 use tracing::error;
 
 use crate::message::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
 use crate::request::{ApiRequest, RequestProcessor};
-use crate::{AppError, DynamicConfig};
-use crate::{AppResult, ReplicaManager};
+use crate::AppResult;
+use crate::{AppError, ReplicaManager};
 
 use super::Shutdown;
 
@@ -179,7 +179,6 @@ struct ConnectionHandler {
     connection: Connection,
     writer: BufWriter<OwnedWriteHalf>,
     request_tx: async_channel::Sender<RequestTask>,
-    dynamic_config: DynamicConfig,
 }
 
 impl ConnectionHandler {
@@ -240,7 +239,6 @@ pub struct Server {
     notify_shutdown: broadcast::Sender<()>,
     shutdown_complete_tx: mpsc::Sender<()>,
     replica_manager: Arc<ReplicaManager>,
-    dynamic_config: Arc<RwLock<DynamicConfig>>,
     group_coordinator: Arc<GroupCoordinator>,
 }
 
@@ -251,7 +249,6 @@ impl Server {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: mpsc::Sender<()>,
         replica_manager: Arc<ReplicaManager>,
-        dynamic_config: Arc<RwLock<DynamicConfig>>,
         group_coordinator: Arc<GroupCoordinator>,
     ) -> Self {
         Server {
@@ -260,7 +257,6 @@ impl Server {
             notify_shutdown,
             shutdown_complete_tx,
             replica_manager,
-            dynamic_config,
             group_coordinator,
         }
     }
@@ -309,10 +305,9 @@ impl Server {
                 _shutdown_complete_tx: shutdown_complete_tx,
                 notify_shutdown: notify_shutdown_clone,
                 connection_id,
-                connection: Connection::new(reader, self.dynamic_config.read().await.clone()),
+                connection: Connection::new(reader),
                 writer: BufWriter::new(writer),
                 request_tx: request_sender.clone(),
-                dynamic_config: self.dynamic_config.read().await.clone(),
             };
 
             tokio::spawn(async move {

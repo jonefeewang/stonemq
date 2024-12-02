@@ -4,20 +4,20 @@ use crate::log::{
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::time::Interval;
 
-use crate::log::splitter::SplitterTask;
 use crate::message::TopicPartition;
-use crate::AppError::{self, InvalidValue};
-use crate::{global_config, log, AppResult, ReplicaManager, Shutdown};
+use crate::{global_config, AppError, AppResult, Shutdown};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-use tokio::time::Interval;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
+
+use super::splitter::SplitterTask;
 
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
@@ -34,7 +34,7 @@ pub struct LogManager {
     queue_recovery_checkpoints: CheckPointFile,
     split_checkpoint: CheckPointFile,
     notify_shutdown: broadcast::Sender<()>,
-    shutdown_complete_tx: Sender<()>,
+    _shutdown_complete_tx: Sender<()>,
     journal_log_path: String,
     queue_log_path: String,
 }
@@ -64,7 +64,7 @@ impl LogManager {
             queue_recovery_checkpoints: CheckPointFile::new(queue_recovery_checkpoint_path),
             split_checkpoint: CheckPointFile::new(split_checkpoint_path),
             notify_shutdown,
-            shutdown_complete_tx,
+            _shutdown_complete_tx: shutdown_complete_tx,
             journal_log_path: global_config().log.journal_base_dir.clone(),
             queue_log_path: global_config().log.queue_base_dir.clone(),
         }

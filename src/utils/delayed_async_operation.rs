@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::time::sleep;
 use tokio::time::Duration;
 use tokio_util::time::{delay_queue, DelayQueue};
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::Shutdown;
 
@@ -66,6 +66,7 @@ pub struct DelayedAsyncOperationPurgatory<T: DelayedAsyncOperation + 'static> {
     name: String,
     watchers: DashMap<String, Vec<Arc<DelayedAsyncOperationState<T>>>>,
     delay_queue_tx: Sender<DelayQueueOp<T>>,
+    _shutdown_complete_tx: Sender<()>,
 }
 
 impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
@@ -80,6 +81,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
             name: name.to_string(),
             watchers: DashMap::new(),
             delay_queue_tx: tx,
+            _shutdown_complete_tx: shutdown_complete_tx,    
         };
         // (purgatory, rx, shutdown)
         let purgatory = Arc::new(purgatory);

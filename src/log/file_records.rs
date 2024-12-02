@@ -486,7 +486,7 @@ mod tests {
             offset: 164,
             position: 1883,
         };
-        let (file, position) = FileRecords::seek(file, 200, ref_pos, LogType::Queue).await?;
+        let (_, position) = FileRecords::seek(file, 200, ref_pos, LogType::Queue).await?;
         assert_eq!(position.position, 2268);
 
         Ok(())
@@ -503,7 +503,7 @@ mod tests {
             offset: 3,
             position: 882,
         };
-        let (file, position) = FileRecords::seek(file, 4, ref_pos, LogType::Journal).await?;
+        let (_, position) = FileRecords::seek(file, 4, ref_pos, LogType::Journal).await?;
         assert_eq!(position.position, 1000);
 
         Ok(())

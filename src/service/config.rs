@@ -10,10 +10,9 @@ use crate::log::FileOp;
 use crate::request::errors::KafkaError;
 use crate::AppError::InvalidValue;
 
-use getset::{CopyGetters, Getters};
 use once_cell::sync::OnceCell;
 
-use opentelemetry::{global, trace::TracerProvider, Key, KeyValue};
+use opentelemetry::{global, Key, KeyValue};
 use opentelemetry_sdk::trace::SpanLimits;
 use opentelemetry_sdk::{
     metrics::{
@@ -21,25 +20,17 @@ use opentelemetry_sdk::{
         Aggregation, Instrument, MeterProviderBuilder, PeriodicReader, SdkMeterProvider, Stream,
     },
     runtime,
-    trace::{BatchConfig, BatchConfigBuilder, RandomIdGenerator, Sampler, Tracer},
+    trace::{BatchConfigBuilder, RandomIdGenerator, Sampler, Tracer},
     Resource,
 };
 use opentelemetry_semantic_conventions::{
     resource::{SERVICE_NAME, SERVICE_VERSION},
     SCHEMA_URL,
 };
-use tracing_core::Level;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::fmt::time::ChronoLocal;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use serde::{Deserialize, Serialize};
-
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc::Sender,
-};
 
 use tokio::sync::broadcast::error::SendError as BroadcastSendError;
 use tokio::sync::mpsc::error::SendError;
@@ -47,6 +38,9 @@ use tokio::sync::oneshot::error::RecvError;
 use tokio::time::error::Elapsed;
 
 use dotenv::dotenv;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 pub type AppResult<T> = Result<T, AppError>;
 pub fn global_config() -> &'static BrokerConfig {
@@ -128,8 +122,8 @@ fn init_meter_provider() -> SdkMeterProvider {
 
 // Construct Tracer for OpenTelemetryLayer
 fn init_tracer() -> Tracer {
-    let mut span_limits = SpanLimits::default();
-    span_limits.max_events_per_span = 100000;
+    let span_limits = SpanLimits::default();
+    // span_limits.max_events_per_span = 100000;
     opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_batch_config(
@@ -308,31 +302,6 @@ impl From<AppError> for KafkaError {
     }
 }
 
-pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
-
-impl<T: AsyncRead + AsyncWrite + Send + Sync + Unpin> IO for T {}
-
-/*
- Broker动态配置，可以通过admin接口或控制台配置
- 初始化值会从静态配置中读取，保障了每次broker重启都会以静态配置为准
- 注意：因为动态配置需要加锁，访问时需要获取一个快照，因此配置分类最好细化，以减少快照时clone对象的大小
-*/
-#[derive(Getters, CopyGetters, Clone, Debug)]
-#[get_copy = "pub"]
-pub struct DynamicConfig {
-    max_connection: usize,
-    max_package_size: usize,
-}
-
-impl DynamicConfig {
-    pub fn new() -> Self {
-        Self {
-            max_connection: global_config().network.max_connection,
-            max_package_size: global_config().network.max_package_size,
-        }
-    }
-}
-
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct GeneralConfig {
     pub id: i32,
@@ -419,5 +388,7 @@ impl BrokerConfig {
         Ok(server_config)
     }
 
-    fn validate_config(config: &BrokerConfig) {}
+    fn validate_config(_config: &BrokerConfig) {
+        todo!()
+    }
 }

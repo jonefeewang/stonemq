@@ -309,11 +309,12 @@ impl GroupCoordinator {
         group: Arc<RwLock<GroupMetadata>>,
     ) -> JoinGroupResult {
         let member_id = format!("{}-{}", request.client_id, Uuid::new_v4());
+        let group_id = locked_group.id().to_string();
         let mut member = MemberMetadata::new(
             &member_id,
             &request.client_id,
             &request.client_host,
-            locked_group.id(),
+            group_id,
             request.rebalance_timeout,
             request.session_timeout,
             &request.protocol_type,
@@ -557,9 +558,9 @@ impl GroupCoordinator {
         // );
         let group_read = group.read().await;
         let member = group_read.get_member(member_id).unwrap();
-        let ret = self.should_keep_member_alive(member, heartbeat_deadline) || member.is_leaving();
+
         // trace!("try complete heartbeat result: {}", ret);
-        ret
+        self.should_keep_member_alive(member, heartbeat_deadline) || member.is_leaving()
     }
 
     pub async fn on_heartbeat_expiry(
@@ -906,7 +907,7 @@ impl GroupCoordinator {
             let mut topic_responses: HashMap<TopicPartition, Vec<(i32, KafkaError)>> =
                 HashMap::new();
             for tp in topic_partitions {
-                let topic_partitions = topic_responses.entry(tp.clone()).or_insert_with(Vec::new);
+                let topic_partitions = topic_responses.entry(tp.clone()).or_default();
                 topic_partitions.push((tp.partition, error.clone()));
             }
             topic_responses

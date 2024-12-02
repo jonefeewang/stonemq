@@ -1,14 +1,12 @@
 use bytes::{Buf, BytesMut};
-use chrono::{Local, TimeZone};
+use chrono::Local;
 use clap::{Parser, Subcommand};
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
-use stonemq::log::{CheckPointFile, IndexFile};
+use stonemq::log::CheckPointFile;
 use stonemq::message::MemoryRecords;
-use stonemq::service::setup_tracing;
 use stonemq::AppResult;
-use tokio::runtime::Runtime;
 
 #[derive(Parser)]
 #[command(version)]
@@ -36,12 +34,6 @@ enum Commands {
         #[arg(short, long)]
         file: PathBuf,
     },
-    Batch {
-        #[arg(short, long)]
-        file: PathBuf,
-        #[arg(short, long)]
-        offset: i64,
-    },
 }
 
 #[tokio::main]
@@ -55,32 +47,11 @@ async fn main() -> AppResult<()> {
         Commands::Queue { file } => parse_queue_log(file),
         Commands::Index { file } => parse_index(file),
         Commands::Checkpoint { file } => parse_checkpoint(file).await,
-        Commands::Batch { file, offset } => find_record(file, *offset),
     }
 }
 
-fn find_record(file: &PathBuf, offset: i64) -> AppResult<()> {
-    let rt = Runtime::new()?;
-    let index_file_name = file.with_extension("index");
-    let base_offset = file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
-    let file = File::open(file)?;
-
-    // let offset_index = IndexFile::new(index_file_name, 2048, false).await?;
-    // let ref_position = offset_index.lookup((offset - base_offset) as u32).await?;
-    let mut reader = BufReader::new(file);
-    let mut buffer = BytesMut::with_capacity(1024);
-    // reader.seek(SeekFrom::Start(ref_position.1 as u64))?;
-    let buffer = vec![0; 12];
-
-    todo!()
-}
-
 fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
-    let file = File::open(&file_path)?;
+    let file = File::open(file_path)?;
     let mut reader = BufReader::new(&file);
     let mut buffer = BytesMut::with_capacity(1024);
 
@@ -161,10 +132,10 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         }
 
         let first_batch = batchs.first().unwrap();
-        let last_batch = batchs.last().unwrap();
+        // let last_batch = batchs.last().unwrap();
 
         // 解析batch header
-        let batch_header = first_batch.header();
+        // let batch_header = first_batch.header();
         // println!("Batch Header:");
         // println!(
         //     "Queue first batch baseoffset: {}",
@@ -260,7 +231,7 @@ fn parse_index(file: &PathBuf) -> AppResult<()> {
     let mut file = File::open(file)?;
     let mut buffer = BytesMut::zeroed(4);
 
-    while let Ok(_) = file.read_exact(&mut buffer) {
+    while file.read_exact(&mut buffer).is_ok() {
         let relative_offset = buffer.get_u32();
         buffer.resize(4, 0);
         file.read_exact(&mut buffer)?;

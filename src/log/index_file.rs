@@ -1,6 +1,6 @@
 use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::{path::Path, u32};
+use std::path::Path;
 use tokio::fs::File;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
@@ -47,9 +47,9 @@ impl IndexFile {
             File::options().read(true).open(path).await?
         } else {
             File::options()
-                .read(true)
                 .write(true)
                 .create(true)
+                .append(true)
                 .open(path)
                 .await?
         };
@@ -62,7 +62,10 @@ impl IndexFile {
         }
 
         let mode = if read_only {
-            IndexFileMode::ReadOnly(unsafe { MmapOptions::new().map(&file)? })
+            IndexFileMode::ReadOnly(unsafe {
+                let mmap_options = MmapOptions::new();
+                mmap_options.map(&file)?
+            })
         } else {
             IndexFileMode::ReadWrite(unsafe { MmapOptions::new().map_mut(&file)? })
         };

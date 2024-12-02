@@ -19,7 +19,6 @@ use super::{
 use crate::log::log_segment::LogSegment;
 use crate::message::{MemoryRecords, RecordBatch, TopicPartition};
 use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
-use crate::request::errors::{KafkaError, KafkaResult};
 use crate::AppError::{self, CommonError};
 use crate::{global_config, AppResult};
 
@@ -37,7 +36,7 @@ pub struct JournalLog {
     queue_next_offset_info: DashMap<TopicPartition, i64>,
 
     /// 日志开始偏移量。
-    log_start_offset: AtomicCell<i64>,
+    _log_start_offset: AtomicCell<i64>,
 
     /// 下一个偏移量。
     next_offset: AtomicCell<i64>,
@@ -192,7 +191,7 @@ impl JournalLog {
                 &topic_partition.journal_partition_dir(),
                 NEXT_OFFSET_CHECKPOINT_FILE_NAME
             )),
-            log_start_offset: AtomicCell::new(log_start_offset),
+            _log_start_offset: AtomicCell::new(log_start_offset),
             next_offset: AtomicCell::new(log_recovery_point + 1),
             recover_point: AtomicCell::new(log_recovery_point),
             split_offset: AtomicCell::new(split_offset),
@@ -475,43 +474,6 @@ impl JournalLog {
         Ok(())
     }
 
-    /// 更新偏移量信息。
-    ///
-    /// # 参数
-    ///
-    /// * `queue_topic_partition` - 主题分区。
-    /// * `record_count` - 追加的记录数。
-    // async fn update_offsets(&self, queue_topic_partition: TopicPartition, record_count: u32) {
-    //     let mut queue_next_offset = self
-    //         .queue_next_offset_info
-    //         .entry(queue_topic_partition.clone())
-    //         .or_insert(0);
-    //     *queue_next_offset += record_count as i64;
-
-    //     // journal 的 批次是一个大批次(journal 批次头+MemoryRecords)，所以每次追加一个批次，偏移量加1
-    //     self.next_offset.fetch_add(1);
-    //     trace!("更新journal log偏移量: {}", self.next_offset.load());
-    //     trace!("更新queue next offset: {}", *queue_next_offset);
-    // }
-
-    /// 确定下一个段的基准偏移量。
-    ///
-    /// # 参数
-    ///
-    /// * `current_base_offset` - 当前段的基准偏移量。
-    ///
-    /// # 返回
-    ///
-    /// 返回下一个段的基准偏移量。如果没有下一个段，则返回日志的下一个偏移量。
-    async fn next_segment_base_offset(&self, current_base_offset: i64) -> i64 {
-        let segments = self.segments.read().await;
-        segments
-            .range((current_base_offset + 1)..)
-            .next()
-            .map(|(&base_offset, _)| base_offset)
-            .unwrap_or_else(|| self.next_offset.load())
-    }
-
     /// 生成未找到活动段的错误。
     ///
     /// # 返回
@@ -567,11 +529,9 @@ impl JournalLog {
 
         let log = JournalLog {
             segments: RwLock::new(segments),
-            queue_next_offset_info: DashMap::from_iter(
-                queue_next_offset.into_iter().map(|(k, v)| (k, v as i64)),
-            ),
+            queue_next_offset_info: DashMap::from_iter(queue_next_offset),
             queue_next_offset_checkpoints,
-            log_start_offset: AtomicCell::new(log_start_offset),
+            _log_start_offset: AtomicCell::new(log_start_offset),
             next_offset: AtomicCell::new(next_offset),
             recover_point: AtomicCell::new(recover_point),
             split_offset: AtomicCell::new(split_offset),

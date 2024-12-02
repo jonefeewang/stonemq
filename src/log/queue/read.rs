@@ -9,19 +9,10 @@ use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
 use bytes::BytesMut;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::time::error::Elapsed;
-use tracing::{debug, error, trace};
+use tokio::io::AsyncReadExt;
+use tracing::{debug, trace};
 
 impl QueueLog {
-    async fn next_segment_base_offset(&self, current_base_offset: i64) -> Option<i64> {
-        let segments = self.segments.read().await;
-        segments
-            .range((current_base_offset + 1)..)
-            .next()
-            .map(|(&base_offset, _)| base_offset)
-    }
-
     /// 返回包含位置信息的 `AppResult<PositionInfo>`。
     pub async fn get_reference_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取

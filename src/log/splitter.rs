@@ -1,6 +1,6 @@
 use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
-use crate::log::{JournalLog, Log, LogType, QueueLog};
+use crate::log::{JournalLog, LogType, QueueLog};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};
 use bytes::{Buf, BytesMut};
@@ -290,13 +290,10 @@ impl SplitterTask {
                 .await?;
             Ok(())
         } else {
-            Err(AppError::IllegalStateError(
-                format!(
-                    "Queue log not found for topic partition: {}",
-                    topic_partition
-                )
-                .into(),
-            ))
+            Err(AppError::IllegalStateError(format!(
+                "Queue log not found for topic partition: {}",
+                topic_partition
+            )))
         };
     }
 

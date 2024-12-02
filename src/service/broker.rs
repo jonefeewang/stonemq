@@ -1,14 +1,13 @@
 use crate::message::GroupCoordinator;
 use crate::service::Server;
 use crate::AppError::IllegalStateError;
-use crate::DynamicConfig;
 use crate::{global_config, AppResult, LogManager, ReplicaManager};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::signal;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{broadcast, mpsc, RwLock, Semaphore};
+use tokio::sync::{broadcast, mpsc, Semaphore};
 use tracing::{error, info, trace};
 
 #[derive(Clone, Debug)]
@@ -29,25 +28,10 @@ impl Node {
     }
 }
 
-pub struct Broker {
-    dynamic_config: Arc<RwLock<DynamicConfig>>,
-}
+#[derive(Default)]
+pub struct Broker {}
 
 impl Broker {
-    pub fn new() -> Self {
-        Broker {
-            //创建动态配置，默认从静态配置加载，运行时可以动态修改
-            //动态配置在启动broker、启动server、客户端新建连接时更新
-            //为了减少快照生成时间，相关的动态配置对象尽可能小一些
-            // Create dynamic configuration, initially loading from static configuration,
-            // with runtime modifications allowed
-            // Dynamic configuration updates when the broker starts, the server starts,
-            // and new client connections are established
-            // To minimize snapshot generation time, keep related dynamic configuration objects
-            // as small as possible
-            dynamic_config: Arc::new(RwLock::new(DynamicConfig::new())),
-        }
-    }
     pub fn start(&mut self, rt: &Runtime) -> AppResult<()> {
         //setup tracing
 
@@ -68,11 +52,8 @@ impl Broker {
         replica_manager.startup(rt)?;
         let replica_manager = Arc::new(replica_manager);
 
-        let dynamic_config = self.dynamic_config.clone();
-
         rt.block_on(Self::run_tcp_server(
             replica_manager.clone(),
-            dynamic_config,
             notify_shutdown.clone(),
             shutdown_complete_tx,
         ))?;
@@ -94,7 +75,6 @@ impl Broker {
 
     async fn run_tcp_server(
         replica_manager: Arc<ReplicaManager>,
-        dynamic_config: Arc<RwLock<DynamicConfig>>,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
     ) -> AppResult<()> {
@@ -111,10 +91,7 @@ impl Broker {
             return Err(IllegalStateError(error_msg.to_string()));
         }
         info!("tcp server binding to {} for listening", &listen_address);
-        let max_connection = {
-            let lock = dynamic_config.read().await;
-            lock.max_connection()
-        };
+        let max_connection = global_config().network.max_connection;
 
         let group_config = global_config().group.clone();
         let node = Node::new_localhost();
@@ -133,7 +110,6 @@ impl Broker {
             notify_shutdown.clone(),
             shutdown_complete_tx,
             replica_manager.clone(),
-            dynamic_config.clone(),
             group_coordinator.clone(),
         );
         tokio::select! {

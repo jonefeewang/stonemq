@@ -19,7 +19,7 @@ pub struct KvStore {
 
 impl KvStore {
     // 打开数据库文件并加载数据，如果文件不存在则创建一个新的数据库
-    pub fn open(path: &str) -> AppResult<(KvStore)> {
+    pub fn open(path: &str) -> AppResult<KvStore> {
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -101,9 +101,9 @@ mod test {
     #[test]
     fn init() {
         let temp_dir = TempDir::new().unwrap();
-        let path = "/Users/wangjunfei/projects/stonemq/test_data/kv_store/kv.db";
+        let path = temp_dir.path().join("kv.db");
 
-        let mut kv_store = KvStore::open(path).unwrap();
+        let mut kv_store = KvStore::open(path.to_str().unwrap()).unwrap();
         kv_store
             .put(
                 "journal_topics_list".to_owned(),
@@ -120,6 +120,6 @@ mod test {
                     .to_owned(),
             )
             .unwrap();
-        kv_store.save(path).unwrap();
+        kv_store.save(path.to_str().unwrap()).unwrap();
     }
 }

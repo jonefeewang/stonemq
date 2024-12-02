@@ -3,7 +3,6 @@ use crate::log::index_file::IndexFile;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
-use crate::request::errors::KafkaResult;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::path::Path;
@@ -15,7 +14,7 @@ use super::LogType;
 
 #[derive(Debug)]
 pub struct LogSegment {
-    topic_partition: TopicPartition,
+    _topic_partition: TopicPartition,
     file_records: FileRecords,
     base_offset: i64,
     time_index: Option<IndexFile>,
@@ -43,7 +42,7 @@ impl LogSegment {
         time_index: Option<IndexFile>,
     ) -> Self {
         Self {
-            topic_partition,
+            _topic_partition: topic_partition,
             base_offset,
             file_records,
             offset_index,
@@ -113,7 +112,7 @@ impl LogSegment {
         let offset_index =
             IndexFile::new(index_file_name, index_file_max_size as usize, false).await?;
         let segment = LogSegment {
-            topic_partition: topic_partition.clone(),
+            _topic_partition: topic_partition.clone(),
             file_records,
             base_offset,
             time_index: None,
@@ -148,10 +147,8 @@ impl LogSegment {
             LogType::Journal => global_config().log.journal_index_interval_bytes,
             LogType::Queue => global_config().log.queue_index_interval_bytes,
         };
-        if true
-        // ||
-        // self.bytes_since_last_index_entry.load() >= index_interval
-        {
+
+        if index_interval <= self.bytes_since_last_index_entry.load() {
             //正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
                 .add_entry(relative_offset as u32, (self.file_records.size()) as u32)

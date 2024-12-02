@@ -1,7 +1,7 @@
 pub use broker::{Broker, Node};
 pub use config::{
     global_config, setup_local_tracing, setup_tracing, AppError, AppResult, BrokerConfig,
-    DynamicConfig, GroupConfig, GLOBAL_CONFIG,
+    GroupConfig, GLOBAL_CONFIG,
 };
 pub use server::{RequestTask, Server};
 pub use shutdown::Shutdown;

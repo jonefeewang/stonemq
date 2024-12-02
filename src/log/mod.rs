@@ -14,10 +14,7 @@ mod queue;
 mod splitter;
 
 use crate::message::{MemoryRecords, TopicPartition};
-use crate::AppError::IllegalStateError;
-use crate::{AppError, AppResult};
-use std::borrow::Cow;
-use std::fmt::Debug;
+use crate::AppResult;
 use tokio::sync::oneshot;
 
 pub use log_segment::NO_POSITION_INFO;
@@ -36,12 +33,6 @@ pub fn calculate_journal_log_overhead(topic_partition: &TopicPartition) -> u32 {
     8 + topic_partition.protocol_size() + 8 + 8 + 4
 }
 
-pub trait Log: Debug {
-    async fn append_records(
-        &self,
-        records: (TopicPartition, i64, MemoryRecords),
-    ) -> AppResult<LogAppendInfo>;
-}
 pub enum LogType {
     Journal,
     Queue,

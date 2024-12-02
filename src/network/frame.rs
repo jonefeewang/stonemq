@@ -13,8 +13,7 @@ use crate::request::metadata::MetaDataRequest;
 use crate::request::produce::ProduceRequest;
 use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
 use crate::AppError::Incomplete;
-use crate::DynamicConfig;
-use crate::{AppError, AppResult};
+use crate::{global_config, AppError, AppResult};
 
 impl TryFrom<(BytesMut, &RequestHeader)> for ApiRequest {
     type Error = AppError;
@@ -96,7 +95,7 @@ impl RequestFrame {
     /// 如果数据不够的话(需要继续从socket内读取)返回Err(Incomplete),数据格式错误、或数据包超过配置的大小
     /// 都会返回Err(InvalidData)。
     /// 如果数据足够的话，返回()
-    pub fn check(buffer: &mut BytesMut, dynamic_config: &DynamicConfig) -> AppResult<()> {
+    pub fn check(buffer: &mut BytesMut) -> AppResult<()> {
         if buffer.remaining() < 4 {
             return Err(Incomplete);
         }
@@ -109,7 +108,7 @@ impl RequestFrame {
             )
             .into());
         }
-        if body_size > dynamic_config.max_package_size() as i32 {
+        if body_size > global_config().network.max_package_size as i32 {
             return Err(io::Error::new(
                 ErrorKind::InvalidData,
                 format!("Frame of length {} is too large.", body_size),
@@ -126,12 +125,9 @@ impl RequestFrame {
     /// 注意：这通常是在check之后进行
     /// 返回：解析出的Frame
     ///
-    pub(crate) fn parse(
-        buffer: &mut BytesMut,
-        dynamic_config: &DynamicConfig,
-    ) -> AppResult<Option<RequestFrame>> {
+    pub(crate) fn parse(buffer: &mut BytesMut) -> AppResult<Option<RequestFrame>> {
         // perform a check to ensure we have enough data
-        match RequestFrame::check(buffer, dynamic_config) {
+        match RequestFrame::check(buffer) {
             Ok(_) => {
                 // let length_bytes = buffer.get(0..4).ok_or(Incomplete)?;
                 // let body_length = i32::from_be_bytes(length_bytes.try_into().or(Err(Incomplete))?);

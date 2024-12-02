@@ -58,7 +58,7 @@ enum DelayQueueOp<T: DelayedSyncOperation> {
 // 管理延迟操作的Purgatory
 #[derive(Debug)]
 pub struct DelayedSyncOperationPurgatory<T: DelayedSyncOperation + 'static> {
-    name: String,
+    _name: String,
     watchers: DashMap<String, Vec<Arc<DelayedOperationState<T>>>>,
     delay_queue_tx: Sender<DelayQueueOp<T>>,
 }
@@ -73,7 +73,7 @@ impl<T: DelayedSyncOperation> DelayedSyncOperationPurgatory<T> {
         let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000); // 适当的缓冲大小
 
         let purgatory = DelayedSyncOperationPurgatory {
-            name: name.to_string(),
+            _name: name.to_string(),
             watchers: DashMap::new(),
             delay_queue_tx: tx,
         };
@@ -97,7 +97,7 @@ impl<T: DelayedSyncOperation> DelayedSyncOperationPurgatory<T> {
 
             self.watchers
                 .entry(key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(Arc::clone(&op_state));
         }
 
@@ -214,7 +214,7 @@ mod tests {
     }
 
     struct TestOperation {
-        id: u64,
+        _id: u64,
         delay: u64,
         state: Arc<TestOperationState>,
     }
@@ -229,7 +229,7 @@ mod tests {
 
             (
                 Self {
-                    id,
+                    _id: id,
                     delay,
                     state: state.clone(),
                 },
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(state.complete_count.load(Ordering::Relaxed), 1);
 
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(state.expire_count.load(Ordering::Relaxed), 0);
 
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(state.complete_count.load(Ordering::Relaxed), 1);
         assert_eq!(state.expire_count.load(Ordering::Relaxed), 1);
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(state.complete_count.load(Ordering::Relaxed), 1);
 
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 
@@ -403,7 +403,7 @@ mod tests {
         // 验证 key1 已被清理
         assert!(!purgatory.watchers.contains_key("key1"));
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(purgatory.check_and_complete("shared_key").await, 10);
 
         // shutdown gracefully
-        notify_shutdown.send(());
+        notify_shutdown.send(()).unwrap();
         shutdown_complete_rx.recv().await.unwrap();
     }
 }

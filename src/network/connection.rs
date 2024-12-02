@@ -7,7 +7,6 @@ use tokio::net::tcp::OwnedReadHalf;
 
 use crate::network::RequestFrame;
 use crate::AppResult;
-use crate::DynamicConfig;
 
 /// Represents a connection to a client.
 ///
@@ -17,7 +16,6 @@ use crate::DynamicConfig;
 pub struct Connection {
     pub reader: BufReader<OwnedReadHalf>,
     pub buffer: BytesMut,
-    dynamic_config: DynamicConfig,
     pub client_ip: String,
 }
 
@@ -26,13 +24,12 @@ impl Connection {
     ///
     /// The `TcpStream` is wrapped in a `BufWriter` for efficient writing, and a `BytesMut` buffer
     /// is created with an initial capacity of 4KB for reading data from the stream.
-    pub fn new(reader: OwnedReadHalf, dynamic_config: DynamicConfig) -> Connection {
+    pub fn new(reader: OwnedReadHalf) -> Connection {
         let peer_addr = reader.peer_addr().unwrap();
         let client_ip = peer_addr.ip().to_string();
         Connection {
             reader: BufReader::new(reader),
             buffer: BytesMut::with_capacity(4 * 1024),
-            dynamic_config,
             client_ip,
         }
     }
@@ -48,7 +45,7 @@ impl Connection {
         loop {
             // If a data format error is encountered, or if the packet exceeds the size limit,
             // terminate the process and close the connection.
-            if let Some(frame) = RequestFrame::parse(&mut self.buffer, &self.dynamic_config)? {
+            if let Some(frame) = RequestFrame::parse(&mut self.buffer)? {
                 return Ok(Some(frame));
             }
             if 0 == self.reader.read_buf(&mut self.buffer).await? {
