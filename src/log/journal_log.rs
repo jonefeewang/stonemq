@@ -18,6 +18,7 @@ use super::{
 };
 use crate::log::log_segment::LogSegment;
 use crate::message::{MemoryRecords, RecordBatch, TopicPartition};
+use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
 use crate::request::errors::{KafkaError, KafkaResult};
 use crate::AppError::{self, CommonError};
 use crate::{global_config, AppResult};
@@ -263,7 +264,7 @@ impl JournalLog {
             max_timestamp,
             offset_of_max_timestamp,
             records_count,
-            log_append_time: -1,
+            log_append_time: DEFAULT_LOG_APPEND_TIME,
         })
     }
 

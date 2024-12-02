@@ -24,8 +24,6 @@ const PARTITION_KEY_NAME: &str = "partition";
 const ERROR_CODE_KEY_NAME: &str = "error_code";
 const THROTTLE_TIME_MS_KEY_NAME: &str = "throttle_time_ms";
 
-const INVALID_OFFSET: i64 = -1;
-
 // CORRUPT_MESSAGE (2)
 // UNKNOWN_TOPIC_OR_PARTITION (3)
 // NOT_LEADER_FOR_PARTITION (6)
@@ -44,7 +42,7 @@ const INVALID_OFFSET: i64 = -1;
 const BASE_OFFSET_KEY_NAME: &str = "base_offset";
 const LOG_APPEND_TIME_KEY_NAME: &str = "log_append_time";
 
-const DEFAULT_LOG_APPEND_TIME: i64 = -1;
+pub const DEFAULT_LOG_APPEND_TIME: i64 = -1;
 
 pub static PRODUCE_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     let partition_reps_schema = Schema::from_fields_desc_vec(vec![
@@ -142,10 +140,8 @@ impl ProduceResponse {
                     topic_response.sub_valueset_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
                 partition_response_valueset
                     .append_field_value(PARTITION_KEY_NAME, partition_response.partition.into());
-                partition_response_valueset.append_field_value(
-                    ERROR_CODE_KEY_NAME,
-                    partition_response.error_code.into(),
-                );
+                partition_response_valueset
+                    .append_field_value(ERROR_CODE_KEY_NAME, partition_response.error_code.into());
                 partition_response_valueset.append_field_value(
                     BASE_OFFSET_KEY_NAME,
                     partition_response.base_offset.into(),

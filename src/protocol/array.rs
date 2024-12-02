@@ -41,17 +41,18 @@ impl ArrayType {
             };
             return Ok(DataType::Array(ary));
         } else if ary_size < 0 {
-            return Err(AppError::MalformedProtocol(
-                format!("array size {} can not be negative", ary_size).into(),
-            ));
+            return Err(AppError::MalformedProtocol(format!(
+                "array size {} can not be negative",
+                ary_size
+            )));
         }
         let mut values: Vec<DataType> = Vec::with_capacity(ary_size as usize);
         for _ in 0..ary_size {
             let result = match &*self.p_type {
-                DataType::Schema(schema) => schema
-                    .clone()
-                    .read_from(buffer)
-                    .map(|value_set| DataType::ValueSet(value_set))?,
+                DataType::Schema(schema) => {
+                    let ret = schema.clone().read_from(buffer)?;
+                    DataType::ValueSet(ret)
+                }
                 DataType::Bool(_) => Bool::decode(buffer)?,
                 DataType::I8(_) => I8::decode(buffer)?,
                 DataType::I16(_) => I16::decode(buffer)?,

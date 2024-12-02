@@ -5,9 +5,8 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tracing::trace;
 
-use crate::log::{Log, LogAppendInfo, PositionInfo};
+use crate::log::{LogAppendInfo, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
-use crate::request::errors::KafkaResult;
 use crate::{global_config, AppError, AppResult};
 
 use super::replica::{JournalReplica, QueueReplica};
@@ -15,7 +14,7 @@ use super::LogFetchInfo;
 
 #[derive(Debug)]
 pub struct JournalPartition {
-    pub topic_partition: TopicPartition,
+    pub _topic_partition: TopicPartition,
     pub assigned_replicas: DashMap<i32, Arc<JournalReplica>>,
 }
 #[derive(Debug)]
@@ -27,7 +26,7 @@ pub struct QueuePartition {
 impl JournalPartition {
     pub fn new(topic_partition: TopicPartition) -> Self {
         Self {
-            topic_partition,
+            _topic_partition: topic_partition,
             assigned_replicas: DashMap::new(),
         }
     }

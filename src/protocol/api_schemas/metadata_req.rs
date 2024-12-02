@@ -57,14 +57,13 @@ impl MetaDataRequest {
             allow_auto_topic_creation,
         })
     }
-    fn encode_to_value_set(self, value_set: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, value_set: &mut ValueSet) {
         let ary_datatype = DataType::array_of(self.topics);
         value_set.append_field_value(TOPICS_KEY_NAME, ary_datatype);
         value_set.append_field_value(
             ALLOW_AUTO_TOPIC_CREATION_KEY_NAME,
             self.allow_auto_topic_creation.into(),
         );
-        Ok(())
     }
 }
 

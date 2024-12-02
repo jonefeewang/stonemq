@@ -4,6 +4,7 @@ use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;
 use crate::message::{MemoryRecords, TopicPartition};
+use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
 use crate::{global_config, AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
@@ -102,7 +103,7 @@ impl QueueLog {
             max_timestamp: -1,
             offset_of_max_timestamp: -1,
             records_count,
-            log_append_time: -1,
+            log_append_time: DEFAULT_LOG_APPEND_TIME,
         };
 
         self.append_to_active_segment(

@@ -269,12 +269,9 @@ impl<'a> From<&'a DataType> for &'a String {
 impl From<DataType> for Option<String> {
     fn from(value: DataType) -> Self {
         match value {
-            DataType::NPString(data) => match data.value {
-                None => None,
-                Some(value) => Some(value),
-            },
+            DataType::NPString(data) => data.value,
             field => {
-                let error_message = format!("Expected MPString but found {:?}", field);
+                let error_message = format!("Expected NPString but found {:?}", field);
                 panic!("{}", error_message);
             }
         }
@@ -431,8 +428,6 @@ impl From<MemoryRecords> for DataType {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::TryInto;
-
     use super::*;
 
     #[test]
@@ -444,8 +439,8 @@ mod tests {
 
         // Test conversion from DataType to i8
         let data_type = DataType::I8(I8 { value: 8i8 });
-        let value: Result<i8, _> = data_type.try_into();
-        assert_eq!(value.unwrap(), 8i8);
+        let value: i8 = data_type.into();
+        assert_eq!(value, 8i8);
 
         // Test conversion from String to DataType
         let string_value = "test".to_string();
@@ -461,8 +456,8 @@ mod tests {
         let data_type = DataType::PString(PString {
             value: "test".to_string(),
         });
-        let value: Result<String, _> = data_type.try_into();
-        assert_eq!(value.unwrap(), "test".to_string());
+        let value: String = data_type.into();
+        assert_eq!(value, "test".to_string());
 
         // Test conversion from Option<String> to DataType
         let string_value = Some("test".to_string());
@@ -478,8 +473,8 @@ mod tests {
         let data_type = DataType::NPString(NPString {
             value: Some("test".to_string()),
         });
-        let value: Result<Option<String>, _> = data_type.try_into();
-        assert_eq!(value.unwrap(), Some("test".to_string()));
+        let value: Option<String> = data_type.into();
+        assert_eq!(value, Some("test".to_string()));
 
         // Test conversion from Option<Bytes> to DataType
         let bytes_value = Some(BytesMut::from("test"));

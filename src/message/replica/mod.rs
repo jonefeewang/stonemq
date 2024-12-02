@@ -60,6 +60,6 @@ pub struct ReplicaManager {
     journal_metadata_cache: DashMap<String, BTreeSet<i32>>,
     queue_metadata_cache: DashMap<String, BTreeSet<i32>>,
     notify_shutdown: broadcast::Sender<()>,
-    shutdown_complete_tx: Sender<()>,
+    _shutdown_complete_tx: Sender<()>,
     delayed_fetch_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedFetch>>,
 }

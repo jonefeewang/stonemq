@@ -88,15 +88,11 @@ impl Schema {
         Ok(value_set)
     }
 
-    fn size(&self) -> usize {
-        todo!()
-    }
-
     //
     // Retrieve the schema of an array field
     pub fn sub_schema_of_ary_field(self: Arc<Schema>, name: &'static str) -> Arc<Schema> {
         let field = self.get_field(name);
-        let array_type: &ArrayType = (&field.p_type).try_into().unwrap();
+        let array_type: &ArrayType = (&field.p_type).into();
 
         if let DataType::Schema(schema) = array_type.p_type.as_ref() {
             schema.clone()

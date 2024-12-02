@@ -93,9 +93,8 @@ impl ProtocolCodec<HeartbeatResponse> for HeartbeatResponse {
 }
 
 impl HeartbeatResponse {
-    fn encode_to_value_set(self, response_valueset: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, response_valueset: &mut ValueSet) {
         response_valueset.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
         response_valueset.append_field_value(ERROR_CODE_KEY_NAME, self.error_code.into());
-        Ok(())
     }
 }

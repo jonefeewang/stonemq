@@ -242,7 +242,7 @@ impl FetchRequest {
 }
 
 impl FetchResponse {
-    fn encode_to_value_set(self, response_value_set: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, response_value_set: &mut ValueSet) {
         // 按topic分组responses
         let mut topic_responses: HashMap<String, Vec<(TopicPartition, PartitionDataRep)>> =
             HashMap::new();
@@ -320,8 +320,6 @@ impl FetchResponse {
             "responses",
             DataType::array_of_value_set(topic_responses_array, topic_responses_schema),
         );
-
-        Ok(())
     }
 
     fn decode_from_value_set(_value_set: ValueSet) -> AppResult<FetchResponse> {

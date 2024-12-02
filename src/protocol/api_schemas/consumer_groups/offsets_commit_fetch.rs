@@ -112,7 +112,7 @@ impl ProtocolCodec<FetchOffsetsResponse> for FetchOffsetsResponse {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::OffsetFetch);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set).unwrap();
+        self.encode_to_value_set(&mut value_set);
         let body_size = value_set.size();
         let response_total_size = 4 + body_size;
         let mut writer = BytesMut::with_capacity(response_total_size);
@@ -140,7 +140,7 @@ impl FetchOffsetsResponse {
     ///
     /// # Returns
     /// * `AppResult<()>` - Ok if encoding succeeds, Err otherwise
-    fn encode_to_value_set(self, response_value_set: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, response_value_set: &mut ValueSet) {
         // Encode throttle time
         response_value_set.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
 
@@ -201,7 +201,6 @@ impl FetchOffsetsResponse {
         );
         let error_code = ErrorCode::from(&self.error_code);
         response_value_set.append_field_value(ERROR_CODE_KEY_NAME, (error_code as i16).into());
-        Ok(())
     }
 }
 
@@ -209,7 +208,7 @@ impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set).unwrap();
+        self.encode_to_value_set(&mut value_set);
         let body_size = value_set.size();
         let request_total_size = 4 + body_size;
         let mut writer = BytesMut::with_capacity(request_total_size);
@@ -305,7 +304,7 @@ impl OffsetCommitRequest {
     }
 
     // 客户端会调用这个方法，服务端目前用不到，先不实现
-    fn encode_to_value_set(self, _: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, _: &mut ValueSet) {
         todo!()
     }
 }
@@ -314,7 +313,7 @@ impl ProtocolCodec<OffsetCommitResponse> for OffsetCommitResponse {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
         let schema = Self::fetch_response_schema_for_api(api_version, &ApiKey::OffsetCommit);
         let mut value_set = ValueSet::new(schema);
-        self.encode_to_value_set(&mut value_set).unwrap();
+        self.encode_to_value_set(&mut value_set);
         let body_size = value_set.size();
         let response_total_size = 4 + body_size;
         let mut writer = BytesMut::with_capacity(response_total_size);
@@ -343,7 +342,7 @@ impl OffsetCommitResponse {
     ///   - partition_responses: array
     ///     - partition: partition id
     ///     - error_code: error code
-    fn encode_to_value_set(self, value_set: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, value_set: &mut ValueSet) {
         // Encode throttle time
         value_set.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
 
@@ -395,11 +394,5 @@ impl OffsetCommitResponse {
             RESPONSES_KEY_NAME,
             DataType::array_of_value_set(topic_responses, topic_schema),
         );
-
-        Ok(())
-    }
-
-    fn decode_from_value_set(_value_set: ValueSet) -> AppResult<OffsetCommitResponse> {
-        todo!()
     }
 }

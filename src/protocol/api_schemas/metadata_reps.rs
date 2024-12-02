@@ -174,7 +174,7 @@ pub static METADATA_RESPONSE_V3: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 impl MetadataResponse {
-    pub(crate) fn encode_to_value_set(self, metadata_rsp_valueset: &mut ValueSet) -> AppResult<()> {
+    pub(crate) fn encode_to_value_set(self, metadata_rsp_valueset: &mut ValueSet) {
         // throttle_time_ms
         if metadata_rsp_valueset
             .schema
@@ -288,8 +288,6 @@ impl MetadataResponse {
             TOPIC_METADATA_KEY_NAME,
             DataType::array_of_value_set(topic_metadata_ary, topic_metadata_schema),
         );
-
-        Ok(())
     }
 }
 

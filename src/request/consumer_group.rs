@@ -6,10 +6,8 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{
-    message::TopicPartition,
-    protocol::api_schemas::consumer_protocol::{ProtocolMetadata, Subscription},
-    service::Node,
-    AppResult,
+    message::TopicPartition, protocol::api_schemas::consumer_protocol::ProtocolMetadata,
+    service::Node, AppResult,
 };
 
 use super::errors::{ErrorCode, KafkaError, KafkaResult};

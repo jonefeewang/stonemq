@@ -8,7 +8,6 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, oneshot, RwLock, Semaphore};
-use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 use tracing::error;
 
@@ -22,12 +21,6 @@ use super::Shutdown;
 
 // 用于生成唯一的连接ID
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
-
-// 全局请求处理器
-pub struct RequestHandler {
-    request_tx: async_channel::Sender<RequestTask>,
-    workers: Vec<JoinHandle<()>>,
-}
 
 #[derive(Debug)]
 pub struct RequestTask {
@@ -181,7 +174,7 @@ async fn process_request(
 // 每个连接的处理器
 struct ConnectionHandler {
     notify_shutdown: broadcast::Sender<()>,
-    shutdown_complete_tx: mpsc::Sender<()>,
+    _shutdown_complete_tx: mpsc::Sender<()>,
     connection_id: u64,
     connection: Connection,
     writer: BufWriter<OwnedWriteHalf>,
@@ -313,7 +306,7 @@ impl Server {
             let shutdown_complete_tx = self.shutdown_complete_tx.clone();
 
             let mut handler = ConnectionHandler {
-                shutdown_complete_tx,
+                _shutdown_complete_tx: shutdown_complete_tx,
                 notify_shutdown: notify_shutdown_clone,
                 connection_id,
                 connection: Connection::new(reader, self.dynamic_config.read().await.clone()),

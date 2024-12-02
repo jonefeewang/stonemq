@@ -89,12 +89,6 @@ pub struct RequestFrame {
     pub request_header: RequestHeader,
     pub request_body: BytesMut,
 }
-/// 返回给客户端的Response Frame
-#[derive(Debug)]
-pub struct ResponseFrame {
-    correlation_id: i32,
-    body: BytesMut,
-}
 
 impl RequestFrame {
     /// 检查一下当前buffer内是否够一个完整的frame

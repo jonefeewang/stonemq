@@ -14,7 +14,6 @@ use crate::AppResult;
 
 pub mod consumer_groups;
 pub mod consumer_protocol;
-mod create_topic;
 pub mod metadata_reps;
 pub mod metadata_req;
 pub mod produce_reps;
@@ -216,7 +215,7 @@ impl ProtocolCodec<ApiVersionRequest> for ApiVersionRequest {
     }
 
     fn decode(_buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ApiVersionRequest> {
-        Ok(ApiVersionRequest::new(api_version.clone()))
+        Ok(ApiVersionRequest::new(*api_version))
     }
 }
 impl ProtocolCodec<ApiVersionResponse> for ApiVersionResponse {
@@ -244,10 +243,7 @@ impl ProtocolCodec<ApiVersionResponse> for ApiVersionResponse {
 }
 
 impl ApiVersionResponse {
-    pub(crate) fn encode_to_value_set(
-        self,
-        apiversion_reps_value_set: &mut ValueSet,
-    ) -> AppResult<()> {
+    pub(crate) fn encode_to_value_set(self, apiversion_reps_value_set: &mut ValueSet) {
         apiversion_reps_value_set.append_field_value(ERROR_CODE_KEY_NAME, self.error_code.into());
         let mut versions_ary = Vec::with_capacity(self.api_versions.len());
         for (api_code, supported_versions) in self.api_versions {
@@ -275,7 +271,5 @@ impl ApiVersionResponse {
             apiversion_reps_value_set
                 .append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
         }
-
-        Ok(())
     }
 }

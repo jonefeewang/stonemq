@@ -58,7 +58,7 @@ impl ProtocolCodec<FindCoordinatorResponse> for FindCoordinatorResponse {
 }
 
 impl FindCoordinatorResponse {
-    fn encode_to_value_set(self, response_valueset: &mut ValueSet) -> AppResult<()> {
+    fn encode_to_value_set(self, response_valueset: &mut ValueSet) {
         // outer value set
         response_valueset.append_field_value(THROTTLE_TIME_KEY_NAME, self.throttle_time_ms.into());
         response_valueset.append_field_value(ERROR_CODE_KEY_NAME, self.error.into());
@@ -76,6 +76,5 @@ impl FindCoordinatorResponse {
             COORDINATOR_KEY_NAME,
             DataType::ValueSet(coordinator_valueset),
         );
-        Ok(())
     }
 }

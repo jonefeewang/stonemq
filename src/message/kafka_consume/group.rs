@@ -15,7 +15,7 @@ use tracing::{error, info, trace};
 
 use crate::{
     global_config,
-    message::{offset::OffsetAndMetadata, TopicPartition},
+    message::TopicPartition,
     protocol::api_schemas::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{PartitionOffsetCommitData, PartitionOffsetData, SyncGroupResponse},
@@ -32,7 +32,7 @@ pub struct MemberMetadata {
     id: String,
     client_id: String,
     client_host: String,
-    group_id: String,
+    _group_id: String,
 
     // 超时配置
     rebalance_timeout: i32,
@@ -75,7 +75,7 @@ impl MemberMetadata {
             id: id.into(),
             client_id: client_id.into(),
             client_host: client_host.into(),
-            group_id: group_id.into(),
+            _group_id: group_id.into(),
             rebalance_timeout,
             session_timeout,
             protocol_type: protocol_type.into(),

@@ -372,9 +372,7 @@ mod tests {
         assert_eq!(timeout_field_value, 1000.into());
 
         // Check topic_data field
-        let topic_data_field = produce_req_value_set
-            .get_field_value(TOPIC_DATA_KEY_NAME)
-            .into();
+        let topic_data_field = produce_req_value_set.get_field_value(TOPIC_DATA_KEY_NAME);
         if let DataType::Array(array) = topic_data_field {
             assert!(array.values.is_some(), "Topic data should not be empty");
             for (index, item) in array.values.unwrap().into_iter().enumerate() {
@@ -384,17 +382,15 @@ mod tests {
                         topic_name_field_value,
                         format!("test_topic{}", index + 1).into()
                     );
-                    let partition_data_field_value = topic_value_set.get_field_value(PARTITION_DATA_KEY_NAME);
+                    let partition_data_field_value =
+                        topic_value_set.get_field_value(PARTITION_DATA_KEY_NAME);
                     if let DataType::Array(array) = partition_data_field_value {
                         assert!(array.values.is_some(), "Partition data should not be empty");
                         for (index, item) in array.values.unwrap().into_iter().enumerate() {
                             if let DataType::ValueSet(mut partition_value_set) = item {
                                 let partition_num_field_value =
                                     partition_value_set.get_field_value(PARTITION_KEY_NAME);
-                                assert_eq!(
-                                    partition_num_field_value,
-                                    (index as i32 + 1).into()
-                                );
+                                assert_eq!(partition_num_field_value, (index as i32 + 1).into());
                             }
                         }
                     }

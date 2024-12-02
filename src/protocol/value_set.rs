@@ -56,14 +56,13 @@ impl ValueSet {
 
     pub fn sub_valueset_of_ary_field(&self, field_name: &'static str) -> ValueSet {
         let array_field = self.schema.get_field(field_name);
-        let array_type: &ArrayType = (&array_field.p_type).try_into().unwrap();
+        let array_type: &ArrayType = (&array_field.p_type).into();
 
         if let DataType::Schema(ref schema) = &*array_type.p_type {
-            let value_set = ValueSet {
+            ValueSet {
                 schema: schema.clone(),
                 values: BTreeMap::new(),
-            };
-            value_set
+            }
         } else {
             panic!("Array type must be schema type")
         }

@@ -2,11 +2,12 @@ use crate::log::LogAppendInfo;
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{TopicData, TopicPartition};
+use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::errors::{ErrorCode, KafkaError};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
-use crate::AppError::{IllegalStateError, InvalidValue};
+use crate::AppError::InvalidValue;
 use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
 use dashmap::DashMap;
 use std::borrow::Cow;
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-use tracing::{error, info, trace};
+use tracing::{error, info};
 
 use super::{JournalReplica, QueueReplica, ReplicaManager};
 
@@ -23,11 +24,11 @@ impl ReplicaManager {
     pub fn new(
         log_manager: Arc<LogManager>,
         notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
+        _shutdown_complete_tx: Sender<()>,
         rt: &Runtime,
     ) -> Self {
         let notify_shutdown_clone = notify_shutdown.clone();
-        let shutdown_complete_tx_clone = shutdown_complete_tx.clone();
+        let shutdown_complete_tx_clone = _shutdown_complete_tx.clone();
         let delayed_fetch_purgatory = rt.block_on(async move {
             DelayedAsyncOperationPurgatory::<DelayedFetch>::new(
                 "delayed_fetch_purgatory",
@@ -44,7 +45,7 @@ impl ReplicaManager {
             journal_metadata_cache: DashMap::new(),
             queue_metadata_cache: DashMap::new(),
             notify_shutdown,
-            shutdown_complete_tx,
+            _shutdown_complete_tx,
             delayed_fetch_purgatory,
         }
     }
@@ -57,7 +58,7 @@ impl ReplicaManager {
                 partition: topic_partition.partition,
                 error_code,
                 base_offset: 0,
-                log_append_time: -1,
+                log_append_time: DEFAULT_LOG_APPEND_TIME,
             };
         let mut tp_response = BTreeMap::new();
         for topic_data in topics_data {
@@ -107,7 +108,7 @@ impl ReplicaManager {
                             partition: partition.partition,
                             error_code: 0,
                             base_offset: first_offset,
-                            log_append_time: -1,
+                            log_append_time: DEFAULT_LOG_APPEND_TIME,
                         },
                     );
                 } else if let Err(e) = append_result {

@@ -1,6 +1,5 @@
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
-use std::borrow::Cow;
 use std::io::{Cursor, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::error;
@@ -8,7 +7,6 @@ use tracing::error;
 use crate::message::batch_header::BatchHeader;
 use crate::message::constants::*;
 use crate::message::record::{Record, RecordHeader};
-use crate::request::errors::{KafkaError, KafkaResult};
 use crate::{global_config, AppError, AppResult};
 
 use super::MemoryRecords;
@@ -284,8 +282,8 @@ impl RecordBatch {
 
 pub struct RecordBatchBuilder {
     buffer: BytesMut,
-    magic: i8,
-    attributes: i16,
+    _magic: i8,
+    _attributes: i16,
     last_offset: i64,
     base_timestamp: i64,
     base_offset: i64,
@@ -297,8 +295,8 @@ impl Default for RecordBatchBuilder {
     fn default() -> Self {
         let mut builder = RecordBatchBuilder {
             buffer: BytesMut::with_capacity(RECORD_BATCH_OVERHEAD as usize),
-            magic: MAGIC,
-            attributes: 0,
+            _magic: MAGIC,
+            _attributes: 0,
             last_offset: 0,
             base_timestamp: 0,
             base_offset: 0,
