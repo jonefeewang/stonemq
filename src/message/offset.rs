@@ -2,7 +2,7 @@ use std::io::Read;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::request::errors::{KafkaError, KafkaResult};
+use crate::request::{KafkaError, KafkaResult};
 
 pub struct OffsetMetadata {
     pub offset: i64,

@@ -4,14 +4,11 @@ use std::io::ErrorKind;
 use bytes::{Buf, BytesMut};
 
 use crate::protocol::{ApiKey, ProtocolCodec};
-use crate::request::consumer_group::{
-    FetchOffsetsRequest, FindCoordinatorRequest, HeartbeatRequest, JoinGroupRequest,
-    LeaveGroupRequest, OffsetCommitRequest, SyncGroupRequest,
+use crate::request::{
+    ApiRequest, ApiVersionRequest, FetchOffsetsRequest, FetchRequest, FindCoordinatorRequest,
+    HeartbeatRequest, JoinGroupRequest, LeaveGroupRequest, MetaDataRequest, OffsetCommitRequest,
+    ProduceRequest, RequestHeader, SyncGroupRequest,
 };
-use crate::request::fetch::FetchRequest;
-use crate::request::metadata::MetaDataRequest;
-use crate::request::produce::ProduceRequest;
-use crate::request::{ApiRequest, ApiVersionRequest, RequestHeader};
 use crate::AppError::Incomplete;
 use crate::{global_config, AppError, AppResult};
 

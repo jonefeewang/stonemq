@@ -9,7 +9,7 @@ use crate::protocol::base::ProtocolType;
 use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion};
 use crate::protocol::ProtocolCodec;
-use crate::request::produce::{PartitionResponse, ProduceResponse};
+use crate::request::{PartitionResponse, ProduceResponse};
 use crate::AppResult;
 
 // 定义全局常量

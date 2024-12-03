@@ -9,7 +9,7 @@ use tracing::{debug, error};
 
 use crate::log::PositionInfo;
 use crate::utils::DelayedAsyncOperation;
-use crate::{message::TopicPartition, request::fetch::FetchRequest};
+use crate::{message::TopicPartition, request::FetchRequest};
 
 use super::replica::ReplicaManager;
 use super::LogFetchInfo;

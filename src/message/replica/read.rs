@@ -5,7 +5,7 @@ use super::ReplicaManager;
 use crate::log::PositionInfo;
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::{LogFetchInfo, TopicPartition};
-use crate::request::fetch::{FetchRequest, FetchResponse};
+use crate::request::{FetchRequest, FetchResponse};
 use crate::AppResult;
 
 impl ReplicaManager {

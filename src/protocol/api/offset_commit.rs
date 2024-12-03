@@ -5,13 +5,11 @@ use crate::{
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::{
-        consumer_group::{OffsetCommitRequest, OffsetCommitResponse, PartitionOffsetCommitData},
-        errors::ErrorCode,
-    },
-    AppError::ProtocolError,
+    request::{ErrorCode, OffsetCommitRequest, OffsetCommitResponse, PartitionOffsetCommitData},
+    AppError,
 };
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{message::TopicPartition, AppResult};
 use bytes::{BufMut, BytesMut};
@@ -81,7 +79,7 @@ impl OffsetCommitRequest {
         let topic_array: ArrayType = value_set.get_field_value(TOPICS_KEY_NAME).into();
         let topic_values = topic_array
             .values
-            .ok_or_else(|| ProtocolError(Cow::Borrowed("topics array is empty")))?;
+            .ok_or_else(|| AppError::MalformedProtocol("topics array is empty".to_string()))?;
 
         // Build offset data map
         let offset_data = topic_values.into_iter().try_fold(
@@ -95,9 +93,9 @@ impl OffsetCommitRequest {
                 // Parse partitions array for this topic
                 let partition_array: ArrayType =
                     topic_value_set.get_field_value(PARTITIONS_KEY_NAME).into();
-                let partition_values = partition_array
-                    .values
-                    .ok_or_else(|| ProtocolError(Cow::Borrowed("partitions array is empty")))?;
+                let partition_values = partition_array.values.ok_or_else(|| {
+                    AppError::MalformedProtocol("partitions array is empty".to_string())
+                })?;
 
                 // Process each partition
                 for partition_value in partition_values {

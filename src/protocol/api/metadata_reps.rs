@@ -10,7 +10,7 @@ use crate::protocol::base::ProtocolType;
 use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion};
 use crate::protocol::ProtocolCodec;
-use crate::request::metadata::MetadataResponse;
+use crate::request::MetadataResponse;
 use crate::AppResult;
 
 const BROKERS_KEY_NAME: &str = "brokers";

@@ -7,7 +7,7 @@ use crate::protocol::base::{Bool, PString, ProtocolType};
 use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::ArrayType;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
-use crate::request::metadata::MetaDataRequest;
+use crate::request::MetaDataRequest;
 use crate::AppResult;
 
 impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {

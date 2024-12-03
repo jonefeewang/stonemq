@@ -19,11 +19,9 @@ use crate::{
         TopicPartition,
     },
     request::{
-        consumer_group::{
-            FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest,
-            PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata, SyncGroupResponse,
-        },
-        errors::{ErrorCode, KafkaError, KafkaResult},
+        ErrorCode, FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, KafkaError,
+        KafkaResult, PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata,
+        SyncGroupResponse,
     },
     service::{GroupConfig, Node},
     utils::DelayedAsyncOperationPurgatory,

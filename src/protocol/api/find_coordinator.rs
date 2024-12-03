@@ -25,7 +25,7 @@ const COORDINATOR_KEY_NAME: &str = "coordinator";
 const ERROR_CODE_KEY_NAME: &str = "error_code";
 const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
 
-use crate::request::consumer_group::{FindCoordinatorRequest, FindCoordinatorResponse};
+use crate::request::{FindCoordinatorRequest, FindCoordinatorResponse};
 
 impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
     fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {

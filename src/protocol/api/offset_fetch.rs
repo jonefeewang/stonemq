@@ -5,13 +5,11 @@ use crate::{
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::{
-        consumer_group::{FetchOffsetsRequest, FetchOffsetsResponse, PartitionOffsetData},
-        errors::ErrorCode,
-    },
-    AppError::ProtocolError,
+    request::{ErrorCode, FetchOffsetsRequest, FetchOffsetsResponse, PartitionOffsetData},
+    AppError,
 };
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{message::TopicPartition, AppResult};
 use bytes::{BufMut, BytesMut};
@@ -91,7 +89,7 @@ impl FetchOffsetsRequest {
 
             let partitions = partitions_array
                 .values
-                .ok_or(ProtocolError(Cow::Borrowed("partitions is empty")))?;
+                .ok_or_else(|| AppError::MalformedProtocol("partitions is empty".to_string()))?;
 
             // Process each partition
             for partition_value in partitions {

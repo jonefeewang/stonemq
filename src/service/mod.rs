@@ -1,4 +1,5 @@
-pub use broker::{Broker, Node};
+pub use broker::Broker;
+pub use broker::Node;
 pub use config::{
     global_config, setup_local_tracing, setup_tracing, AppError, AppResult, BrokerConfig,
     GroupConfig, GLOBAL_CONFIG,

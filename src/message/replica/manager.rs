@@ -2,8 +2,7 @@ use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{TopicData, TopicPartition};
-use crate::request::errors::{ErrorCode, KafkaError};
-use crate::request::produce::PartitionResponse;
+use crate::request::{ErrorCode, KafkaError, PartitionResponse};
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::InvalidValue;
 use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
@@ -309,7 +308,7 @@ impl ReplicaManager {
     /// 返回(主题名称, 主题分区列表, 协议错误)
     pub fn get_queue_metadata(
         &self,
-        topics: Option<Vec<Cow<str>>>,
+        topics: Option<Vec<&str>>,
     ) -> Vec<(String, Option<Vec<i32>>, Option<AppError>)> {
         match topics {
             None => {
@@ -330,8 +329,7 @@ impl ReplicaManager {
                 topics
                     .iter()
                     .map(|topic| {
-                        let topic = topic.as_ref();
-                        let partitions = self.queue_metadata_cache.get(topic);
+                        let partitions = self.queue_metadata_cache.get(*topic);
                         match partitions {
                             None => (
                                 topic.to_string(),

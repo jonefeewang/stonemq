@@ -7,7 +7,7 @@ use std::string::FromUtf8Error;
 use std::{borrow::Cow, time::Duration};
 
 use crate::log::FileOp;
-use crate::request::errors::KafkaError;
+use crate::request::KafkaError;
 use crate::AppError::InvalidValue;
 
 use once_cell::sync::OnceCell;

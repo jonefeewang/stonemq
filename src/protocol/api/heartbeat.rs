@@ -8,7 +8,7 @@ use crate::{
         schema_base::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::consumer_group::{HeartbeatRequest, HeartbeatResponse},
+    request::{HeartbeatRequest, HeartbeatResponse},
     AppResult,
 };
 

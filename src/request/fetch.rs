@@ -78,42 +78,6 @@ impl std::fmt::Display for PartitionDataReq {
     }
 }
 
-pub struct TopicAndPartitionData<T> {
-    pub topic: String,
-    pub partitions: BTreeMap<i32, T>,
-}
-
-impl<T> TopicAndPartitionData<T> {
-    pub fn new(topic: String) -> Self {
-        TopicAndPartitionData {
-            topic,
-            partitions: BTreeMap::new(),
-        }
-    }
-
-    pub fn batch_by_topic(data: &BTreeMap<TopicPartition, T>) -> Vec<TopicAndPartitionData<T>>
-    where
-        T: Clone,
-    {
-        let mut topics: Vec<TopicAndPartitionData<T>> = Vec::new();
-        for (topic_partition, partition_data) in data {
-            let topic = topic_partition.topic.clone();
-            let partition = topic_partition.partition;
-
-            if topics.is_empty() || topics.last().unwrap().topic != topic {
-                topics.push(TopicAndPartitionData::new(topic.clone()));
-            }
-
-            if let Some(last_topic) = topics.last_mut() {
-                last_topic
-                    .partitions
-                    .insert(partition, partition_data.clone());
-            }
-        }
-        topics
-    }
-}
-
 #[derive(Debug)]
 pub struct FetchResponse {
     /**

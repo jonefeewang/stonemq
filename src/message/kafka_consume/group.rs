@@ -17,10 +17,8 @@ use crate::{
     global_config,
     message::TopicPartition,
     request::{
-        consumer_group::{
-            PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata, SyncGroupResponse,
-        },
-        errors::{KafkaError, KafkaResult},
+        KafkaError, KafkaResult, PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata,
+        SyncGroupResponse,
     },
 };
 

@@ -11,7 +11,7 @@ use crate::{
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::consumer_group::{SyncGroupRequest, SyncGroupResponse},
+    request::{SyncGroupRequest, SyncGroupResponse},
     AppError, AppResult,
 };
 

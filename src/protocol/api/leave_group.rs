@@ -6,10 +6,7 @@ use crate::{
         schema_base::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::{
-        consumer_group::{LeaveGroupRequest, LeaveGroupResponse},
-        errors::ErrorCode,
-    },
+    request::{ErrorCode, LeaveGroupRequest, LeaveGroupResponse},
     AppResult,
 };
 use bytes::{BufMut, BytesMut};

@@ -13,9 +13,7 @@ use crate::{
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
-    request::fetch::{
-        FetchRequest, FetchResponse, IsolationLevel, PartitionDataRep, PartitionDataReq,
-    },
+    request::{FetchRequest, FetchResponse, IsolationLevel, PartitionDataRep, PartitionDataReq},
     AppError, AppResult,
 };
 

@@ -12,7 +12,7 @@ use crate::protocol::base::{NPString, PString, I16, I32};
 use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion, ArrayType};
 use crate::protocol::{Acks, ProtocolCodec};
-use crate::request::produce::ProduceRequest;
+use crate::request::ProduceRequest;
 use crate::AppError::ProtocolError;
 use crate::AppResult;
 

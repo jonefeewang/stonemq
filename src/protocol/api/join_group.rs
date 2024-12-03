@@ -2,7 +2,7 @@ use crate::protocol::base::{PBytes, PString, ProtocolType, I16, I32};
 use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::ArrayType;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
-use crate::request::consumer_group::{JoinGroupRequest, JoinGroupResponse, ProtocolMetadata};
+use crate::request::{JoinGroupRequest, JoinGroupResponse, ProtocolMetadata};
 use crate::{AppError, AppResult};
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
