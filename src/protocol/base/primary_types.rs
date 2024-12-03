@@ -3,8 +3,8 @@ use std::fmt::Debug;
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 
-use crate::{protocol::types::DataType, AppError, AppResult};
-
+use crate::protocol::base::ProtocolType;
+use crate::{AppError, AppResult};
 ///
 /// Define StoneMQ primary types.
 /// Primary types include Bool, I8, I16, I32, U32, I64, PString, NPString, PBytes
@@ -31,14 +31,14 @@ macro_rules! define_type {
 macro_rules! implement_primary_type {
     ($type:ident, $return_type:ident, $read_method:ident, $write_method:ident, $size:expr) => {
         impl PrimaryType for $type {
-            fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+            fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
                 if buffer.remaining() < $size {
                     return Err(AppError::MalformedProtocol(
                         format!("can not read a {}", stringify!($type)).into(),
                     ));
                 }
                 let value = buffer.$read_method();
-                Ok(DataType::$return_type($type { value }))
+                Ok(ProtocolType::$return_type($type { value }))
             }
             fn encode(self, writer: &mut BytesMut) {
                 writer.$write_method(self.value);
@@ -54,12 +54,12 @@ macro_rules! implement_primary_type {
 macro_rules! implement_var_type {
     ($t:ident, $read_method:path, $write_method:ident, $encode_var_vec:path, $required_space:path, $data_type:ident) => {
         impl PrimaryType for $t {
-            fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+            fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
                 let var = $read_method(buffer.as_ref());
                 return if let Some((value, read_size)) = var {
                     // Skip the record length field that was just parsed.
                     buffer.advance(read_size);
-                    Ok(DataType::$data_type($t { value }))
+                    Ok(ProtocolType::$data_type($t { value }))
                 } else {
                     Err(AppError::MalformedProtocol(
                         format!("can not read a {}", stringify!($t)).into(),
@@ -92,7 +92,7 @@ macro_rules! implement_var_type {
 /// Consequently, the basic(primary type) and composite type(array/schema/schema_data)
 /// have minimal impact,serving merely as a collection of functionalities.
 pub trait PrimaryType {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType>;
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType>;
     fn encode(self, writer: &mut BytesMut);
 
     fn wire_format_size(&self) -> usize;
@@ -135,7 +135,7 @@ implement_var_type!(
 );
 
 impl PrimaryType for PBytes {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         if buffer.remaining() < 4 {
             return Err(AppError::MalformedProtocol(
                 "can not read a PBytes, insufficient data".into(),
@@ -147,7 +147,7 @@ impl PrimaryType for PBytes {
                 "can not read a PBytes, length is negative".into(),
             ))
         } else {
-            Ok(DataType::PBytes(PBytes {
+            Ok(ProtocolType::PBytes(PBytes {
                 value: buffer.split_to(length as usize),
             }))
         }
@@ -164,7 +164,7 @@ impl PrimaryType for PBytes {
 }
 
 impl PrimaryType for NPBytes {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         if buffer.remaining() < 4 {
             return Err(AppError::MalformedProtocol(
                 "can not read a NPBytes, insufficient data".into(),
@@ -172,9 +172,9 @@ impl PrimaryType for NPBytes {
         }
         let length = buffer.get_i32();
         if length < 0 {
-            Ok(DataType::NPBytes(NPBytes { value: None }))
+            Ok(ProtocolType::NPBytes(NPBytes { value: None }))
         } else {
-            Ok(DataType::NPBytes(NPBytes {
+            Ok(ProtocolType::NPBytes(NPBytes {
                 value: Some(buffer.split_to(length as usize)),
             }))
         }
@@ -198,7 +198,7 @@ impl PrimaryType for NPBytes {
 }
 
 impl PrimaryType for PString {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         if buffer.remaining() < 2 {
             return Err(AppError::MalformedProtocol(
                 "can not read a PString, insufficient data".into(),
@@ -211,7 +211,7 @@ impl PrimaryType for PString {
             ))
         } else {
             // trace!("Reading PString with length: {}", length);
-            Ok(DataType::PString(PString {
+            Ok(ProtocolType::PString(PString {
                 value: String::from_utf8(buffer.split_to(length as usize).to_vec())
                     .map_err(|e| AppError::MalformedProtocol(e.to_string()))?,
             }))
@@ -227,7 +227,7 @@ impl PrimaryType for PString {
     }
 }
 impl PrimaryType for NPString {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         if buffer.remaining() < 2 {
             return Err(AppError::MalformedProtocol(
                 "can not read a NPString, insufficient data".into(),
@@ -235,10 +235,10 @@ impl PrimaryType for NPString {
         }
         let length = buffer.get_i16();
         if length < 0 {
-            Ok(DataType::NPString(NPString { value: None }))
+            Ok(ProtocolType::NPString(NPString { value: None }))
         } else {
             // trace!("Reading NPString with length: {}", length);
-            Ok(DataType::NPString(NPString {
+            Ok(ProtocolType::NPString(NPString {
                 value: Some(String::from_utf8(
                     buffer.split_to(length as usize).to_vec(),
                 )?),
@@ -264,7 +264,7 @@ impl PrimaryType for NPString {
 }
 
 impl PrimaryType for Bool {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         if buffer.remaining() < 1 {
             return Err(AppError::MalformedProtocol(
                 "can not read a Bool, insufficient data".into(),
@@ -272,8 +272,8 @@ impl PrimaryType for Bool {
         }
         let value = buffer.get_i8();
         match value {
-            0 => Ok(DataType::Bool(Bool { value: false })),
-            1 => Ok(DataType::Bool(Bool { value: true })),
+            0 => Ok(ProtocolType::Bool(Bool { value: false })),
+            1 => Ok(ProtocolType::Bool(Bool { value: true })),
             _ => Err(AppError::MalformedProtocol(
                 "Invalid value for bool.".into(),
             )),
@@ -304,7 +304,7 @@ mod test {
         bool_value.encode(&mut writer);
         let mut bytes_mut = BytesMut::from(&writer[..]);
         let read_bool = Bool::decode(&mut bytes_mut).unwrap();
-        assert_eq!(read_bool, DataType::Bool(Bool { value: true }));
+        assert_eq!(read_bool, ProtocolType::Bool(Bool { value: true }));
 
         // Test I8
         writer.clear();
@@ -313,7 +313,7 @@ mod test {
         i8_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_i8 = I8::decode(&mut buffer).unwrap();
-        assert_eq!(read_i8, DataType::I8(i8_value_clone));
+        assert_eq!(read_i8, ProtocolType::I8(i8_value_clone));
 
         // Test I16
         writer.clear();
@@ -322,7 +322,7 @@ mod test {
         i16_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_i16 = I16::decode(&mut buffer).unwrap();
-        assert_eq!(read_i16, DataType::I16(i16_value_clone));
+        assert_eq!(read_i16, ProtocolType::I16(i16_value_clone));
 
         // Test I32
         writer.clear();
@@ -331,7 +331,7 @@ mod test {
         i32_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_i32 = I32::decode(&mut buffer).unwrap();
-        assert_eq!(read_i32, DataType::I32(i32_value_clone));
+        assert_eq!(read_i32, ProtocolType::I32(i32_value_clone));
 
         // Test U32
         writer.clear();
@@ -340,7 +340,7 @@ mod test {
         u32_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_u32 = U32::decode(&mut buffer).unwrap();
-        assert_eq!(read_u32, DataType::U32(u32_value_clone));
+        assert_eq!(read_u32, ProtocolType::U32(u32_value_clone));
 
         // Test I64
         writer.clear();
@@ -351,7 +351,7 @@ mod test {
         i64_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_i64 = I64::decode(&mut buffer).unwrap();
-        assert_eq!(read_i64, DataType::I64(i64_value_clone));
+        assert_eq!(read_i64, ProtocolType::I64(i64_value_clone));
 
         // Test PString
         writer.clear();
@@ -362,7 +362,7 @@ mod test {
         pstring_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_pstring = PString::decode(&mut buffer).unwrap();
-        assert_eq!(read_pstring, DataType::PString(pstring_value_clone));
+        assert_eq!(read_pstring, ProtocolType::PString(pstring_value_clone));
 
         // Test NPString
         buffer.clear();
@@ -373,7 +373,7 @@ mod test {
         npstring_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_npstring = NPString::decode(&mut buffer).unwrap();
-        assert_eq!(read_npstring, DataType::NPString(npstring_value_clone));
+        assert_eq!(read_npstring, ProtocolType::NPString(npstring_value_clone));
 
         //Test PBytes
         writer.clear();
@@ -384,7 +384,7 @@ mod test {
         pbytes_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_pbytes = PBytes::decode(&mut buffer).unwrap();
-        assert_eq!(read_pbytes, DataType::PBytes(pbytes_value_clone));
+        assert_eq!(read_pbytes, ProtocolType::PBytes(pbytes_value_clone));
 
         //Test NPBytes
         writer.clear();
@@ -395,7 +395,7 @@ mod test {
         npbytes_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_npbytes = NPBytes::decode(&mut buffer).unwrap();
-        assert_eq!(read_npbytes, DataType::NPBytes(npbytes_value_clone));
+        assert_eq!(read_npbytes, ProtocolType::NPBytes(npbytes_value_clone));
 
         //Test PVarInt
         writer.clear();
@@ -404,7 +404,7 @@ mod test {
         pvarint_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_pvarint = PVarInt::decode(&mut buffer).unwrap();
-        assert_eq!(read_pvarint, DataType::PVarInt(pvarint_value_clone));
+        assert_eq!(read_pvarint, ProtocolType::PVarInt(pvarint_value_clone));
 
         //Test PVarLong
         writer.clear();
@@ -413,6 +413,6 @@ mod test {
         pvarlong_value.encode(&mut writer);
         let mut buffer = BytesMut::from(&writer[..]);
         let read_pvarlong = PVarLong::decode(&mut buffer).unwrap();
-        assert_eq!(read_pvarlong, DataType::PVarLong(pvarlong_value_clone));
+        assert_eq!(read_pvarlong, ProtocolType::PVarLong(pvarlong_value_clone));
     }
 }

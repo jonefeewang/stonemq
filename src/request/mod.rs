@@ -13,8 +13,9 @@ use fetch::FetchRequest;
 use tracing::{debug, instrument, trace};
 
 use crate::message::GroupCoordinator;
-use crate::protocol::api_schemas::SUPPORTED_API_VERSIONS;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
+use crate::protocol::api::SUPPORTED_API_VERSIONS;
+
+use crate::protocol::{ApiKey, ApiVersion};
 use crate::request::metadata::{MetaDataRequest, MetadataResponse};
 use crate::request::produce::{ProduceRequest, ProduceResponse};
 use crate::service::Node;
@@ -172,7 +173,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::JoinGroup(request) => {
                 // join group 的信号在handle_join_group_request中发送
@@ -182,7 +183,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::SyncGroup(request) => {
                 Self::handle_sync_group_request(
@@ -191,7 +192,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::LeaveGroup(request) => {
                 Self::handle_leave_group_request(
@@ -200,7 +201,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::Heartbeat(request) => {
                 Self::handle_heartbeat_request(
@@ -209,7 +210,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::OffsetCommit(request) => {
                 Self::handle_offset_commit_request(
@@ -218,7 +219,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
             ApiRequest::FetchOffsets(request) => {
                 Self::handle_fetch_offsets_request(
@@ -227,7 +228,7 @@ impl RequestProcessor {
                     client_ip,
                     group_coordinator,
                 )
-                .await
+                    .await
             }
         }
     }

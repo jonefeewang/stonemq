@@ -4,7 +4,7 @@ use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
 use crate::log::log_segment::LogSegment;
 use crate::message::{MemoryRecords, TopicPartition};
-use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
+use crate::protocol::api::produce_reps::DEFAULT_LOG_APPEND_TIME;
 use crate::{global_config, AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
@@ -114,7 +114,7 @@ impl QueueLog {
             records_count,
             memory_records,
         )
-        .await?;
+            .await?;
 
         self.last_offset
             .store(log_append_info.first_offset + records_count as i64 - 1);
@@ -382,7 +382,7 @@ impl QueueLog {
             new_base_offset,
             self.index_file_max_size,
         )
-        .await?;
+            .await?;
         segments.insert(new_base_offset, new_seg);
         debug!(
             "Rolled queue log segment to new base offset: {}",

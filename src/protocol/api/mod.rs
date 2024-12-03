@@ -5,19 +5,23 @@ use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 use tracing::trace;
 
+use crate::protocol::base::ProtocolType;
 use crate::protocol::schema::Schema;
-use crate::protocol::types::DataType;
-use crate::protocol::value_set::ValueSet;
+use crate::protocol::schema::ValueSet;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::{ApiVersionRequest, ApiVersionResponse, RequestHeader};
 use crate::AppResult;
 
-pub mod consumer_groups;
-pub mod consumer_protocol;
-pub mod metadata_reps;
-pub mod metadata_req;
-pub mod produce_reps;
-pub mod produce_req;
+mod consumer_protocol;
+mod fetch;
+mod find_coordinator;
+mod heartbeat;
+mod join_group;
+mod leave_group;
+mod metadata_req;
+mod offset_commit;
+mod offset_fetch;
+mod sync_group;
 
 // Constants for key names used in the request header
 static API_KEY: &str = "api_key";
@@ -27,7 +31,7 @@ static CORRELATION_ID_KEY_NAME: &str = "correlation_id";
 static CLIENT_ID_KEY_NAME: &str = "client_id";
 // Lazy static reference to the request header schema
 pub static REQUEST_HEADER_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let tuple: Vec<(i32, &str, DataType)> = vec![
+    let tuple: Vec<(i32, &str, ProtocolType)> = vec![
         (0, API_KEY, 0i16.into()),
         (1, API_VERSION_KEY_NAME, 0i16.into()),
         (2, CORRELATION_ID_KEY_NAME, 0i32.into()),
@@ -71,10 +75,10 @@ impl RequestHeader {
         let mut schema_data: ValueSet = schema.read_from(stream)?;
 
         let api_key_field_value: i16 = schema_data.get_field_value(API_KEY).into();
-        let api_key = api_key_field_value.try_into()?;
+        let api_key = ApiKey::from_i16(api_key_field_value)?;
 
         let api_version_field_value: i16 = schema_data.get_field_value(API_VERSION_KEY_NAME).into();
-        let api_version = api_version_field_value.try_into()?;
+        let api_version = ApiVersion::from_i16(api_version_field_value)?;
 
         let correlation_id = schema_data.get_field_value(CORRELATION_ID_KEY_NAME).into();
         let client_id = schema_data.get_field_value(CLIENT_ID_KEY_NAME).into();
@@ -91,11 +95,11 @@ impl RequestHeader {
 pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(
-        ApiKey::ApiVersionKey.into(),
+        ApiKey::ApiVersionKey as i16,
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
-        ApiKey::Metadata.into(),
+        ApiKey::Metadata as i16,
         vec![
             ApiVersion::V0,
             ApiVersion::V1,
@@ -105,7 +109,7 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
-        ApiKey::Produce.into(),
+        ApiKey::Produce as i16,
         vec![
             ApiVersion::V0,
             ApiVersion::V1,
@@ -115,7 +119,7 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
-        ApiKey::Fetch.into(),
+        ApiKey::Fetch as i16,
         vec![
             ApiVersion::V0,
             ApiVersion::V1,
@@ -126,23 +130,23 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
-        ApiKey::JoinGroup.into(),
+        ApiKey::JoinGroup as i16,
         vec![ApiVersion::V0, ApiVersion::V1, ApiVersion::V2],
     );
     map.insert(
-        ApiKey::SyncGroup.into(),
+        ApiKey::SyncGroup as i16,
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
-        ApiKey::Heartbeat.into(),
+        ApiKey::Heartbeat as i16,
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
-        ApiKey::LeaveGroup.into(),
+        ApiKey::LeaveGroup as i16,
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     map.insert(
-        ApiKey::OffsetFetch.into(),
+        ApiKey::OffsetFetch as i16,
         vec![
             ApiVersion::V0,
             ApiVersion::V1,
@@ -151,7 +155,7 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
-        ApiKey::OffsetCommit.into(),
+        ApiKey::OffsetCommit as i16,
         vec![
             ApiVersion::V0,
             ApiVersion::V1,
@@ -160,7 +164,7 @@ pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = La
         ],
     );
     map.insert(
-        ApiKey::FindCoordinator.into(),
+        ApiKey::FindCoordinator as i16,
         vec![ApiVersion::V0, ApiVersion::V1],
     );
     Arc::new(map)
@@ -191,7 +195,7 @@ pub static API_VERSIONS_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             API_VERSIONS_KEY_NAME,
-            DataType::array_of_schema(Arc::clone(&API_VERSIONS_V0)),
+            ProtocolType::array_of_schema(Arc::clone(&API_VERSIONS_V0)),
         ),
     ]);
     Arc::new(schema)
@@ -202,7 +206,7 @@ pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             API_VERSIONS_KEY_NAME,
-            DataType::array_of_schema(Arc::clone(&API_VERSIONS_V0)),
+            ProtocolType::array_of_schema(Arc::clone(&API_VERSIONS_V0)),
         ),
         (2, THROTTLE_TIME_KEY_NAME, 0i32.into()),
     ]);
@@ -252,7 +256,7 @@ impl ApiVersionResponse {
             version_value_set.append_field_value(API_KEY_NAME, api_code.into());
             version_value_set.append_field_value(MIN_VERSION_KEY_NAME, supported_versions.0.into());
             version_value_set.append_field_value(MAX_VERSION_KEY_NAME, supported_versions.1.into());
-            versions_ary.push(DataType::ValueSet(version_value_set));
+            versions_ary.push(ProtocolType::ValueSet(version_value_set));
         }
         let versions_ary_schema = apiversion_reps_value_set
             .schema
@@ -260,7 +264,7 @@ impl ApiVersionResponse {
             .sub_schema_of_ary_field(API_VERSIONS_KEY_NAME);
         apiversion_reps_value_set.append_field_value(
             API_VERSIONS_KEY_NAME,
-            DataType::array_of_value_set(versions_ary, versions_ary_schema),
+            ProtocolType::array_of_value_set(versions_ary, versions_ary_schema),
         );
 
         if apiversion_reps_value_set

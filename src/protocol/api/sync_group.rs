@@ -5,46 +5,58 @@ use once_cell::sync::Lazy;
 
 use crate::{
     protocol::{
-        api_schemas::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
-        array::ArrayType,
-        primary_types::{PBytes, PString, I16, I32},
-        schema::Schema,
-        types::DataType,
-        value_set::ValueSet,
+        api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
+        base::ProtocolType,
+        base::{PBytes, PString, I16, I32},
+        schema::{Schema, ValueSet},
+        types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
     request::consumer_group::{SyncGroupRequest, SyncGroupResponse},
     AppError, AppResult,
 };
 
-use super::{
-    GENERATION_ID_KEY_NAME, GROUP_ASSIGNMENT_KEY_NAME, GROUP_ID_KEY_NAME,
-    MEMBER_ASSIGNMENT_KEY_NAME, MEMBER_ID_KEY_NAME,
-};
+const GENERATION_ID_KEY_NAME: &str = "generation_id";
+const GROUP_ASSIGNMENT_KEY_NAME: &str = "group_assignment";
+const GROUP_ID_KEY_NAME: &str = "group_id";
+const MEMBER_ASSIGNMENT_KEY_NAME: &str = "member_assignment";
+const MEMBER_ID_KEY_NAME: &str = "member_id";
 
 pub static SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (
+            0,
+            MEMBER_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
         (
             1,
             MEMBER_ASSIGNMENT_KEY_NAME,
-            DataType::PBytes(PBytes::default()),
+            ProtocolType::PBytes(PBytes::default()),
         ),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
 pub static SYNC_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, GROUP_ID_KEY_NAME, DataType::PString(PString::default())),
-        (1, GENERATION_ID_KEY_NAME, DataType::I32(I32::default())),
-        (2, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (
+            0,
+            GROUP_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
+        (1, GENERATION_ID_KEY_NAME, ProtocolType::I32(I32::default())),
+        (
+            2,
+            MEMBER_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
         (
             3,
             GROUP_ASSIGNMENT_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: false,
-                p_type: Arc::new(DataType::Schema(
+                p_type: Arc::new(ProtocolType::Schema(
                     SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA.clone(),
                 )),
                 values: None,
@@ -55,13 +67,13 @@ pub static SYNC_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 pub static SYNC_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, THROTTLE_TIME_KEY_NAME, DataType::I32(I32::default())),
-        (1, ERROR_CODE_KEY_NAME, DataType::I16(I16::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
+        (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),
         (
             2,
             MEMBER_ASSIGNMENT_KEY_NAME,
-            DataType::PBytes(PBytes::default()),
+            ProtocolType::PBytes(PBytes::default()),
         ),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))

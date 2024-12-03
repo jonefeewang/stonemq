@@ -5,10 +5,10 @@ use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 use tracing::trace;
 
+use crate::protocol::protocol_type::ProtocolType;
 use crate::protocol::schema::Schema;
-use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
+use crate::protocol::{api_key::ApiKey, api_versions::ApiVersion, schema_registry::ProtocolCodec};
 use crate::request::produce::{PartitionResponse, ProduceResponse};
 use crate::AppResult;
 
@@ -55,13 +55,13 @@ pub static PRODUCE_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             PARTITION_RESPONSES_KEY_NAME,
-            DataType::array_of_schema(Arc::new(partition_reps_schema)),
+            ProtocolType::array_of_schema(Arc::new(partition_reps_schema)),
         ),
     ]);
     let responses_schema = Schema::from_fields_desc_vec(vec![(
         0,
         RESPONSES_KEY_NAME,
-        DataType::array_of_schema(Arc::new(topic_reps_schema)),
+        ProtocolType::array_of_schema(Arc::new(topic_reps_schema)),
     )]);
 
     Arc::new(responses_schema)
@@ -77,14 +77,14 @@ pub static PRODUCE_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             PARTITION_RESPONSES_KEY_NAME,
-            DataType::array_of_schema(Arc::new(partition_reps_schema)),
+            ProtocolType::array_of_schema(Arc::new(partition_reps_schema)),
         ),
     ]);
     let responses_schema = Schema::from_fields_desc_vec(vec![
         (
             0,
             RESPONSES_KEY_NAME,
-            DataType::array_of_schema(Arc::new(topic_reps_schema)),
+            ProtocolType::array_of_schema(Arc::new(topic_reps_schema)),
         ),
         (1, THROTTLE_TIME_MS_KEY_NAME, 0i32.into()),
     ]);
@@ -103,14 +103,14 @@ pub static PRODUCE_RESPONSE_V2: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             PARTITION_RESPONSES_KEY_NAME,
-            DataType::array_of_schema(Arc::new(partition_reps_schema)),
+            ProtocolType::array_of_schema(Arc::new(partition_reps_schema)),
         ),
     ]);
     let responses_schema = Schema::from_fields_desc_vec(vec![
         (
             0,
             RESPONSES_KEY_NAME,
-            DataType::array_of_schema(Arc::new(topic_reps_schema)),
+            ProtocolType::array_of_schema(Arc::new(topic_reps_schema)),
         ),
         (1, THROTTLE_TIME_MS_KEY_NAME, 0i32.into()),
     ]);
@@ -157,7 +157,7 @@ impl ProduceResponse {
                     );
                 }
 
-                partition_response_ary.push(DataType::ValueSet(partition_response_valueset));
+                partition_response_ary.push(ProtocolType::ValueSet(partition_response_valueset));
             }
             let partition_schema = topic_response
                 .schema
@@ -165,10 +165,10 @@ impl ProduceResponse {
                 .sub_schema_of_ary_field(PARTITION_RESPONSES_KEY_NAME);
             topic_response.append_field_value(
                 PARTITION_RESPONSES_KEY_NAME,
-                DataType::array_of_value_set(partition_response_ary, partition_schema),
+                ProtocolType::array_of_value_set(partition_response_ary, partition_schema),
             );
 
-            topic_response_ary.push(DataType::ValueSet(topic_response));
+            topic_response_ary.push(ProtocolType::ValueSet(topic_response));
         }
         let topic_schema = produce_reps_valueset
             .schema
@@ -176,7 +176,7 @@ impl ProduceResponse {
             .sub_schema_of_ary_field(RESPONSES_KEY_NAME);
         produce_reps_valueset.append_field_value(
             RESPONSES_KEY_NAME,
-            DataType::array_of_value_set(topic_response_ary, topic_schema),
+            ProtocolType::array_of_value_set(topic_response_ary, topic_schema),
         );
         if produce_reps_valueset
             .schema

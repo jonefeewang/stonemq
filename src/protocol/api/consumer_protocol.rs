@@ -6,11 +6,10 @@ use once_cell::sync::Lazy;
 use tracing::debug;
 
 use crate::message::TopicPartition;
-use crate::protocol::array::ArrayType;
-use crate::protocol::primary_types::{NPBytes, PString, I16, I32};
+use crate::protocol::types::ArrayType;
+use crate::protocol::base::{NPBytes, PString, ProtocolType, I16, I32};
 use crate::protocol::schema::Schema;
-use crate::protocol::types::DataType;
-use crate::protocol::value_set::ValueSet;
+use crate::protocol::schema::ValueSet;
 
 use crate::{AppError, AppResult};
 
@@ -26,41 +25,45 @@ pub const USER_DATA_KEY_NAME: &str = "user_data";
 pub const CONSUMER_PROTOCOL_V0: i16 = 0;
 
 pub static CONSUMER_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> =
-        vec![(0, VERSION_KEY_NAME, DataType::I16(I16::default()))];
+    let fields_desc: Vec<(i32, &str, ProtocolType)> =
+        vec![(0, VERSION_KEY_NAME, ProtocolType::I16(I16::default()))];
     let schema = Schema::from_fields_desc_vec(fields_desc);
     Arc::new(schema)
 });
 pub static CONSUMER_PROTOCOL_V0_HEADER: Lazy<ValueSet> = Lazy::new(|| {
     let mut value_set = ValueSet::new(CONSUMER_PROTOCOL_V0_SCHEMA.clone());
-    value_set.append_field_value(VERSION_KEY_NAME, DataType::I16(I16::default()));
+    value_set.append_field_value(VERSION_KEY_NAME, ProtocolType::I16(I16::default()));
     value_set
 });
 pub static SUBSCRIPTION_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
             TOPIC_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: false,
-                p_type: Arc::new(DataType::PString(PString::default())),
+                p_type: Arc::new(ProtocolType::PString(PString::default())),
                 values: None,
             }),
         ),
-        (1, USER_DATA_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (
+            1,
+            USER_DATA_KEY_NAME,
+            ProtocolType::NPBytes(NPBytes::default()),
+        ),
     ];
     let schema = Schema::from_fields_desc_vec(fields_desc);
     Arc::new(schema)
 });
 pub static TOPIC_ASSIGNMENT_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, TOPIC_KEY_NAME, DataType::PString(PString::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, TOPIC_KEY_NAME, ProtocolType::PString(PString::default())),
         (
             1,
             PARTITIONS_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: false,
-                p_type: Arc::new(DataType::I32(I32::default())),
+                p_type: Arc::new(ProtocolType::I32(I32::default())),
                 values: None,
             }),
         ),
@@ -70,17 +73,21 @@ pub static TOPIC_ASSIGNMENT_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
 });
 
 pub static ASSIGNMENT_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
             TOPIC_PARTITIONS_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: false,
-                p_type: Arc::new(DataType::Schema(Arc::clone(&TOPIC_ASSIGNMENT_V0))),
+                p_type: Arc::new(ProtocolType::Schema(Arc::clone(&TOPIC_ASSIGNMENT_V0))),
                 values: None,
             }),
         ),
-        (1, USER_DATA_KEY_NAME, DataType::NPBytes(NPBytes::default())),
+        (
+            1,
+            USER_DATA_KEY_NAME,
+            ProtocolType::NPBytes(NPBytes::default()),
+        ),
     ];
     let schema = Schema::from_fields_desc_vec(fields_desc);
     Arc::new(schema)
@@ -90,14 +97,14 @@ pub static ASSIGNMENT_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
 pub static PREVIOUS_ASSIGNMENT_KEY_NAME: &str = "previous_assignment";
 
 pub static TOPIC_ASSIGNMENT_STICKY: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, TOPIC_KEY_NAME, DataType::PString(PString::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, TOPIC_KEY_NAME, ProtocolType::PString(PString::default())),
         (
             1,
             PARTITIONS_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: false,
-                p_type: Arc::new(DataType::I32(I32::default())),
+                p_type: Arc::new(ProtocolType::I32(I32::default())),
                 values: None,
             }),
         ),
@@ -106,12 +113,12 @@ pub static TOPIC_ASSIGNMENT_STICKY: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(schema)
 });
 pub static STICKY_ASSIGNOR_USER_DATA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![(
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![(
         0,
         PREVIOUS_ASSIGNMENT_KEY_NAME,
-        DataType::Array(ArrayType {
+        ProtocolType::Array(ArrayType {
             can_be_empty: false,
-            p_type: Arc::new(DataType::Schema(Arc::clone(&TOPIC_ASSIGNMENT_STICKY))),
+            p_type: Arc::new(ProtocolType::Schema(Arc::clone(&TOPIC_ASSIGNMENT_STICKY))),
             values: None,
         }),
     )];
@@ -126,18 +133,7 @@ pub struct TopicAssignment {
     pub partitions: Vec<TopicPartition>,
     pub user_data: BytesMut,
 }
-#[derive(Debug)]
-pub struct ProtocolMetadata {
-    // assignor.name
-    pub name: String,
-    // consumer protocol serialized subscription struct
-    pub metadata: BytesMut,
-}
-impl PartialEq for ProtocolMetadata {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.metadata == other.metadata
-    }
-}
+
 
 pub struct Subscription {
     pub topics: Vec<String>,

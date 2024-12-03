@@ -2,7 +2,7 @@ use crate::log::LogAppendInfo;
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{TopicData, TopicPartition};
-use crate::protocol::api_schemas::produce_reps::DEFAULT_LOG_APPEND_TIME;
+use crate::protocol::api::produce_reps::DEFAULT_LOG_APPEND_TIME;
 use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::errors::{ErrorCode, KafkaError};
 use crate::request::produce::PartitionResponse;
@@ -35,7 +35,7 @@ impl ReplicaManager {
                 notify_shutdown_clone,
                 shutdown_complete_tx_clone,
             )
-            .await
+                .await
         });
         ReplicaManager {
             log_manager,

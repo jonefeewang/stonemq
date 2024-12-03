@@ -16,7 +16,7 @@ use tracing::{error, info, trace};
 use crate::{
     global_config,
     message::TopicPartition,
-    protocol::api_schemas::consumer_protocol::ProtocolMetadata,
+    protocol::api::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{PartitionOffsetCommitData, PartitionOffsetData, SyncGroupResponse},
         errors::{KafkaError, KafkaResult},

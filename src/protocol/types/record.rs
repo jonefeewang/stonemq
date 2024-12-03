@@ -1,20 +1,20 @@
 use bytes::BytesMut;
 
 use crate::message::MemoryRecords;
-use crate::protocol::primary_types::{NPBytes, PrimaryType};
-use crate::protocol::types::DataType;
+use crate::protocol::base::ProtocolType;
+use crate::protocol::base::{NPBytes, PrimaryType};
 use crate::AppResult;
 
 impl PrimaryType for MemoryRecords {
-    fn decode(buffer: &mut BytesMut) -> AppResult<DataType> {
+    fn decode(buffer: &mut BytesMut) -> AppResult<ProtocolType> {
         let n_pbytes_e = NPBytes::decode(buffer)?;
 
-        if let DataType::NPBytes(n_pbytes) = n_pbytes_e {
+        if let ProtocolType::NPBytes(n_pbytes) = n_pbytes_e {
             if let Some(n_pbytes) = n_pbytes.value {
-                return Ok(DataType::Records(MemoryRecords::new(n_pbytes)));
+                return Ok(ProtocolType::Records(MemoryRecords::new(n_pbytes)));
             }
         }
-        Ok(DataType::Records(MemoryRecords::empty()))
+        Ok(ProtocolType::Records(MemoryRecords::empty()))
     }
 
     fn encode(self, writer: &mut BytesMut) {
@@ -41,6 +41,6 @@ fn test_record_read_write() {
     let read_memory_record = MemoryRecords::decode(&mut buffer).unwrap();
     assert_eq!(
         read_memory_record,
-        DataType::Records(memory_record_value_clone)
+        ProtocolType::Records(memory_record_value_clone)
     );
 }

@@ -4,36 +4,44 @@ use std::sync::Arc;
 
 use crate::{
     protocol::{
-        api_schemas::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
-        primary_types::{PString, I16, I32},
-        schema::Schema,
-        types::DataType,
-        value_set::ValueSet,
+        api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
+        base::{PString, ProtocolType, I16, I32},
+        schema::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
     },
     request::consumer_group::{HeartbeatRequest, HeartbeatResponse},
     AppResult,
 };
 
-use super::{GROUP_GENERATION_ID_KEY_NAME, GROUP_ID_KEY_NAME, MEMBER_ID_KEY_NAME};
+const GROUP_GENERATION_ID_KEY_NAME: &str = "group_generation_id";
+const GROUP_ID_KEY_NAME: &str = "group_id";
+const MEMBER_ID_KEY_NAME: &str = "member_id";
 
 pub static HEARTBEAT_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, GROUP_ID_KEY_NAME, DataType::PString(PString::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (
+            0,
+            GROUP_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
         (
             1,
             GROUP_GENERATION_ID_KEY_NAME,
-            DataType::I32(I32::default()),
+            ProtocolType::I32(I32::default()),
         ),
-        (2, MEMBER_ID_KEY_NAME, DataType::PString(PString::default())),
+        (
+            2,
+            MEMBER_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
 pub static HEARTBEAT_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, DataType)> = vec![
-        (0, THROTTLE_TIME_KEY_NAME, DataType::I32(I32::default())),
-        (1, ERROR_CODE_KEY_NAME, DataType::I16(I16::default())),
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
+        (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });

@@ -6,10 +6,10 @@ use once_cell::sync::Lazy;
 
 use tracing::trace;
 
+use crate::protocol::protocol_type::ProtocolType;
 use crate::protocol::schema::Schema;
-use crate::protocol::types::DataType;
 use crate::protocol::value_set::ValueSet;
-use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
+use crate::protocol::{api_key::ApiKey, api_versions::ApiVersion, schema_registry::ProtocolCodec};
 use crate::request::metadata::MetadataResponse;
 use crate::AppResult;
 
@@ -58,8 +58,8 @@ pub static PARTITION_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (0, PARTITION_ERROR_CODE_KEY_NAME, 0i16.into()),
         (1, PARTITION_KEY_NAME, 0i32.into()),
         (2, LEADER_KEY_NAME, 0i32.into()),
-        (3, REPLICAS_KEY_NAME, DataType::array_of_i32_type(0i32)),
-        (4, ISR_KEY_NAME, DataType::array_of_i32_type(0i32)),
+        (3, REPLICAS_KEY_NAME, ProtocolType::array_of_i32_type(0i32)),
+        (4, ISR_KEY_NAME, ProtocolType::array_of_i32_type(0i32)),
     ]);
     Arc::new(schema)
 });
@@ -71,7 +71,7 @@ pub static TOPIC_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             2,
             PARTITION_METADATA_KEY_NAME,
-            DataType::array_of_schema(PARTITION_METADATA_V0.clone()),
+            ProtocolType::array_of_schema(PARTITION_METADATA_V0.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -84,7 +84,7 @@ pub static TOPIC_METADATA_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             3,
             PARTITION_METADATA_KEY_NAME,
-            DataType::array_of_schema(PARTITION_METADATA_V0.clone()),
+            ProtocolType::array_of_schema(PARTITION_METADATA_V0.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -112,12 +112,12 @@ pub static METADATA_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             0,
             BROKERS_KEY_NAME,
-            DataType::array_of_schema(METADATA_BROKER_V0.clone()),
+            ProtocolType::array_of_schema(METADATA_BROKER_V0.clone()),
         ),
         (
             1,
             TOPIC_METADATA_KEY_NAME,
-            DataType::array_of_schema(TOPIC_METADATA_V0.clone()),
+            ProtocolType::array_of_schema(TOPIC_METADATA_V0.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -127,12 +127,12 @@ pub static METADATA_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             0,
             BROKERS_KEY_NAME,
-            DataType::array_of_schema(METADATA_BROKER_V1.clone()),
+            ProtocolType::array_of_schema(METADATA_BROKER_V1.clone()),
         ),
         (
             1,
             TOPIC_METADATA_KEY_NAME,
-            DataType::array_of_schema(TOPIC_METADATA_V1.clone()),
+            ProtocolType::array_of_schema(TOPIC_METADATA_V1.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -142,14 +142,14 @@ pub static METADATA_RESPONSE_V2: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             0,
             BROKERS_KEY_NAME,
-            DataType::array_of_schema(METADATA_BROKER_V1.clone()),
+            ProtocolType::array_of_schema(METADATA_BROKER_V1.clone()),
         ),
         (1, CLUSTER_ID_KEY_NAME, Option::<String>::default().into()),
         (2, CONTROLLER_ID_KEY_NAME, 0i32.into()),
         (
             3,
             TOPIC_METADATA_KEY_NAME,
-            DataType::array_of_schema(TOPIC_METADATA_V1.clone()),
+            ProtocolType::array_of_schema(TOPIC_METADATA_V1.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -160,14 +160,14 @@ pub static METADATA_RESPONSE_V3: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             1,
             BROKERS_KEY_NAME,
-            DataType::array_of_schema(METADATA_BROKER_V1.clone()),
+            ProtocolType::array_of_schema(METADATA_BROKER_V1.clone()),
         ),
         (2, CLUSTER_ID_KEY_NAME, Option::<String>::default().into()),
         (3, CONTROLLER_ID_KEY_NAME, 0i32.into()),
         (
             4,
             TOPIC_METADATA_KEY_NAME,
-            DataType::array_of_schema(TOPIC_METADATA_V1.clone()),
+            ProtocolType::array_of_schema(TOPIC_METADATA_V1.clone()),
         ),
     ]);
     Arc::new(schema)
@@ -185,7 +185,7 @@ impl MetadataResponse {
         }
         // brokers
 
-        let mut broker_ary: Vec<DataType> = Vec::with_capacity(self.brokers.len());
+        let mut broker_ary: Vec<ProtocolType> = Vec::with_capacity(self.brokers.len());
         for broker in self.brokers {
             let mut broker_valueset =
                 metadata_rsp_valueset.sub_valueset_of_ary_field(BROKERS_KEY_NAME);
@@ -195,7 +195,7 @@ impl MetadataResponse {
             if broker_valueset.schema.has_field(RACK_KEY_NAME) {
                 broker_valueset.append_field_value(RACK_KEY_NAME, broker.rack.into());
             }
-            broker_ary.push(DataType::ValueSet(broker_valueset));
+            broker_ary.push(ProtocolType::ValueSet(broker_valueset));
         }
         let broker_ary_schema = metadata_rsp_valueset
             .schema
@@ -203,7 +203,7 @@ impl MetadataResponse {
             .sub_schema_of_ary_field(BROKERS_KEY_NAME);
         metadata_rsp_valueset.append_field_value(
             BROKERS_KEY_NAME,
-            DataType::array_of_value_set(broker_ary, broker_ary_schema),
+            ProtocolType::array_of_value_set(broker_ary, broker_ary_schema),
         );
 
         // cluster_id
@@ -221,7 +221,8 @@ impl MetadataResponse {
         }
 
         // topic_metadata
-        let mut topic_metadata_ary: Vec<DataType> = Vec::with_capacity(self.topic_metadata.len());
+        let mut topic_metadata_ary: Vec<ProtocolType> =
+            Vec::with_capacity(self.topic_metadata.len());
         for topic_metadata in self.topic_metadata {
             // create valueset for each topic
             let mut topic_metadata_valueset =
@@ -241,7 +242,7 @@ impl MetadataResponse {
                     .append_field_value(IS_INTERNAL_KEY_NAME, topic_metadata.is_internal.into());
             }
             // partition_metadata
-            let mut partition_metadata_ary: Vec<DataType> =
+            let mut partition_metadata_ary: Vec<ProtocolType> =
                 Vec::with_capacity(topic_metadata.partition_metadata.len());
             for partition_metadata in topic_metadata.partition_metadata {
                 let mut partition_metadata_valueset =
@@ -259,16 +260,18 @@ impl MetadataResponse {
                     .iter()
                     .map(|node| node.node_id)
                     .collect();
-                partition_metadata_valueset
-                    .append_field_value(REPLICAS_KEY_NAME, DataType::array_of(Some(replicas_ary)));
+                partition_metadata_valueset.append_field_value(
+                    REPLICAS_KEY_NAME,
+                    ProtocolType::array_of(Some(replicas_ary)),
+                );
                 let isr_ary = partition_metadata
                     .isr
                     .iter()
                     .map(|node| node.node_id)
                     .collect();
                 partition_metadata_valueset
-                    .append_field_value(ISR_KEY_NAME, DataType::array_of(Some(isr_ary)));
-                partition_metadata_ary.push(DataType::ValueSet(partition_metadata_valueset));
+                    .append_field_value(ISR_KEY_NAME, ProtocolType::array_of(Some(isr_ary)));
+                partition_metadata_ary.push(ProtocolType::ValueSet(partition_metadata_valueset));
             }
             let partition_metadata_schema = topic_metadata_valueset
                 .schema
@@ -276,9 +279,9 @@ impl MetadataResponse {
                 .sub_schema_of_ary_field(PARTITION_METADATA_KEY_NAME);
             topic_metadata_valueset.append_field_value(
                 PARTITION_METADATA_KEY_NAME,
-                DataType::array_of_value_set(partition_metadata_ary, partition_metadata_schema),
+                ProtocolType::array_of_value_set(partition_metadata_ary, partition_metadata_schema),
             );
-            topic_metadata_ary.push(DataType::ValueSet(topic_metadata_valueset));
+            topic_metadata_ary.push(ProtocolType::ValueSet(topic_metadata_valueset));
         }
         let topic_metadata_schema = metadata_rsp_valueset
             .schema
@@ -286,7 +289,7 @@ impl MetadataResponse {
             .sub_schema_of_ary_field(TOPIC_METADATA_KEY_NAME);
         metadata_rsp_valueset.append_field_value(
             TOPIC_METADATA_KEY_NAME,
-            DataType::array_of_value_set(topic_metadata_ary, topic_metadata_schema),
+            ProtocolType::array_of_value_set(topic_metadata_ary, topic_metadata_schema),
         );
     }
 }

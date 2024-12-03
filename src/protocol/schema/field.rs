@@ -1,10 +1,10 @@
-use crate::protocol::types::DataType;
+use crate::protocol::base::ProtocolType;
 
 #[derive(Debug, Clone)]
 pub struct Field {
     pub index: i32,
     pub name: &'static str,
-    pub p_type: DataType,
+    pub p_type: ProtocolType,
 }
 
 impl PartialEq for Field {

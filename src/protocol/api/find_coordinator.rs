@@ -1,18 +1,31 @@
+use std::sync::Arc;
+
 use bytes::{BufMut, BytesMut};
+use once_cell::sync::Lazy;
 
 use crate::{
-    protocol::{types::DataType, value_set::ValueSet, ApiKey, ApiVersion, ProtocolCodec},
+    protocol::{
+        base::{NPString, PString, ProtocolType, I16, I32, I8},
+        schema::{Schema, ValueSet},
+        ApiKey, ApiVersion, ProtocolCodec,
+    },
     AppResult,
 };
 
-use crate::protocol::api_schemas::consumer_groups::{
-    COORDINATOR_KEY_NAME, ERROR_CODE_KEY_NAME, ERROR_MESSAGE_KEY_NAME, NODE_HOST_KEY_NAME,
-    NODE_ID_KEY_NAME, NODE_PORT_KEY_NAME, THROTTLE_TIME_KEY_NAME,
-};
+const COORDINATOR_KEY_KEY_NAME: &str = "coordinator_key";
+const COORDINATOR_TYPE_KEY_NAME: &str = "coordinator_type";
+
+const NODE_ID_KEY_NAME: &str = "node_id";
+const NODE_HOST_KEY_NAME: &str = "host";
+const NODE_PORT_KEY_NAME: &str = "port";
+
+const ERROR_MESSAGE_KEY_NAME: &str = "error_message";
+const COORDINATOR_KEY_NAME: &str = "coordinator";
+
+const ERROR_CODE_KEY_NAME: &str = "error_code";
+const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
 
 use crate::request::consumer_group::{FindCoordinatorRequest, FindCoordinatorResponse};
-
-use super::{COORDINATOR_KEY_KEY_NAME, COORDINATOR_TYPE_KEY_NAME};
 
 impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
     fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
@@ -74,7 +87,54 @@ impl FindCoordinatorResponse {
         // 将嵌套的value set 添加到response的value set中
         response_valueset.append_field_value(
             COORDINATOR_KEY_NAME,
-            DataType::ValueSet(coordinator_valueset),
+            ProtocolType::ValueSet(coordinator_valueset),
         );
     }
 }
+
+pub static FIND_COORDINATOR_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (
+            0,
+            COORDINATOR_KEY_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
+        (
+            1,
+            COORDINATOR_TYPE_KEY_NAME,
+            ProtocolType::I8(I8::default()),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FIND_COORDINATOR_BROKER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, NODE_ID_KEY_NAME, ProtocolType::I32(I32::default())),
+        (
+            1,
+            NODE_HOST_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
+        (2, NODE_PORT_KEY_NAME, ProtocolType::I32(I32::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FIND_COORDINATOR_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
+        (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),
+        (
+            2,
+            ERROR_MESSAGE_KEY_NAME,
+            ProtocolType::NPString(NPString::default()),
+        ),
+        (
+            3,
+            COORDINATOR_KEY_NAME,
+            ProtocolType::Schema(FIND_COORDINATOR_BROKER_V0_SCHEMA.clone()),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});

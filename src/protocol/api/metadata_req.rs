@@ -3,11 +3,9 @@ use std::sync::Arc;
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 
-use crate::protocol::array::ArrayType;
-use crate::protocol::primary_types::{Bool, PString};
-use crate::protocol::schema::Schema;
-use crate::protocol::types::DataType;
-use crate::protocol::value_set::ValueSet;
+use crate::protocol::types::ArrayType;
+use crate::protocol::base::{Bool, PString, ProtocolType};
+use crate::protocol::schema::{Schema, ValueSet};
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::metadata::MetaDataRequest;
 use crate::AppResult;
@@ -44,7 +42,7 @@ impl MetaDataRequest {
             Some(ary) => {
                 let mut topics = Vec::with_capacity(ary.len());
                 for topic in ary {
-                    if let DataType::PString(pstring) = topic {
+                    if let ProtocolType::PString(pstring) = topic {
                         topics.push(pstring.value);
                     }
                 }
@@ -58,7 +56,7 @@ impl MetaDataRequest {
         })
     }
     fn encode_to_value_set(self, value_set: &mut ValueSet) {
-        let ary_datatype = DataType::array_of(self.topics);
+        let ary_datatype = ProtocolType::array_of(self.topics);
         value_set.append_field_value(TOPICS_KEY_NAME, ary_datatype);
         value_set.append_field_value(
             ALLOW_AUTO_TOPIC_CREATION_KEY_NAME,
@@ -73,9 +71,9 @@ pub static METADATA_REQUEST_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![(
         0,
         TOPICS_KEY_NAME,
-        DataType::Array(ArrayType {
+        ProtocolType::Array(ArrayType {
             can_be_empty: false,
-            p_type: Arc::new(DataType::PString(PString::default())),
+            p_type: Arc::new(ProtocolType::PString(PString::default())),
             values: None,
         }),
     )]);
@@ -85,9 +83,9 @@ pub static METADATA_REQUEST_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![(
         0,
         TOPICS_KEY_NAME,
-        DataType::Array(ArrayType {
+        ProtocolType::Array(ArrayType {
             can_be_empty: true,
-            p_type: Arc::new(DataType::PString(PString::default())),
+            p_type: Arc::new(ProtocolType::PString(PString::default())),
             values: None,
         }),
     )]);
@@ -98,16 +96,16 @@ pub static METADATA_REQUEST_V4: Lazy<Arc<Schema>> = Lazy::new(|| {
         (
             0,
             TOPICS_KEY_NAME,
-            DataType::Array(ArrayType {
+            ProtocolType::Array(ArrayType {
                 can_be_empty: true,
-                p_type: Arc::new(DataType::PString(PString::default())),
+                p_type: Arc::new(ProtocolType::PString(PString::default())),
                 values: None,
             }),
         ),
         (
             1,
             ALLOW_AUTO_TOPIC_CREATION_KEY_NAME,
-            DataType::Bool(Bool::default()),
+            ProtocolType::Bool(Bool::default()),
         ),
     ]);
     Arc::new(schema)

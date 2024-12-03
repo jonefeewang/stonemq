@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use crate::{
     protocol::{
-        api_schemas::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
-        value_set::ValueSet,
+        api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
+        base::{NPBytes, PString, ProtocolType, I16, I32},
+        schema::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
     },
     request::{
@@ -11,8 +14,10 @@ use crate::{
     AppResult,
 };
 use bytes::{BufMut, BytesMut};
+use once_cell::sync::Lazy;
 
-use super::{GROUP_ID_KEY_NAME, MEMBER_ID_KEY_NAME};
+const GROUP_ID_KEY_NAME: &str = "group_id";
+const MEMBER_ID_KEY_NAME: &str = "member_id";
 
 impl ProtocolCodec<LeaveGroupRequest> for LeaveGroupRequest {
     fn decode(
@@ -73,3 +78,27 @@ impl LeaveGroupResponse {
         Ok(())
     }
 }
+
+pub static LEAVE_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (
+            0,
+            GROUP_ID_KEY_NAME,
+            ProtocolType::PString(PString::default()),
+        ),
+        (
+            1,
+            MEMBER_ID_KEY_NAME,
+            ProtocolType::NPBytes(NPBytes::default()),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static LEAVE_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
+        (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});

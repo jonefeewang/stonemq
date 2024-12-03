@@ -18,7 +18,7 @@ use crate::{
         kafka_consume::group::{GroupMetadata, GroupState, MemberMetadata},
         TopicPartition,
     },
-    protocol::api_schemas::consumer_protocol::ProtocolMetadata,
+    protocol::api::consumer_protocol::ProtocolMetadata,
     request::{
         consumer_group::{
             FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest,
@@ -76,7 +76,7 @@ impl GroupCoordinator {
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
         )
-        .await;
+            .await;
 
         let initial_delayed_join_purgatory =
             DelayedAsyncOperationPurgatory::<InitialDelayedJoin>::new(
@@ -84,13 +84,13 @@ impl GroupCoordinator {
                 notify_shutdown.clone(),
                 shutdown_complete_tx.clone(),
             )
-            .await;
+                .await;
         let delayed_heartbeat_purgatory = DelayedAsyncOperationPurgatory::<DelayedHeartbeat>::new(
             "delayed_heartbeat_purgatory",
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
         )
-        .await;
+            .await;
 
         let group_manager = GroupMetadataManager::load();
         let coordinator = Self::new(
@@ -101,7 +101,7 @@ impl GroupCoordinator {
             initial_delayed_join_purgatory,
             delayed_heartbeat_purgatory,
         )
-        .await;
+            .await;
 
         coordinator.active.store(true);
         debug!(
@@ -155,13 +155,13 @@ impl GroupCoordinator {
 
         if !locked_group.is(GroupState::Empty)
             && (locked_group.protocol_type() != Some(&request.protocol_type)
-                || !locked_group.is_support_protocols(
-                    &request
-                        .group_protocols
-                        .iter()
-                        .map(|p| p.name.clone())
-                        .collect(),
-                ))
+            || !locked_group.is_support_protocols(
+            &request
+                .group_protocols
+                .iter()
+                .map(|p| p.name.clone())
+                .collect(),
+        ))
         {
             // new member join group, but group is not empty, and protocol type or supported protocols are not match
             self.join_error(
@@ -198,7 +198,7 @@ impl GroupCoordinator {
                             locked_group,
                             group.clone(),
                         )
-                        .await;
+                            .await;
 
                         rx.await.unwrap()
                     }
@@ -240,7 +240,7 @@ impl GroupCoordinator {
                                 locked_group,
                                 group.clone(),
                             )
-                            .await;
+                                .await;
                             rx.await.unwrap()
                         }
                     }
@@ -269,7 +269,7 @@ impl GroupCoordinator {
                                 locked_group,
                                 group.clone(),
                             )
-                            .await;
+                                .await;
                             rx.await.unwrap()
                         } else {
                             // member is not the leader and has not changed protocol, just return current group information
@@ -396,7 +396,7 @@ impl GroupCoordinator {
                 group.clone(),
                 &KafkaError::RebalanceInProgress(group_id.clone()),
             )
-            .await;
+                .await;
 
             // 重新获取锁, 保持外部锁的使用状态
             locked_group = group.write().await;
@@ -599,7 +599,7 @@ impl GroupCoordinator {
         member.is_awaiting_join()
             || member.is_awaiting_sync()
             || member.last_heartbeat() + Duration::from_secs(member.session_timeout() as u64)
-                > heartbeat_deadline
+            > heartbeat_deadline
     }
     async fn remove_member_and_update_group(
         self: &Arc<Self>,
@@ -673,7 +673,7 @@ impl GroupCoordinator {
                                 group_clone,
                                 member_id,
                             )
-                            .await;
+                                .await;
                             info!("heartbeat found group is in preparing rebalance");
                             Err(KafkaError::RebalanceInProgress(group_id.to_string()))
                         }
@@ -690,7 +690,7 @@ impl GroupCoordinator {
                                 group_clone,
                                 member_id,
                             )
-                            .await;
+                                .await;
                             Ok(())
                         }
                     }

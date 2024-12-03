@@ -5,10 +5,7 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::{
-    message::TopicPartition, protocol::api_schemas::consumer_protocol::ProtocolMetadata,
-    service::Node, AppResult,
-};
+use crate::{message::TopicPartition, service::Node, AppResult};
 
 use super::errors::{ErrorCode, KafkaError, KafkaResult};
 
@@ -55,6 +52,19 @@ impl From<Node> for FindCoordinatorResponse {
             error: 0,
             node,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ProtocolMetadata {
+    // assignor.name
+    pub name: String,
+    // consumer protocol serialized subscription struct
+    pub metadata: BytesMut,
+}
+impl PartialEq for ProtocolMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.metadata == other.metadata
     }
 }
 
