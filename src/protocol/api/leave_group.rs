@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::{
     protocol::{
-        api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
         base::{NPBytes, PString, ProtocolType, I16, I32},
         schema::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
@@ -18,6 +17,8 @@ use once_cell::sync::Lazy;
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
 const MEMBER_ID_KEY_NAME: &str = "member_id";
+const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
+const ERROR_CODE_KEY_NAME: &str = "error_code";
 
 impl ProtocolCodec<LeaveGroupRequest> for LeaveGroupRequest {
     fn decode(

@@ -1,48 +1,34 @@
-use crate::protocol::api::consumer_groups::fetch::{
-    FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA,
-};
-use crate::protocol::api::consumer_groups::heartbeat::{
-    HEARTBEAT_REQUEST_V1_SCHEMA, HEARTBEAT_RESPONSE_V1_SCHEMA,
-};
-use crate::protocol::api::consumer_groups::join_group::{
-    JOIN_GROUP_REQUEST_V2_SCHEMA, JOIN_GROUP_RESPONSE_V2_SCHEMA,
-};
-use crate::protocol::api::consumer_groups::sync_group::{
-    SYNC_GROUP_REQUEST_V1_SCHEMA, SYNC_GROUP_RESPONSE_V1_SCHEMA,
-};
-use crate::protocol::api::consumer_groups::{
+use crate::protocol::api::{FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA};
+use crate::protocol::api::{
     FIND_COORDINATOR_REQUEST_V1_SCHEMA, FIND_COORDINATOR_RESPONSE_V1_SCHEMA,
     LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
     OFFSET_COMMIT_RESPONSE_V3_SCHEMA, OFFSET_FETCH_REQUEST_V3_SCHEMA,
     OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
+use crate::protocol::api::{HEARTBEAT_REQUEST_V1_SCHEMA, HEARTBEAT_RESPONSE_V1_SCHEMA};
+use crate::protocol::api::{JOIN_GROUP_REQUEST_V2_SCHEMA, JOIN_GROUP_RESPONSE_V2_SCHEMA};
+use crate::protocol::api::{SYNC_GROUP_REQUEST_V1_SCHEMA, SYNC_GROUP_RESPONSE_V1_SCHEMA};
 use bytes::BytesMut;
 use std::sync::Arc;
 
-use crate::protocol::api::metadata_reps::{
-    METADATA_RESPONSE_V0, METADATA_RESPONSE_V1, METADATA_RESPONSE_V2, METADATA_RESPONSE_V3,
-};
-use crate::protocol::api::metadata_req::{
-    METADATA_REQUEST_V0, METADATA_REQUEST_V1, METADATA_REQUEST_V4,
-};
-use crate::protocol::api::produce_reps::{
-    PRODUCE_RESPONSE_V0, PRODUCE_RESPONSE_V1, PRODUCE_RESPONSE_V2,
-};
-use crate::protocol::api::produce_req::{
-    PRODUCE_REQUEST_SCHEMA_V0, PRODUCE_REQUEST_SCHEMA_V3,
-};
 use crate::protocol::api::{
     API_VERSIONS_REQUEST_V0, API_VERSIONS_RESPONSE_V0, API_VERSIONS_RESPONSE_V1,
 };
+use crate::protocol::api::{METADATA_REQUEST_V0, METADATA_REQUEST_V1, METADATA_REQUEST_V4};
+use crate::protocol::api::{
+    METADATA_RESPONSE_V0, METADATA_RESPONSE_V1, METADATA_RESPONSE_V2, METADATA_RESPONSE_V3,
+};
+use crate::protocol::api::{PRODUCE_REQUEST_SCHEMA_V0, PRODUCE_REQUEST_SCHEMA_V3};
+use crate::protocol::api::{PRODUCE_RESPONSE_V0, PRODUCE_RESPONSE_V1, PRODUCE_RESPONSE_V2};
 use crate::protocol::schema::Schema;
 use crate::AppResult;
 
-use super::api_key::ApiKey::{
-    self, ApiVersionKey, Fetch, FindCoordinator, Heartbeat, JoinGroup, LeaveGroup, Metadata,
+use crate::protocol::types::ApiVersion;
+use crate::protocol::types::ApiVersion::{V0, V1, V2, V3, V4, V5};
+use crate::protocol::types::{
+    ApiKey, ApiVersionKey, Fetch, FindCoordinator, Heartbeat, JoinGroup, LeaveGroup, Metadata,
     OffsetCommit, OffsetFetch, Produce, SyncGroup,
 };
-use super::api_versions::ApiVersion;
-use ApiVersion::{V0, V1, V2, V3, V4, V5};
 
 pub trait ProtocolCodec<T> {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut;
@@ -161,6 +147,22 @@ pub trait ProtocolCodec<T> {
             (FindCoordinator, V0) => todo!("too old, not support"),
             (FindCoordinator, V1) => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
             (FindCoordinator, V2 | V3 | V4 | V5) => todo!("not exist"),
+        }
+    }
+
+    fn supported_versions(&self, api_key: ApiKey) -> Vec<ApiVersion> {
+        match api_key {
+            ApiKey::ApiVersionKey => vec![V0, V1],
+            ApiKey::Metadata => vec![V0, V1, V2, V3, V4],
+            ApiKey::Produce => vec![V0, V1, V2, V3, V4],
+            ApiKey::Fetch => vec![V0, V1, V2, V3, V4, V5],
+            ApiKey::JoinGroup => vec![V0, V1, V2],
+            ApiKey::SyncGroup => vec![V0, V1],
+            ApiKey::Heartbeat => vec![V0, V1],
+            ApiKey::LeaveGroup => vec![V0, V1],
+            ApiKey::OffsetFetch => vec![V0, V1, V2, V3],
+            ApiKey::OffsetCommit => vec![V0, V1, V2, V3],
+            ApiKey::FindCoordinator => vec![V0, V1],
         }
     }
 }

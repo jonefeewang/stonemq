@@ -1,5 +1,6 @@
-use crate::service::Node;
+use crate::protocol::ApiKey::Fetch;
 use crate::protocol::ProtocolError;
+use crate::service::Node;
 
 #[derive(Debug, Clone)]
 pub struct MetaDataRequest {

@@ -7,13 +7,11 @@ use tracing::trace;
 
 use crate::message::TopicData;
 use crate::message::{MemoryRecords, PartitionMsgData};
-use crate::protocol::array::ArrayType;
-use crate::protocol::primary_types::{NPString, PString, I16, I32};
-use crate::protocol::protocol_type::ProtocolType;
-use crate::protocol::schema::Schema;
-use crate::protocol::schema_registry::ProtocolCodec;
-use crate::protocol::value_set::ValueSet;
-use crate::protocol::{acks::Acks, api_key::ApiKey, api_versions::ApiVersion};
+use crate::protocol::base::ProtocolType;
+use crate::protocol::base::{NPString, PString, I16, I32};
+use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::types::{ApiKey, ApiVersion, ArrayType};
+use crate::protocol::{Acks, ProtocolCodec};
 use crate::request::produce::ProduceRequest;
 use crate::AppError::ProtocolError;
 use crate::AppResult;

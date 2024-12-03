@@ -6,10 +6,10 @@ use once_cell::sync::Lazy;
 use tracing::debug;
 
 use crate::message::TopicPartition;
-use crate::protocol::types::ArrayType;
 use crate::protocol::base::{NPBytes, PString, ProtocolType, I16, I32};
 use crate::protocol::schema::Schema;
 use crate::protocol::schema::ValueSet;
+use crate::protocol::types::ArrayType;
 
 use crate::{AppError, AppResult};
 

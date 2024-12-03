@@ -19,133 +19,6 @@ use crate::{
     AppError, AppResult,
 };
 
-pub static FETCH_PARTITION_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (0, "partition", ProtocolType::I32(I32::default())),
-        (1, "fetch_offset", ProtocolType::I64(I64::default())),
-        (2, "log_start_offset", ProtocolType::I64(I64::default())),
-        (3, "max_bytes", ProtocolType::I32(I32::default())),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_TOPIC_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (0, "topic", ProtocolType::PString(PString::default())),
-        (
-            1,
-            "partitions",
-            ProtocolType::Array(ArrayType {
-                can_be_empty: false,
-                p_type: Arc::new(ProtocolType::Schema(
-                    FETCH_PARTITION_REQUEST_V5_SCHEMA.clone(),
-                )),
-                values: None,
-            }),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
-        (0, "replica_id", ProtocolType::I32(I32::default())),
-        (1, "max_wait_time", ProtocolType::I32(I32::default())),
-        (2, "min_bytes", ProtocolType::I32(I32::default())),
-        (3, "max_bytes", ProtocolType::I32(I32::default())),
-        (4, "isolation_level", ProtocolType::I8(I8::default())),
-        (
-            5,
-            "topics",
-            ProtocolType::Array(ArrayType {
-                can_be_empty: true,
-                p_type: Arc::new(ProtocolType::Schema(FETCH_TOPIC_REQUEST_V5_SCHEMA.clone())),
-                values: None,
-            }),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_ABORTED_TRANSACTION_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (0, "producer_id", ProtocolType::I64(I64::default())),
-        (1, "first_offset", ProtocolType::I64(I64::default())),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-pub static FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (0, "partition", ProtocolType::I32(I32::default())),
-        (1, "error_code", ProtocolType::I16(I16::default())),
-        (2, "high_watermark", ProtocolType::I64(I64::default())),
-        (3, "last_stable_offset", ProtocolType::I64(I64::default())),
-        (4, "log_start_offset", ProtocolType::I64(I64::default())),
-        (
-            5,
-            "aborted_transactions",
-            ProtocolType::Array(ArrayType {
-                can_be_empty: true,
-                p_type: Arc::new(ProtocolType::Schema(
-                    FETCH_ABORTED_TRANSACTION_V5_SCHEMA.clone(),
-                )),
-                values: None,
-            }),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (
-            0,
-            "partition_header",
-            ProtocolType::Schema(FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA.clone()),
-        ),
-        (
-            1,
-            "record_set",
-            ProtocolType::Records(MemoryRecords::empty()),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_TOPIC_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc = vec![
-        (0, "topic", ProtocolType::PString(PString::default())),
-        (
-            1,
-            "partition_responses",
-            ProtocolType::Array(ArrayType {
-                can_be_empty: false,
-                p_type: Arc::new(ProtocolType::Schema(
-                    FETCH_PARTITION_RESPONSE_V5_SCHEMA.clone(),
-                )),
-                values: None,
-            }),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
-pub static FETCH_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
-    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
-        (0, "throttle_time_ms", ProtocolType::I32(I32::default())),
-        (
-            1,
-            "responses",
-            ProtocolType::Array(ArrayType {
-                can_be_empty: true,
-                p_type: Arc::new(ProtocolType::Schema(FETCH_TOPIC_RESPONSE_V5_SCHEMA.clone())),
-                values: None,
-            }),
-        ),
-    ];
-    Arc::new(Schema::from_fields_desc_vec(fields_desc))
-});
-
 use bytes::{BufMut, BytesMut};
 use std::borrow::Cow;
 
@@ -332,3 +205,130 @@ impl FetchResponse {
         todo!()
     }
 }
+
+pub static FETCH_PARTITION_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (0, "partition", ProtocolType::I32(I32::default())),
+        (1, "fetch_offset", ProtocolType::I64(I64::default())),
+        (2, "log_start_offset", ProtocolType::I64(I64::default())),
+        (3, "max_bytes", ProtocolType::I32(I32::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_TOPIC_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (0, "topic", ProtocolType::PString(PString::default())),
+        (
+            1,
+            "partitions",
+            ProtocolType::Array(ArrayType {
+                can_be_empty: false,
+                p_type: Arc::new(ProtocolType::Schema(
+                    FETCH_PARTITION_REQUEST_V5_SCHEMA.clone(),
+                )),
+                values: None,
+            }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, "replica_id", ProtocolType::I32(I32::default())),
+        (1, "max_wait_time", ProtocolType::I32(I32::default())),
+        (2, "min_bytes", ProtocolType::I32(I32::default())),
+        (3, "max_bytes", ProtocolType::I32(I32::default())),
+        (4, "isolation_level", ProtocolType::I8(I8::default())),
+        (
+            5,
+            "topics",
+            ProtocolType::Array(ArrayType {
+                can_be_empty: true,
+                p_type: Arc::new(ProtocolType::Schema(FETCH_TOPIC_REQUEST_V5_SCHEMA.clone())),
+                values: None,
+            }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_ABORTED_TRANSACTION_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (0, "producer_id", ProtocolType::I64(I64::default())),
+        (1, "first_offset", ProtocolType::I64(I64::default())),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+pub static FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (0, "partition", ProtocolType::I32(I32::default())),
+        (1, "error_code", ProtocolType::I16(I16::default())),
+        (2, "high_watermark", ProtocolType::I64(I64::default())),
+        (3, "last_stable_offset", ProtocolType::I64(I64::default())),
+        (4, "log_start_offset", ProtocolType::I64(I64::default())),
+        (
+            5,
+            "aborted_transactions",
+            ProtocolType::Array(ArrayType {
+                can_be_empty: true,
+                p_type: Arc::new(ProtocolType::Schema(
+                    FETCH_ABORTED_TRANSACTION_V5_SCHEMA.clone(),
+                )),
+                values: None,
+            }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (
+            0,
+            "partition_header",
+            ProtocolType::Schema(FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA.clone()),
+        ),
+        (
+            1,
+            "record_set",
+            ProtocolType::Records(MemoryRecords::empty()),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_TOPIC_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc = vec![
+        (0, "topic", ProtocolType::PString(PString::default())),
+        (
+            1,
+            "partition_responses",
+            ProtocolType::Array(ArrayType {
+                can_be_empty: false,
+                p_type: Arc::new(ProtocolType::Schema(
+                    FETCH_PARTITION_RESPONSE_V5_SCHEMA.clone(),
+                )),
+                values: None,
+            }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});
+
+pub static FETCH_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+    let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
+        (0, "throttle_time_ms", ProtocolType::I32(I32::default())),
+        (
+            1,
+            "responses",
+            ProtocolType::Array(ArrayType {
+                can_be_empty: true,
+                p_type: Arc::new(ProtocolType::Schema(FETCH_TOPIC_RESPONSE_V5_SCHEMA.clone())),
+                values: None,
+            }),
+        ),
+    ];
+    Arc::new(Schema::from_fields_desc_vec(fields_desc))
+});

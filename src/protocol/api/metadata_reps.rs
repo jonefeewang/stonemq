@@ -6,10 +6,10 @@ use once_cell::sync::Lazy;
 
 use tracing::trace;
 
-use crate::protocol::protocol_type::ProtocolType;
-use crate::protocol::schema::Schema;
-use crate::protocol::value_set::ValueSet;
-use crate::protocol::{api_key::ApiKey, api_versions::ApiVersion, schema_registry::ProtocolCodec};
+use crate::protocol::base::ProtocolType;
+use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::types::{ApiKey, ApiVersion};
+use crate::protocol::ProtocolCodec;
 use crate::request::metadata::MetadataResponse;
 use crate::AppResult;
 

@@ -1,4 +1,3 @@
-use crate::protocol::api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME};
 use crate::protocol::base::{PBytes, PString, ProtocolType, I16, I32};
 use crate::protocol::schema::{Schema, ValueSet};
 use crate::protocol::types::ArrayType;
@@ -25,6 +24,8 @@ const GROUP_PROTOCOL_KEY_NAME: &str = "group_protocol";
 const LEADER_ID_KEY_NAME: &str = "leader_id";
 const MEMBERS_KEY_NAME: &str = "members";
 const MEMBER_METADATA_KEY_NAME: &str = "member_metadata";
+const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
+const ERROR_CODE_KEY_NAME: &str = "error_code";
 
 impl ProtocolCodec<JoinGroupRequest> for JoinGroupRequest {
     fn decode(
@@ -157,7 +158,7 @@ static JOIN_GROUP_REQUEST_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-static JOIN_GROUP_REQUEST_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static JOIN_GROUP_REQUEST_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -213,7 +214,7 @@ static JOIN_GROUP_RESPONSE_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-static JOIN_GROUP_RESPONSE_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static JOIN_GROUP_RESPONSE_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),

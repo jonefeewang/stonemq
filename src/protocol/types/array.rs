@@ -5,7 +5,8 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::message::MemoryRecords;
 use crate::protocol::base::ProtocolType;
 use crate::protocol::base::{
-    Bool, NPBytes, NPString, PBytes, PString, PVarInt, PVarLong, I16, I32, I64, I8, U32,
+    Bool, NPBytes, NPString, PBytes, PString, PVarInt, PVarLong, PrimaryType, I16, I32, I64, I8,
+    U32,
 };
 use crate::protocol::schema::ValueSet;
 use crate::{AppError, AppResult};

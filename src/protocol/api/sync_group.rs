@@ -5,7 +5,6 @@ use once_cell::sync::Lazy;
 
 use crate::{
     protocol::{
-        api::{ERROR_CODE_KEY_NAME, THROTTLE_TIME_KEY_NAME},
         base::ProtocolType,
         base::{PBytes, PString, I16, I32},
         schema::{Schema, ValueSet},
@@ -21,6 +20,8 @@ const GROUP_ASSIGNMENT_KEY_NAME: &str = "group_assignment";
 const GROUP_ID_KEY_NAME: &str = "group_id";
 const MEMBER_ASSIGNMENT_KEY_NAME: &str = "member_assignment";
 const MEMBER_ID_KEY_NAME: &str = "member_id";
+const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
+const ERROR_CODE_KEY_NAME: &str = "error_code";
 
 pub static SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
