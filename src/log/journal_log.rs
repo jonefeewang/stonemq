@@ -17,8 +17,9 @@ use super::{
     NEXT_OFFSET_CHECKPOINT_FILE_NAME,
 };
 use crate::log::log_segment::LogSegment;
+use crate::log::DEFAULT_LOG_APPEND_TIME;
 use crate::message::{MemoryRecords, RecordBatch, TopicPartition};
-use crate::protocol::api::produce_reps::DEFAULT_LOG_APPEND_TIME;
+
 use crate::AppError::{self, CommonError};
 use crate::{global_config, AppResult};
 
@@ -124,7 +125,7 @@ impl JournalLog {
             log_append_info.records_count,
             memory_records,
         )
-            .await?;
+        .await?;
 
         // 追加一个批次，偏移量加1
         self.next_offset.fetch_add(1);
@@ -411,7 +412,7 @@ impl JournalLog {
                 self.topic_partition.journal_partition_dir(),
                 new_base_offset
             ))
-                .await?,
+            .await?,
             IndexFile::new(
                 format!(
                     "{}/{}.index",
@@ -421,7 +422,7 @@ impl JournalLog {
                 self.index_file_max_size as usize,
                 false,
             )
-                .await?,
+            .await?,
             None,
         ));
         segments.insert(new_base_offset, new_seg);

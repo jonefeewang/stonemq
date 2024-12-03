@@ -1,6 +1,7 @@
-use crate::protocol::ApiKey::Fetch;
-use crate::protocol::ProtocolError;
 use crate::service::Node;
+use crate::AppError;
+
+use super::errors::{ErrorCode, KafkaError};
 
 #[derive(Debug, Clone)]
 pub struct MetaDataRequest {
@@ -17,22 +18,18 @@ pub struct MetadataResponse {
 }
 impl MetadataResponse {
     pub fn new(
-        topic_metadata: Vec<(String, Option<Vec<i32>>, Option<ProtocolError>)>,
+        topic_metadata: Vec<(String, Option<Vec<i32>>, Option<AppError>)>,
         broker: Node,
     ) -> MetadataResponse {
         let topic_metadata = topic_metadata
             .into_iter()
             .map(|(topic, partitions, protocol_error)| {
-                let mut topic_error_code = 0;
+                let topic_error_code = 0;
                 if let Some(protocol_error) = protocol_error {
-                    match protocol_error {
-                        ProtocolError::InvalidTopic(detail) => {
-                            topic_error_code = detail.code;
-                        }
-                    }
-
+                    let kafka_error = KafkaError::from(protocol_error);
+                    let error_code = ErrorCode::from(&kafka_error);
                     TopicMetadata {
-                        topic_error_code,
+                        error_code: error_code as i16,
                         topic,
                         is_internal: false,
                         partition_metadata: vec![],
@@ -49,14 +46,14 @@ impl MetadataResponse {
                         })
                         .collect();
                     TopicMetadata {
-                        topic_error_code,
+                        error_code: topic_error_code,
                         topic,
                         is_internal: false,
                         partition_metadata,
                     }
                 } else {
                     TopicMetadata {
-                        topic_error_code,
+                        error_code: topic_error_code,
                         topic,
                         is_internal: false,
                         partition_metadata: vec![],
@@ -77,7 +74,7 @@ impl MetadataResponse {
 
 #[derive(Debug)]
 pub struct TopicMetadata {
-    pub topic_error_code: i16,
+    pub error_code: i16,
     pub topic: String,
     pub is_internal: bool,
     pub partition_metadata: Vec<PartitionMetadata>,

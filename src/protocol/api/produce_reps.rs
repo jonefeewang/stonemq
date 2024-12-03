@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
-use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion};
 use crate::protocol::ProtocolCodec;
 use crate::request::produce::{PartitionResponse, ProduceResponse};
@@ -41,8 +41,6 @@ const THROTTLE_TIME_MS_KEY_NAME: &str = "throttle_time_ms";
 
 const BASE_OFFSET_KEY_NAME: &str = "base_offset";
 const LOG_APPEND_TIME_KEY_NAME: &str = "log_append_time";
-
-pub const DEFAULT_LOG_APPEND_TIME: i64 = -1;
 
 pub static PRODUCE_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     let partition_reps_schema = Schema::from_fields_desc_vec(vec![

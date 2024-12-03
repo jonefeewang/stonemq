@@ -1,5 +1,5 @@
 use crate::protocol::base::{PBytes, PString, ProtocolType, I16, I32};
-use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::ArrayType;
 use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::consumer_group::{JoinGroupRequest, JoinGroupResponse, ProtocolMetadata};

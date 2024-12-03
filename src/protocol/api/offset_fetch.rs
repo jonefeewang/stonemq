@@ -1,7 +1,7 @@
 use crate::{
     protocol::{
         base::{NPString, PString, ProtocolType, I16, I32, I64},
-        schema::{Schema, ValueSet},
+        schema_base::{Schema, ValueSet},
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },
@@ -18,39 +18,21 @@ use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
-const SESSION_TIMEOUT_KEY_NAME: &str = "session_timeout";
-const REBALANCE_TIMEOUT_KEY_NAME: &str = "rebalance_timeout";
-const MEMBER_ID_KEY_NAME: &str = "member_id";
-const PROTOCOL_TYPE_KEY_NAME: &str = "protocol_type";
-const GROUP_PROTOCOLS_KEY_NAME: &str = "group_protocols";
-const PROTOCOL_NAME_KEY_NAME: &str = "protocol_name";
-const PROTOCOL_METADATA_KEY_NAME: &str = "protocol_metadata";
-const GENERATION_ID_KEY_NAME: &str = "generation_id";
-const GROUP_PROTOCOL_KEY_NAME: &str = "group_protocol";
-const LEADER_ID_KEY_NAME: &str = "leader_id";
-const MEMBERS_KEY_NAME: &str = "members";
-const MEMBER_METADATA_KEY_NAME: &str = "member_metadata";
-const MEMBER_ASSIGNMENT_KEY_NAME: &str = "member_assignment";
-const GROUP_ASSIGNMENT_KEY_NAME: &str = "group_assignment";
-const GROUP_GENERATION_ID_KEY_NAME: &str = "group_generation_id";
-const RESPONSES_KEY_NAME: &str = "responses";
-const RETENTION_TIME_KEY_NAME: &str = "retention_time";
-const UNKNOWN_MEMBER_ID: &str = "";
+
 const PARTITION_KEY_NAME: &str = "partition";
 const PARTITIONS_KEY_NAME: &str = "partitions";
 const TOPIC_KEY_NAME: &str = "topic";
 
 const OFFSET_KEY_NAME: &str = "offset";
-const MAX_BYTES_KEY_NAME: &str = "max_bytes";
 
 const PARTITION_RESPONSES_KEY_NAME: &str = "partition_responses";
 const METADATA_KEY_NAME: &str = "metadata";
 
 const TOPICS_KEY_NAME: &str = "topics";
 const ERROR_CODE_KEY_NAME: &str = "error_code";
-const ERROR_MESSAGE_KEY_NAME: &str = "error_message";
-const COORDINATOR_KEY_NAME: &str = "coordinator";
+
 const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
+const RESPONSES_KEY_NAME: &str = "responses";
 
 impl ProtocolCodec<FetchOffsetsRequest> for FetchOffsetsRequest {
     fn decode(

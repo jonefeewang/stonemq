@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 
 use crate::protocol::base::{PrimaryType, ProtocolType};
-use crate::protocol::schema::Schema;
+use crate::protocol::schema_base::Schema;
 use crate::protocol::types::ArrayType;
 
 ///

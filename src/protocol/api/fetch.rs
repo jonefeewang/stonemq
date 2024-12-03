@@ -9,7 +9,7 @@ use crate::{
     message::{MemoryRecords, TopicPartition},
     protocol::{
         base::{PString, ProtocolType, I16, I32, I64, I8},
-        schema::{Schema, ValueSet},
+        schema_base::{Schema, ValueSet},
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },

@@ -1,9 +1,7 @@
-use crate::log::LogAppendInfo;
+use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
 use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::topic_partition::{JournalPartition, QueuePartition};
 use crate::message::{TopicData, TopicPartition};
-use crate::protocol::api::produce_reps::DEFAULT_LOG_APPEND_TIME;
-use crate::protocol::{ProtocolError, INVALID_TOPIC_ERROR};
 use crate::request::errors::{ErrorCode, KafkaError};
 use crate::request::produce::PartitionResponse;
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
@@ -35,7 +33,7 @@ impl ReplicaManager {
                 notify_shutdown_clone,
                 shutdown_complete_tx_clone,
             )
-                .await
+            .await
         });
         ReplicaManager {
             log_manager,
@@ -312,7 +310,7 @@ impl ReplicaManager {
     pub fn get_queue_metadata(
         &self,
         topics: Option<Vec<Cow<str>>>,
-    ) -> Vec<(String, Option<Vec<i32>>, Option<ProtocolError>)> {
+    ) -> Vec<(String, Option<Vec<i32>>, Option<AppError>)> {
         match topics {
             None => {
                 // 返回所有主题
@@ -338,7 +336,7 @@ impl ReplicaManager {
                             None => (
                                 topic.to_string(),
                                 None,
-                                Some(ProtocolError::InvalidTopic(INVALID_TOPIC_ERROR)),
+                                Some(AppError::InvalidTopic(topic.to_string())),
                             ),
                             Some(partitions) => (
                                 topic.to_string(),

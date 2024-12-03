@@ -291,6 +291,9 @@ pub enum AppError {
 
     #[error("malformed protocol : {0}")]
     MalformedProtocol(String),
+
+    #[error("invalid topic: {0}")]
+    InvalidTopic(String),
 }
 
 impl From<AppError> for KafkaError {

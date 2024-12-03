@@ -7,7 +7,7 @@ use crate::{
     protocol::{
         base::ProtocolType,
         base::{PBytes, PString, I16, I32},
-        schema::{Schema, ValueSet},
+        schema_base::{Schema, ValueSet},
         types::ArrayType,
         ApiKey, ApiVersion, ProtocolCodec,
     },

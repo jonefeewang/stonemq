@@ -1,5 +1,4 @@
 mod api_version;
-mod consumer_protocol;
 mod fetch;
 mod find_coordinator;
 mod heartbeat;
@@ -41,13 +40,14 @@ pub use sync_group::SYNC_GROUP_RESPONSE_V1_SCHEMA;
 pub use join_group::JOIN_GROUP_REQUEST_V2_SCHEMA;
 pub use join_group::JOIN_GROUP_RESPONSE_V2_SCHEMA;
 
+pub use leave_group::LEAVE_GROUP_REQUEST_V1_SCHEMA;
+pub use leave_group::LEAVE_GROUP_RESPONSE_V1_SCHEMA;
+
 pub use heartbeat::HEARTBEAT_REQUEST_V1_SCHEMA;
 pub use heartbeat::HEARTBEAT_RESPONSE_V1_SCHEMA;
 
 pub use find_coordinator::FIND_COORDINATOR_REQUEST_V1_SCHEMA;
 pub use find_coordinator::FIND_COORDINATOR_RESPONSE_V1_SCHEMA;
-
-pub use leave_group::LEAVE_GROUP_RESPONSE_V1_SCHEMA;
 
 pub use offset_commit::OFFSET_COMMIT_REQUEST_V3_SCHEMA;
 pub use offset_commit::OFFSET_COMMIT_RESPONSE_V3_SCHEMA;

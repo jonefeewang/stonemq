@@ -1,7 +1,7 @@
 use crate::protocol::api::{FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA};
 use crate::protocol::api::{
     FIND_COORDINATOR_REQUEST_V1_SCHEMA, FIND_COORDINATOR_RESPONSE_V1_SCHEMA,
-    LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
+    LEAVE_GROUP_REQUEST_V1_SCHEMA, LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
     OFFSET_COMMIT_RESPONSE_V3_SCHEMA, OFFSET_FETCH_REQUEST_V3_SCHEMA,
     OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
@@ -20,7 +20,7 @@ use crate::protocol::api::{
 };
 use crate::protocol::api::{PRODUCE_REQUEST_SCHEMA_V0, PRODUCE_REQUEST_SCHEMA_V3};
 use crate::protocol::api::{PRODUCE_RESPONSE_V0, PRODUCE_RESPONSE_V1, PRODUCE_RESPONSE_V2};
-use crate::protocol::schema::Schema;
+use crate::protocol::schema_base::Schema;
 use crate::AppResult;
 
 use crate::protocol::types::ApiVersion;
@@ -71,7 +71,7 @@ pub trait ProtocolCodec<T> {
             (SyncGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
 
             // LeaveGroup API
-            (LeaveGroup, V0 | V1) => Arc::clone(&LEAVE_GROUP_RESPONSE_V1_SCHEMA),
+            (LeaveGroup, V0 | V1) => Arc::clone(&LEAVE_GROUP_REQUEST_V1_SCHEMA),
             (LeaveGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
 
             // Heartbeat API
@@ -147,22 +147,6 @@ pub trait ProtocolCodec<T> {
             (FindCoordinator, V0) => todo!("too old, not support"),
             (FindCoordinator, V1) => Arc::clone(&FIND_COORDINATOR_RESPONSE_V1_SCHEMA),
             (FindCoordinator, V2 | V3 | V4 | V5) => todo!("not exist"),
-        }
-    }
-
-    fn supported_versions(&self, api_key: ApiKey) -> Vec<ApiVersion> {
-        match api_key {
-            ApiKey::ApiVersionKey => vec![V0, V1],
-            ApiKey::Metadata => vec![V0, V1, V2, V3, V4],
-            ApiKey::Produce => vec![V0, V1, V2, V3, V4],
-            ApiKey::Fetch => vec![V0, V1, V2, V3, V4, V5],
-            ApiKey::JoinGroup => vec![V0, V1, V2],
-            ApiKey::SyncGroup => vec![V0, V1],
-            ApiKey::Heartbeat => vec![V0, V1],
-            ApiKey::LeaveGroup => vec![V0, V1],
-            ApiKey::OffsetFetch => vec![V0, V1, V2, V3],
-            ApiKey::OffsetCommit => vec![V0, V1, V2, V3],
-            ApiKey::FindCoordinator => vec![V0, V1],
         }
     }
 }

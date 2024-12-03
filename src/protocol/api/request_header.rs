@@ -6,7 +6,7 @@ use once_cell::sync::Lazy;
 use crate::{
     protocol::{
         base::ProtocolType,
-        schema::{Schema, ValueSet},
+        schema_base::{Schema, ValueSet},
         ApiKey, ApiVersion,
     },
     request::RequestHeader,

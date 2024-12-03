@@ -19,6 +19,8 @@ use tokio::sync::oneshot;
 
 pub use log_segment::NO_POSITION_INFO;
 
+pub const DEFAULT_LOG_APPEND_TIME: i64 = -1;
+
 /// Calculates the overhead for a journal log record.
 ///
 /// # Arguments

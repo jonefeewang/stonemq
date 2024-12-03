@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
-use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion};
 use crate::protocol::ProtocolCodec;
 use crate::request::metadata::MetadataResponse;
@@ -23,7 +23,6 @@ const PORT_KEY_NAME: &str = "port";
 const RACK_KEY_NAME: &str = "rack";
 
 const CONTROLLER_ID_KEY_NAME: &str = "controller_id";
-pub const NO_CONTROLLER_ID: i32 = -1;
 
 const CLUSTER_ID_KEY_NAME: &str = "cluster_id";
 
@@ -228,10 +227,8 @@ impl MetadataResponse {
             let mut topic_metadata_valueset =
                 metadata_rsp_valueset.sub_valueset_of_ary_field(TOPIC_METADATA_KEY_NAME);
             // error code
-            topic_metadata_valueset.append_field_value(
-                TOPIC_ERROR_CODE_KEY_NAME,
-                topic_metadata.topic_error_code.into(),
-            );
+            topic_metadata_valueset
+                .append_field_value(TOPIC_ERROR_CODE_KEY_NAME, topic_metadata.error_code.into());
             // internal
             topic_metadata_valueset.append_field_value(TOPIC_KEY_NAME, topic_metadata.topic.into());
             if topic_metadata_valueset

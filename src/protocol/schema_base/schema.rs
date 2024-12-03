@@ -9,8 +9,8 @@ use crate::protocol::base::{
     Bool, NPBytes, NPString, PBytes, PString, PVarInt, PVarLong, PrimaryType, I16, I32, I64, I8,
     U32,
 };
-use crate::protocol::schema::Field;
-use crate::protocol::schema::ValueSet;
+use crate::protocol::schema_base::Field;
+use crate::protocol::schema_base::ValueSet;
 use crate::protocol::types::ArrayType;
 use crate::AppResult;
 

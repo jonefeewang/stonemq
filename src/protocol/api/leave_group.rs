@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     protocol::{
         base::{NPBytes, PString, ProtocolType, I16, I32},
-        schema::{Schema, ValueSet},
+        schema_base::{Schema, ValueSet},
         ApiKey, ApiVersion, ProtocolCodec,
     },
     request::{

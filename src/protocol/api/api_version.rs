@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
-use crate::protocol::schema::{Schema, ValueSet};
+use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion};
 use crate::protocol::ProtocolCodec;
 use crate::request::{ApiVersionRequest, ApiVersionResponse};
@@ -118,3 +118,6 @@ pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
+
+
+
