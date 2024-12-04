@@ -1,19 +1,25 @@
-pub mod manager;
-pub mod read;
+mod delayed_fetch;
+mod manager;
+mod read;
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::log::{JournalLog, QueueLog};
-use crate::message::delayed_fetch::DelayedFetch;
-use crate::message::TopicPartition;
+use crate::log::JournalLog;
+use crate::log::LogManager;
+use crate::log::PositionInfo;
+use crate::log::QueueLog;
+use crate::message::LogFetchInfo;
+use crate::message::{JournalPartition, QueuePartition, TopicPartition};
+use crate::request::FetchRequest;
 use crate::utils::DelayedAsyncOperationPurgatory;
-use crate::LogManager;
+use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-
-use super::topic_partition::{JournalPartition, QueuePartition};
+use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct JournalReplica {
@@ -62,4 +68,13 @@ pub struct ReplicaManager {
     notify_shutdown: broadcast::Sender<()>,
     _shutdown_complete_tx: Sender<()>,
     delayed_fetch_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedFetch>>,
+}
+type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;
+#[derive(Debug)]
+pub struct DelayedFetch {
+    pub replica_manager: Arc<ReplicaManager>,
+    pub request: FetchRequest,
+    pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
+    pub tx: Arc<Mutex<Option<FetchResultSender>>>,
+    is_completed: AtomicCell<bool>,
 }

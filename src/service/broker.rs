@@ -1,7 +1,9 @@
-use crate::message::GroupCoordinator;
+use crate::group_consume::GroupCoordinator;
+use crate::log::LogManager;
+use crate::replica::ReplicaManager;
 use crate::service::Server;
 use crate::AppError::IllegalStateError;
-use crate::{global_config, AppResult, LogManager, ReplicaManager};
+use crate::{global_config, AppResult};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
@@ -28,11 +30,10 @@ impl Node {
     }
 }
 
-#[derive(Default)]
-pub struct Broker {}
+pub struct Broker;
 
 impl Broker {
-    pub fn start(&mut self, rt: &Runtime) -> AppResult<()> {
+    pub fn start(rt: &Runtime) -> AppResult<()> {
         //setup tracing
 
         let (notify_shutdown, _) = broadcast::channel(1);

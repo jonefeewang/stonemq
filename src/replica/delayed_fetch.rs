@@ -1,29 +1,21 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use crossbeam::atomic::AtomicCell;
-use tokio::sync::oneshot;
+
+use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use crate::log::PositionInfo;
 use crate::utils::DelayedAsyncOperation;
 use crate::{message::TopicPartition, request::FetchRequest};
 
-use super::replica::ReplicaManager;
-use super::LogFetchInfo;
+use super::FetchResultSender;
+use super::ReplicaManager;
 
-type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;
-
-#[derive(Debug)]
-pub struct DelayedFetch {
-    pub replica_manager: Arc<ReplicaManager>,
-    pub request: FetchRequest,
-    pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
-    pub tx: Arc<Mutex<Option<FetchResultSender>>>,
-    is_completed: AtomicCell<bool>,
-}
+use super::DelayedFetch;
 impl DelayedFetch {
     pub fn new(
         request: FetchRequest,
@@ -76,7 +68,7 @@ impl DelayedAsyncOperation for DelayedFetch {
     fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
             let result = self.replica_manager.do_fetch(&self.request).await.unwrap();
-            if let Some(tx) = self.tx.lock().unwrap().take() {
+            if let Some(tx) = self.tx.lock().await.take() {
                 tx.send(result).unwrap();
             }
         })

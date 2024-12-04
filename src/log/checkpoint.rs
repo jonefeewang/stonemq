@@ -80,6 +80,7 @@ impl CheckPointFile {
         Ok(points)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

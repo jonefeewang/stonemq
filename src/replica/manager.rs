@@ -1,11 +1,11 @@
+use super::DelayedFetch;
+use crate::log::LogManager;
 use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
-use crate::message::delayed_fetch::DelayedFetch;
-use crate::message::topic_partition::{JournalPartition, QueuePartition};
-use crate::message::{TopicData, TopicPartition};
+use crate::message::{JournalPartition, QueuePartition, TopicData, TopicPartition};
 use crate::request::{ErrorCode, KafkaError, PartitionResponse};
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
 use crate::AppError::InvalidValue;
-use crate::{global_config, AppError, AppResult, KvStore, LogManager, Shutdown};
+use crate::{global_config, AppError, AppResult, KvStore, Shutdown};
 use dashmap::DashMap;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};

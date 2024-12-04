@@ -13,11 +13,12 @@ use tokio::{
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
+use super::GroupMetadata;
+use super::GroupMetadataManager;
+use super::GroupState;
+use super::MemberMetadata;
 use crate::{
-    message::{
-        kafka_consume::group::{GroupMetadata, GroupState, MemberMetadata},
-        TopicPartition,
-    },
+    message::TopicPartition,
     request::{
         ErrorCode, FindCoordinatorRequest, FindCoordinatorResponse, JoinGroupRequest, KafkaError,
         KafkaResult, PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata,
@@ -27,10 +28,7 @@ use crate::{
     utils::DelayedAsyncOperationPurgatory,
 };
 
-use super::{
-    delayed_join::{DelayedHeartbeat, DelayedJoin, InitialDelayedJoin},
-    group::GroupMetadataManager,
-};
+use super::delayed_join::{DelayedHeartbeat, DelayedJoin, InitialDelayedJoin};
 
 #[derive(Debug)]
 pub struct GroupCoordinator {

@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
-use stonemq::log::CheckPointFile;
-use stonemq::message::MemoryRecords;
 use stonemq::AppResult;
+use stonemq::CheckPointFile;
+use stonemq::MemoryRecords;
 
 #[derive(Parser)]
 #[command(version)]

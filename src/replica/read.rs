@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::DelayedFetch;
 use super::ReplicaManager;
 use crate::log::PositionInfo;
-use crate::message::delayed_fetch::DelayedFetch;
 use crate::message::{LogFetchInfo, TopicPartition};
 use crate::request::{FetchRequest, FetchResponse};
+
 use crate::AppResult;
 
 impl ReplicaManager {

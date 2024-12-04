@@ -1,18 +1,31 @@
-use std::path::PathBuf;
-
-use super::QueueLog;
-use crate::log::file_records::FileRecords;
-
-use crate::log::log_segment::PositionInfo;
+use crate::global_config;
+use crate::log::{file_records::FileRecords, log_segment::PositionInfo};
 use crate::log::{LogType, NO_POSITION_INFO};
 use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
-use crate::{global_config, AppResult};
+use crate::AppResult;
 use bytes::BytesMut;
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tracing::{debug, trace};
 
+use super::QueueLog;
+
 impl QueueLog {
+    pub async fn get_leo_info(&self) -> AppResult<PositionInfo> {
+        let segments = self.segments.read().await;
+        let (base_offset, active_seg) = segments
+            .iter()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+        let leo_info = PositionInfo {
+            base_offset: *base_offset,
+            offset: self.last_offset.load(),
+            position: active_seg.size() as i64,
+        };
+        Ok(leo_info)
+    }
+
     /// 返回包含位置信息的 `AppResult<PositionInfo>`。
     pub async fn get_reference_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
         let segments = self.segments.read().await; // 获取读锁以进行并发读取

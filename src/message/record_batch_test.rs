@@ -1,16 +1,13 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use rand::Rng;
-
+#[cfg(test)]
 use crate::message::{
-    MemoryRecords, RecordBatch, RecordBatchBuilder, RecordHeader, MAGIC, NO_PRODUCER_EPOCH,
-    NO_PRODUCER_ID, NO_SEQUENCE,
+    constants::{MAGIC, NO_PRODUCER_EPOCH, NO_PRODUCER_ID, NO_SEQUENCE},
+    record::RecordHeader,
+    record_batch::{RecordBatch, RecordBatchBuilder},
+    MemoryRecords,
 };
 
 #[test]
 fn test_record_batch_builder() {
-    use crate::message::RecordBatchBuilder;
-
     let mut builder = RecordBatchBuilder::default();
     builder.append_record(
         Some(0),
@@ -141,7 +138,13 @@ fn test_split_record_batch() {
     assert!(records.next().is_none());
 }
 
+#[cfg(test)]
+
 fn generate_random_record_batch() -> RecordBatch {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use rand::Rng;
+
     let mut builder = RecordBatchBuilder::default();
     let mut rng = rand::thread_rng();
 

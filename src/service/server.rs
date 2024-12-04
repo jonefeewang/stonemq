@@ -11,11 +11,12 @@ use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tokio::time::{self, Duration};
 use tracing::error;
 
-use crate::message::GroupCoordinator;
+use crate::group_consume::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
+use crate::replica::ReplicaManager;
 use crate::request::{ApiRequest, RequestContext, RequestProcessor};
+use crate::AppError;
 use crate::AppResult;
-use crate::{AppError, ReplicaManager};
 
 use super::Shutdown;
 

@@ -1,7 +1,7 @@
 use clap::Parser;
 use dotenv::dotenv;
 use std::path::PathBuf;
-use stonemq::service::setup_tracing;
+use stonemq::setup_tracing;
 use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
 use tokio::runtime;
 
@@ -48,8 +48,7 @@ fn main() -> AppResult<()> {
         .set(broker_config)
         .expect("set broker config failed");
 
-    let mut broker = Broker::default();
-    broker.start(&rt)?;
+    Broker::start(&rt)?;
 
     Ok(())
 }

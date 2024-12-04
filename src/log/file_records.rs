@@ -1,6 +1,5 @@
-use crate::log::calculate_journal_log_overhead;
-
 use super::LogType;
+use crate::log::journal_log::JournalLog;
 use crate::log::log_segment::PositionInfo;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
@@ -221,7 +220,8 @@ impl FileRecords {
             .buffer
             .ok_or_else(|| InvalidValue("追加到文件时消息为空", topic_partition_id.to_string()))?;
 
-        let total_size = calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
+        let total_size =
+            JournalLog::calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
 
         buf_writer.write_u32(total_size).await?;
         buf_writer.write_i64(journal_offset).await?;

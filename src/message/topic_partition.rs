@@ -7,9 +7,9 @@ use tracing::trace;
 
 use crate::log::{LogAppendInfo, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
+use crate::replica::{JournalReplica, QueueReplica};
 use crate::{global_config, AppError, AppResult};
 
-use super::replica::{JournalReplica, QueueReplica};
 use super::LogFetchInfo;
 
 #[derive(Debug)]

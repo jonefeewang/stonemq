@@ -5,7 +5,7 @@ use tracing::{debug, trace};
 
 use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
 
-use super::{coordinator::GroupCoordinator, group::GroupMetadata};
+use super::{GroupCoordinator, GroupMetadata};
 
 #[derive(Debug)]
 pub struct DelayedJoin {

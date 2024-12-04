@@ -1,6 +1,4 @@
-use crate::log::{
-    CheckPointFile, JournalLog, QueueLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME,
-};
+use crate::log::{CheckPointFile, JournalLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -17,6 +15,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, trace, warn};
 
+use super::queue_log::QueueLog;
 use super::splitter::SplitterTask;
 
 ///

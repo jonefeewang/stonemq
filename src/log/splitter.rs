@@ -1,6 +1,6 @@
 use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
-use crate::log::{JournalLog, LogType, QueueLog};
+use crate::log::{JournalLog, LogType};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};
 use bytes::{Buf, BytesMut};
@@ -14,6 +14,8 @@ use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 use tokio::time::Interval;
 use tracing::{debug, error, instrument, trace};
+
+use super::queue_log::QueueLog;
 
 /// Splitter的读取和消费的读取还不太一样
 /// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer

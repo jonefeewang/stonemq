@@ -1,4 +1,5 @@
-use crate::{message::GroupCoordinator, ReplicaManager};
+use crate::group_consume::GroupCoordinator;
+use crate::replica::ReplicaManager;
 use std::sync::Arc;
 
 use super::RequestHeader;

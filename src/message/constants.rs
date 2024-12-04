@@ -5,10 +5,6 @@ pub const SIZE_OFFSET: usize = OFFSET_OFFSET + OFFSET_LENGTH;
 pub const SIZE_LENGTH: usize = 4;
 pub const LOG_OVERHEAD: usize = SIZE_OFFSET + SIZE_LENGTH;
 
-pub const MAGIC_OFFSET: usize = 16;
-pub const MAGIC_LENGTH: usize = 1;
-pub const HEADER_SIZE_UP_TO_MAGIC: usize = MAGIC_OFFSET + MAGIC_LENGTH;
-
 // Record Batch 相关常量
 pub const BASE_OFFSET_OFFSET: i32 = 0;
 pub const BASE_OFFSET_LENGTH: i32 = 8;

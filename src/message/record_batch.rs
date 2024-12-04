@@ -284,11 +284,11 @@ pub struct RecordBatchBuilder {
     buffer: BytesMut,
     _magic: i8,
     _attributes: i16,
-    last_offset: i64,
-    base_timestamp: i64,
-    base_offset: i64,
-    max_timestamp: i64,
-    record_count: i32,
+    _last_offset: i64,
+    _base_timestamp: i64,
+    _base_offset: i64,
+    _max_timestamp: i64,
+    _record_count: i32,
 }
 
 impl Default for RecordBatchBuilder {
@@ -297,11 +297,11 @@ impl Default for RecordBatchBuilder {
             buffer: BytesMut::with_capacity(RECORD_BATCH_OVERHEAD as usize),
             _magic: MAGIC,
             _attributes: 0,
-            last_offset: 0,
-            base_timestamp: 0,
-            base_offset: 0,
-            max_timestamp: 0,
-            record_count: 0,
+            _last_offset: 0,
+            _base_timestamp: 0,
+            _base_offset: 0,
+            _max_timestamp: 0,
+            _record_count: 0,
         };
         builder.initialize_buffer();
         builder
@@ -344,19 +344,19 @@ impl RecordBatchBuilder {
         headers: Option<Vec<RecordHeader>>,
     ) {
         let offset = offset.unwrap_or_else(|| self.next_sequence_offset());
-        if self.base_offset == 0 {
-            self.base_offset = offset;
+        if self._base_offset == 0 {
+            self._base_offset = offset;
         }
 
-        let offset_delta = offset - self.base_offset;
-        self.last_offset = offset;
+        let offset_delta = offset - self._base_offset;
+        self._last_offset = offset;
 
         let timestamp = timestamp.unwrap_or_else(Self::current_millis);
-        if self.base_timestamp == 0 {
-            self.base_timestamp = timestamp;
+        if self._base_timestamp == 0 {
+            self._base_timestamp = timestamp;
         }
-        let timestamp_delta = timestamp.saturating_sub(self.base_timestamp);
-        self.max_timestamp = timestamp;
+        let timestamp_delta = timestamp.saturating_sub(self._base_timestamp);
+        self._max_timestamp = timestamp;
 
         let key = key.as_ref();
         let value = value.as_ref();
@@ -383,7 +383,7 @@ impl RecordBatchBuilder {
             value,
             headers,
         );
-        self.record_count += 1;
+        self._record_count += 1;
     }
 
     fn write_record<T: AsRef<[u8]>>(
@@ -438,7 +438,7 @@ impl RecordBatchBuilder {
 
         // Write batch header fields
         cursor.set_position(0);
-        cursor.write_all(&self.base_offset.to_be_bytes()).unwrap();
+        cursor.write_all(&self._base_offset.to_be_bytes()).unwrap();
 
         cursor.set_position(LENGTH_OFFSET as u64);
         let length = cursor.remaining() as i32 - 4;
@@ -446,19 +446,21 @@ impl RecordBatchBuilder {
 
         cursor.set_position(LAST_OFFSET_DELTA_OFFSET as u64);
         cursor
-            .write_all(&((self.last_offset - self.base_offset) as i32).to_be_bytes())
+            .write_all(&((self._last_offset - self._base_offset) as i32).to_be_bytes())
             .unwrap();
 
         cursor.set_position(FIRST_TIMESTAMP_OFFSET as u64);
         cursor
-            .write_all(&self.base_timestamp.to_be_bytes())
+            .write_all(&self._base_timestamp.to_be_bytes())
             .unwrap();
 
         cursor.set_position(MAX_TIMESTAMP_OFFSET as u64);
-        cursor.write_all(&self.max_timestamp.to_be_bytes()).unwrap();
+        cursor
+            .write_all(&self._max_timestamp.to_be_bytes())
+            .unwrap();
 
         cursor.set_position(RECORDS_COUNT_OFFSET as u64);
-        cursor.write_all(&self.record_count.to_be_bytes()).unwrap();
+        cursor.write_all(&self._record_count.to_be_bytes()).unwrap();
 
         // Calculate and write CRC
         cursor.set_position(ATTRIBUTES_OFFSET as u64);
@@ -494,8 +496,50 @@ impl RecordBatchBuilder {
     }
 
     fn next_sequence_offset(&mut self) -> i64 {
-        let ret = self.last_offset;
-        self.last_offset += 1;
+        let ret = self._last_offset;
+        self._last_offset += 1;
         ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_record_batch_builder() {
+        let mut builder = RecordBatchBuilder::default();
+
+        // 添加第一条记录
+        let key1 = "key1";
+        let value1 = "value1";
+        builder.append_record(None, None, key1, value1, None);
+
+        // 添加第二条记录，带有时间戳和偏移量
+        let key2 = "key2";
+        let value2 = "value2";
+        let offset = 5;
+        let timestamp = 1234567890;
+        builder.append_record_with_offset(offset, timestamp, key2, value2);
+
+        // 添加第三条记录，带有header
+        let key3 = "key3";
+        let value3 = "value3";
+        let headers = vec![RecordHeader {
+            header_key: "header1".to_string(),
+            header_value: Some(b"header_value1".to_vec()),
+        }];
+        builder.append_record(None, None, key3, value3, Some(headers));
+
+        // 构建RecordBatch
+        let batch = builder.build();
+        let header = batch.header();
+
+        // 验证header字段
+        assert_eq!(header.magic, MAGIC);
+        assert_eq!(header.attributes, ATTRIBUTES);
+        assert_eq!(header.records_count, 3);
+        assert_eq!(header.first_offset, 0);
+        assert!(header.max_timestamp > 0);
     }
 }
