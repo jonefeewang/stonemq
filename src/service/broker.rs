@@ -2,7 +2,7 @@ use crate::group_consume::GroupCoordinator;
 use crate::log::LogManager;
 use crate::replica::ReplicaManager;
 use crate::service::Server;
-use crate::AppError::IllegalStateError;
+use crate::AppError::{self, IllegalStateError};
 use crate::{global_config, AppResult};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -60,7 +60,9 @@ impl Broker {
         ))?;
 
         // tcp server has been shutdown, send shutdown signal
-        notify_shutdown.send(())?;
+        notify_shutdown
+            .send(())
+            .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
         drop(log_manager);
         drop(replica_manager);
         // rt.block_on(async { drop(_otel_guard) });

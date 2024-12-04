@@ -224,7 +224,8 @@ impl QueueLog {
                 ),
             )
             .await?;
-        rx.await??;
+        rx.await
+            .map_err(|e| AppError::ChannelRecvError(e.to_string()))?;
         Ok(())
     }
     /// Creates an error for when no active segment is found.

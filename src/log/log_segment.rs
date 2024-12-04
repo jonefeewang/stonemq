@@ -3,6 +3,7 @@ use crate::log::index_file::IndexFile;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
+use crate::AppError;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::path::Path;
@@ -177,13 +178,15 @@ impl LogSegment {
                 self.file_records
                     .tx
                     .send(FileOp::AppendJournal(records_package))
-                    .await?;
+                    .await
+                    .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
             }
             LogType::Queue => {
                 self.file_records
                     .tx
                     .send(FileOp::AppendQueue(records_package))
-                    .await?;
+                    .await
+                    .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
             }
         }
 
@@ -192,8 +195,14 @@ impl LogSegment {
 
     pub(crate) async fn flush(&self) -> AppResult<u64> {
         let (tx, rx) = oneshot::channel::<AppResult<u64>>();
-        self.file_records.tx.send(FileOp::Flush(tx)).await?;
-        let size = rx.await??;
+        self.file_records
+            .tx
+            .send(FileOp::Flush(tx))
+            .await
+            .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
+        let size = rx
+            .await
+            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
         self.offset_index.trim_to_valid_size().await?;
         self.offset_index.flush().await?;
         Ok(size)

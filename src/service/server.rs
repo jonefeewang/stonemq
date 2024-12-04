@@ -224,7 +224,9 @@ impl ConnectionHandler {
                 Err(_) => {
                     // 请求处理器panic意外退出，没有发送响应，关闭连接
                     error!("Request processor dropped without sending response");
-                    return Err(AppError::TaskError("Response channel closed".into()));
+                    return Err(AppError::IllegalStateError(
+                        "Response channel closed".into(),
+                    ));
                 }
             }
         }

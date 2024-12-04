@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
 
+use crate::AppError;
 use crate::AppResult;
 
 ///
@@ -35,7 +36,8 @@ impl KvStore {
                 store: HashMap::new(),
             })
         } else {
-            let store: HashMap<String, String> = serde_json::from_str(&contents)?;
+            let store: HashMap<String, String> = serde_json::from_str(&contents)
+                .map_err(|e| AppError::InvalidValue(e.to_string()))?;
             Ok(KvStore { store })
         }
     }
@@ -61,7 +63,8 @@ impl KvStore {
     pub fn save(&self, path: &str) -> AppResult<()> {
         let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
 
-        let contents = serde_json::to_string_pretty(&self.store)?;
+        let contents = serde_json::to_string_pretty(&self.store)
+            .map_err(|e| AppError::InvalidValue(e.to_string()))?;
         file.set_len(contents.len() as u64)?;
         file.write_all(contents.as_bytes())?;
         Ok(())

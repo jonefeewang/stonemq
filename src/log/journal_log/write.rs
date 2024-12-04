@@ -303,7 +303,8 @@ impl JournalLog {
                 ),
             )
             .await?;
-        rx.await??;
+        rx.await
+            .map_err(|e| AppError::ChannelRecvError(e.to_string()))?;
         Ok(())
     }
 

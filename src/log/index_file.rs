@@ -98,13 +98,13 @@ impl IndexFile {
     pub async fn add_entry(&self, relative_offset: u32, position: u32) -> AppResult<()> {
         let mut mode = self.mode.write().await;
         match &mut *mode {
-            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
-                "尝试向只读索引文件添加条目".into(),
+            IndexFileMode::ReadOnly(_) => Err(AppError::InvalidOperation(
+                "try to add entry to read-only index file".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
                 let entries = self.entries.load();
                 if (entries + 1) * INDEX_ENTRY_SIZE > mmap.len() {
-                    return Err(AppError::IndexFileFull);
+                    return Err(AppError::InvalidOperation("index file is full".into()));
                 }
 
                 let offset = entries * INDEX_ENTRY_SIZE;
@@ -126,8 +126,8 @@ impl IndexFile {
     pub async fn resize(&self, new_size: usize) -> AppResult<()> {
         let mut mode = self.mode.write().await;
         match &mut *mode {
-            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
-                "尝试调整只读索引文件的大小".into(),
+            IndexFileMode::ReadOnly(_) => Err(AppError::InvalidOperation(
+                "try to resize read-only index file".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
                 debug!("resizing index file:{:?} to size: {}", self.file, new_size);
@@ -230,8 +230,8 @@ impl IndexFile {
     pub async fn flush(&self) -> AppResult<()> {
         let mmap = &*self.mode.write().await;
         match mmap {
-            IndexFileMode::ReadOnly(_) => Err(AppError::ReadOnlyIndexModification(
-                "尝试刷新只读索引文件".into(),
+            IndexFileMode::ReadOnly(_) => Err(AppError::InvalidOperation(
+                "try to flush read-only index file".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
                 mmap.flush()?;
@@ -285,8 +285,8 @@ impl IndexFile {
         {
             let mmap = &*self.mode.read().await;
             if let IndexFileMode::ReadOnly(_) = mmap {
-                return Err(AppError::ReadOnlyIndexModification(
-                    "尝试裁剪只读索引文件".into(),
+                return Err(AppError::InvalidOperation(
+                    "try to trim read-only index file".into(),
                 ));
             }
             // 释放读锁
@@ -514,34 +514,22 @@ mod tests {
 
         index_file.add_entry(100, 200).await.unwrap();
         let result = index_file.add_entry(300, 400).await;
-        assert!(matches!(result, Err(AppError::IndexFileFull)));
+        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
 
         let read_only_file = IndexFile::new(&file_path, INDEX_ENTRY_SIZE, true)
             .await
             .unwrap();
         let result = read_only_file.add_entry(500, 600).await;
-        assert!(matches!(
-            result,
-            Err(AppError::ReadOnlyIndexModification(_))
-        ));
+        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
 
         let result = read_only_file.resize(2048).await;
-        assert!(matches!(
-            result,
-            Err(AppError::ReadOnlyIndexModification(_))
-        ));
+        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
 
         let result = read_only_file.flush().await;
-        assert!(matches!(
-            result,
-            Err(AppError::ReadOnlyIndexModification(_))
-        ));
+        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
 
         let result = read_only_file.trim_to_valid_size().await;
-        assert!(matches!(
-            result,
-            Err(AppError::ReadOnlyIndexModification(_))
-        ));
+        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
     }
 
     #[rstest]

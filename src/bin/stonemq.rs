@@ -1,8 +1,8 @@
 use clap::Parser;
 use dotenv::dotenv;
 use std::path::PathBuf;
-use stonemq::setup_tracing;
-use stonemq::{AppResult, Broker, BrokerConfig, GLOBAL_CONFIG};
+use stonemq::{setup_tracing, GLOBAL_CONFIG};
+use stonemq::{AppResult, Broker, BrokerConfig};
 use tokio::runtime;
 
 #[derive(Parser)]
