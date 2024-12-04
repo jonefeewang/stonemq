@@ -1,11 +1,9 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use tracing::instrument;
 
 use crate::message::{TopicData, TopicPartition};
 use crate::protocol::Acks;
-use crate::{AppError, AppResult};
 
 use crate::request::RequestContext;
 
@@ -32,15 +30,6 @@ impl ProduceRequest {
             timeout,
             topic_data,
         }
-    }
-
-    pub fn validate(&self) -> AppResult<()> {
-        if self.timeout < 0 {
-            return Err(AppError::RequestError(Cow::Borrowed(
-                "timeout must be >= 0",
-            )));
-        }
-        Ok(())
     }
 }
 impl PartialEq for ProduceRequest {

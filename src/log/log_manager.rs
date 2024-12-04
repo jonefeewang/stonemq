@@ -98,7 +98,7 @@ impl LogManager {
 
         if !PathBuf::from(&self.journal_log_path).exists() {
             error!("journal log path not exist:{}", self.journal_log_path);
-            return Err(AppError::CommonError(format!(
+            return Err(AppError::IllegalStateError(format!(
                 "journal log path not exist:{}",
                 self.journal_log_path.clone(),
             )));
@@ -145,12 +145,12 @@ impl LogManager {
         index_file_max_size: u32,
         rt: &Runtime,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
-        info!("从 {} 加载队列日志", self.queue_log_path);
+        info!("load queue logs from {}", self.queue_log_path);
 
         if !PathBuf::from(&self.queue_log_path).exists() {
-            error!("队列日志路径不存在：{}", self.queue_log_path);
-            return Err(AppError::CommonError(format!(
-                "队列日志路径不存在：{}",
+            error!("queue log path not exist:{}", self.queue_log_path);
+            return Err(AppError::IllegalStateError(format!(
+                "queue log path not exist:{}",
                 self.queue_log_path.clone(),
             )));
         }
@@ -168,16 +168,16 @@ impl LogManager {
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
                 let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size, rt)?;
 
-                trace!("找到日志：{:}", &tp.id());
+                trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
             } else {
-                warn!("无效的日志目录：{:?}", dir.path().to_string_lossy());
+                warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
             }
         }
         info!(
-            "从目录 {} 加载了 {} 个日志",
-            self.queue_log_path,
-            logs.len()
+            "load {} logs from dir:{} finished",
+            logs.len(),
+            self.queue_log_path
         );
         Ok(logs)
     }

@@ -1,5 +1,5 @@
 use crate::message::TopicPartition;
-use crate::AppError::InvalidValue;
+use crate::AppError::{self};
 use crate::AppResult;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -49,7 +49,7 @@ impl CheckPointFile {
     }
 
     pub async fn read_checkpoints(&self) -> AppResult<HashMap<TopicPartition, i64>> {
-        let error = |line| InvalidValue("checkpoint {}", line);
+        let error = |line| AppError::InvalidValue(format!("checkpoint {}", line));
         trace!("read checkpoints from {}", self.file_name);
         let open_file = OpenOptions::new().read(true).open(&self.file_name).await;
         if open_file.is_err() {
@@ -60,9 +60,17 @@ impl CheckPointFile {
         let mut reader = BufReader::new(open_file?);
         let mut line_buffer = String::new();
         reader.read_line(&mut line_buffer).await?;
-        let version = line_buffer.trim().parse::<i8>()?;
+        let version = line_buffer.trim().parse::<i8>().map_err(|err| {
+            AppError::InvalidValue(format!(
+                "provide version: {}, expect version: {}",
+                err, self.version
+            ))
+        })?;
         if version != self.version {
-            return Err(InvalidValue("version", self.version.to_string()));
+            return Err(AppError::InvalidValue(format!(
+                "version: {}, expect: {}",
+                version, self.version
+            )));
         }
         let mut points = HashMap::new();
         let mut line = String::new();
@@ -73,7 +81,11 @@ impl CheckPointFile {
             }
             let tp_str = parts.next().ok_or(error(String::from("topic partition")))?;
             let topic_partition = TopicPartition::from_string(Cow::Borrowed(tp_str))?;
-            let offset = parts.next().ok_or(error(String::from("offset")))?.parse()?;
+            let offset = parts
+                .next()
+                .ok_or(error(String::from("offset")))?
+                .parse::<i64>()
+                .map_err(|err| AppError::InvalidValue(format!("offset: {}", err)))?;
             points.insert(topic_partition, offset);
             line.clear();
         }

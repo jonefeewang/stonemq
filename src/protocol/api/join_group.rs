@@ -6,7 +6,7 @@ use crate::request::{JoinGroupRequest, JoinGroupResponse, ProtocolMetadata};
 use crate::{AppError, AppResult};
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
-use std::borrow::Cow;
+
 use std::sync::Arc;
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
@@ -51,11 +51,9 @@ impl JoinGroupRequest {
         let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME).into();
         let protocol_type = value_set.get_field_value(PROTOCOL_TYPE_KEY_NAME).into();
         let group_protocols: ArrayType = value_set.get_field_value(GROUP_PROTOCOLS_KEY_NAME).into();
-        let protocol_ary = group_protocols
-            .values
-            .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                "group protocols is empty",
-            )))?;
+        let protocol_ary = group_protocols.values.ok_or(AppError::MalformedProtocol(
+            "group protocols is empty".to_string(),
+        ))?;
         let mut group_protocols = Vec::with_capacity(protocol_ary.len());
         for protocol in protocol_ary {
             let mut protocol_metadata: ValueSet = protocol.into();

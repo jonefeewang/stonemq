@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
-use stonemq::AppResult;
 use stonemq::CheckPointFile;
 use stonemq::MemoryRecords;
+use stonemq::{AppError, AppResult};
 
 #[derive(Parser)]
 #[command(version)]
@@ -94,7 +94,8 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         let journal_offset: i64 = buffer.get_i64();
 
         let str_len = buffer.get_u32();
-        let queue_topic_name = String::from_utf8(buffer[..str_len as usize].to_vec())?;
+        let queue_topic_name = String::from_utf8(buffer[..str_len as usize].to_vec())
+            .map_err(|e| AppError::InvalidValue(e.to_string()))?;
         buffer.advance(str_len as usize);
 
         // first batch queue base offset

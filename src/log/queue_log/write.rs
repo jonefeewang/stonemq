@@ -237,8 +237,8 @@ impl QueueLog {
     ///
     /// Returns an `AppError` describing the error condition.
     pub fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
-        AppError::CommonError(format!(
-            "No active segment for topic partition: {}",
+        AppError::IllegalStateError(format!(
+            "no active segment, topic partition: {}",
             topic_partition
         ))
     }

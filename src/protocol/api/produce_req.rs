@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use bytes::BytesMut;
@@ -13,8 +12,8 @@ use crate::protocol::schema_base::{Schema, ValueSet};
 use crate::protocol::types::{ApiKey, ApiVersion, ArrayType};
 use crate::protocol::{Acks, ProtocolCodec};
 use crate::request::ProduceRequest;
-use crate::AppError::ProtocolError;
-use crate::AppResult;
+
+use crate::{AppError, AppResult};
 
 pub const TRANSACTIONAL_ID_KEY_NAME: &str = "transactional_id";
 pub const ACKS_KEY_NAME: &str = "acks";
@@ -59,9 +58,9 @@ impl ProduceRequest {
 
         let topic_ary_field = produce_req_value_set.get_field_value(TOPIC_DATA_KEY_NAME);
         let topic_ary_type: ArrayType = topic_ary_field.into();
-        let topic_ary = topic_ary_type
-            .values
-            .ok_or(ProtocolError(Cow::Borrowed("topic data is empty")))?;
+        let topic_ary = topic_ary_type.values.ok_or(AppError::MalformedProtocol(
+            "topic data is empty".to_string(),
+        ))?;
         let mut topic_array = Vec::with_capacity(topic_ary.len());
         for topic_value in topic_ary {
             let mut topic_data_value_set: ValueSet = topic_value.into();
@@ -75,7 +74,9 @@ impl ProduceRequest {
 
             let partition_data = partition_array_type
                 .values
-                .ok_or(ProtocolError(Cow::Borrowed("partition data is empty")))?;
+                .ok_or(AppError::MalformedProtocol(
+                    "partition data is empty".to_string(),
+                ))?;
             let mut partition_ary = Vec::with_capacity(partition_data.len());
             for partition in partition_data {
                 if let ProtocolType::ValueSet(mut value_set) = partition {

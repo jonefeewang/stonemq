@@ -3,12 +3,10 @@ extern crate config as _;
 use std::io;
 use std::path::Path;
 use std::process::exit;
-use std::string::FromUtf8Error;
 use std::{borrow::Cow, time::Duration};
 
 use crate::log::FileOp;
 use crate::request::KafkaError;
-use crate::AppError::InvalidValue;
 
 use once_cell::sync::OnceCell;
 
@@ -221,21 +219,21 @@ pub static GLOBAL_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
 pub enum AppError {
-    #[error("error in reading network stream : {0}")]
-    NetworkReadError(Cow<'static, str>),
-    #[error("error in writing network stream : {0}")]
-    NetworkWriteError(Cow<'static, str>),
-    #[error("{0}")]
-    ProtocolError(Cow<'static, str>),
-    #[error("{0}")]
-    RequestError(Cow<'static, str>),
-    #[error("error in convention : {0}")]
-    ConventionError(#[from] FromUtf8Error),
-    ParseError(#[from] std::num::ParseIntError),
-    #[error("invalid provided {0} value = {1}")]
-    InvalidValue(&'static str, String),
-    #[error("{0}")]
-    CommonError(String),
+    // #[error("error in reading network stream : {0}")]
+    // NetworkReadError(Cow<'static, str>),
+    // #[error("error in writing network stream : {0}")]
+    // NetworkWriteError(Cow<'static, str>),
+    // #[error("{0}")]
+    // ProtocolError(Cow<'static, str>),
+    // #[error("{0}")]
+    // RequestError(Cow<'static, str>),
+    // #[error("error in convention : {0}")]
+    // ConventionError(#[from] FromUtf8Error),
+    // ParseError(#[from] std::num::ParseIntError),
+    // #[error("invalid provided {0} value = {1}")]
+    // InvalidValue(&'static str, String),
+    // #[error("{0}")]
+    // CommonError(String),
     #[error("{0}")]
     FileContentUnavailableError(String),
     FormatError(#[from] serde_json::Error),
@@ -286,20 +284,28 @@ pub enum AppError {
     #[error("invalid request: {0}")]
     InvalidRequest(String),
 
+    #[error("invalid topic: {0}")]
+    InvalidTopic(String),
+
+    ////////////////////////////
     #[error("illegal state: {0}")]
     IllegalStateError(String),
 
     #[error("malformed protocol : {0}")]
     MalformedProtocol(String),
 
-    #[error("invalid topic: {0}")]
-    InvalidTopic(String),
+    #[error("invalid value: {0}")]
+    InvalidValue(String),
 }
 
 impl From<AppError> for KafkaError {
     fn from(value: AppError) -> Self {
         match value {
             AppError::Unknown(s) => KafkaError::Unknown(s),
+            AppError::CorruptMessage(s) => KafkaError::CorruptMessage(s),
+            AppError::MessageTooLarge(s) => KafkaError::MessageTooLarge(s),
+            AppError::InvalidRequest(s) => KafkaError::InvalidRequest(s),
+            AppError::InvalidTopic(s) => KafkaError::InvalidTopic(s),
             _ => KafkaError::Unknown(value.to_string()),
         }
     }
@@ -368,7 +374,10 @@ impl BrokerConfig {
         let path_str = path
             .as_ref()
             .to_str()
-            .ok_or(InvalidValue("config file path", String::new()))?;
+            .ok_or(AppError::InvalidValue(format!(
+                "config file path: {}",
+                path.as_ref().to_string_lossy()
+            )))?;
         let config = config::Config::builder()
             .add_source(config::File::with_name(path_str))
             .build()

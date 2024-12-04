@@ -4,7 +4,7 @@ use crate::log::log_segment::PositionInfo;
 use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
-use crate::AppError::InvalidValue;
+use crate::AppError;
 use crate::AppResult;
 
 use bytes::Buf;
@@ -216,9 +216,12 @@ impl FileRecords {
         let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();
 
-        let msg = records
-            .buffer
-            .ok_or_else(|| InvalidValue("追加到文件时消息为空", topic_partition_id.to_string()))?;
+        let msg = records.buffer.ok_or_else(|| {
+            AppError::IllegalStateError(format!(
+                "append to file, message is empty, topic partition: {}",
+                topic_partition_id
+            ))
+        })?;
 
         let total_size =
             JournalLog::calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
@@ -244,9 +247,12 @@ impl FileRecords {
         let topic_partition_id = topic_partition.id();
         let total_write = records.size();
 
-        let msg = records
-            .buffer
-            .ok_or_else(|| InvalidValue("追加到文件时消息为空", topic_partition_id.to_string()))?;
+        let msg = records.buffer.ok_or_else(|| {
+            AppError::IllegalStateError(format!(
+                "append to file, message is empty, topic partition: {}",
+                topic_partition_id
+            ))
+        })?;
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
         Ok(total_write)

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use crate::{
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
@@ -35,9 +35,9 @@ impl TryFrom<i8> for IsolationLevel {
         match value {
             0 => Ok(IsolationLevel::ReadUncommitted),
             1 => Ok(IsolationLevel::ReadCommitted),
-            _ => Err(AppError::ProtocolError(Cow::Borrowed(
-                "invalid isolation level",
-            ))),
+            _ => Err(AppError::MalformedProtocol(
+                "invalid isolation level".to_string(),
+            )),
         }
     }
 }

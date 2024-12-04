@@ -41,10 +41,11 @@ impl JournalPartition {
         let log = {
             let replica = self.assigned_replicas.get(&local_replica_id);
             if replica.is_none() {
-                return Err(AppError::InvalidValue(
-                    "replica",
-                    local_replica_id.to_string(),
-                ));
+                return Err(AppError::IllegalStateError(format!(
+                    "replica: {}, topic partition: {}",
+                    local_replica_id,
+                    queue_topic_partition.id()
+                )));
             }
             replica.unwrap().log.clone()
         };
@@ -81,10 +82,19 @@ impl QueuePartition {
         }
         let local_replica_id = global_config().general.id;
 
-        let replica = self
-            .assigned_replicas
-            .get(&local_replica_id)
-            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+        let replica = {
+            let replica = self
+                .assigned_replicas
+                .get(&local_replica_id)
+                .ok_or_else(|| {
+                    AppError::IllegalStateError(format!(
+                        "replica: {}, topic partition: {}",
+                        local_replica_id,
+                        self.topic_partition.id()
+                    ))
+                })?;
+            replica.clone()
+        };
 
         replica
             .log
@@ -98,15 +108,21 @@ impl QueuePartition {
 
     pub async fn get_leo_info(&self) -> AppResult<PositionInfo> {
         let local_replica_id = global_config().general.id;
-        let replica = self
-            .assigned_replicas
-            .get(&local_replica_id)
-            .ok_or_else(|| AppError::InvalidValue("replica", local_replica_id.to_string()))?;
+        let replica = {
+            let replica = self
+                .assigned_replicas
+                .get(&local_replica_id)
+                .ok_or_else(|| {
+                    AppError::IllegalStateError(format!(
+                        "replica: {}, topic partition: {}",
+                        local_replica_id,
+                        self.topic_partition.id()
+                    ))
+                })?;
+            replica.clone()
+        };
 
-        let log_clone = replica.log.clone();
-        drop(replica);
-
-        log_clone.get_leo_info().await
+        replica.log.get_leo_info().await
     }
 }
 
@@ -134,11 +150,11 @@ impl TopicPartition {
     pub fn from_string(str_name: Cow<str>) -> AppResult<Self> {
         let (topic, partition) = str_name
             .rsplit_once('-')
-            .ok_or_else(|| AppError::InvalidValue("topic partition name", str_name.to_string()))?;
+            .ok_or_else(|| AppError::InvalidValue(format!("topic partition name:{}", str_name)))?;
 
         let partition = partition
             .parse()
-            .map_err(|_| AppError::InvalidValue("topic partition id", partition.to_string()))?;
+            .map_err(|_| AppError::InvalidValue(format!("topic partition id:{}", partition)))?;
 
         Ok(Self::new(topic.to_string(), partition))
     }

@@ -18,7 +18,6 @@ use crate::{
 };
 
 use bytes::{BufMut, BytesMut};
-use std::borrow::Cow;
 
 impl ProtocolCodec<FetchRequest> for FetchRequest {
     fn encode(self, _api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
@@ -63,11 +62,9 @@ impl FetchRequest {
         let isolation_level = IsolationLevel::try_from(isolation_level_i8)?;
 
         let topics_array: ArrayType = value_set.get_field_value("topics").into();
-        let topics_values = topics_array
-            .values
-            .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                "topics array is empty",
-            )))?;
+        let topics_values = topics_array.values.ok_or(AppError::MalformedProtocol(
+            "topics array is empty".to_string(),
+        ))?;
 
         let mut topics = Vec::new();
         for topic_value in topics_values {
@@ -75,12 +72,9 @@ impl FetchRequest {
             let topic: String = topic_value_set.get_field_value("topic").into();
 
             let partitions_array: ArrayType = topic_value_set.get_field_value("partitions").into();
-            let partitions_values =
-                partitions_array
-                    .values
-                    .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                        "partitions array is empty",
-                    )))?;
+            let partitions_values = partitions_array.values.ok_or(AppError::MalformedProtocol(
+                "partitions array is empty".to_string(),
+            ))?;
 
             let mut partitions = Vec::new();
             for partition_value in partitions_values {

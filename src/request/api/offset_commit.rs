@@ -3,6 +3,7 @@ use std::{collections::HashMap, io::Read};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tracing::debug;
 
+use crate::AppError;
 use crate::{message::TopicPartition, AppResult};
 
 use crate::request::errors::KafkaError;
@@ -62,7 +63,10 @@ impl PartitionOffsetCommitData {
         let metadata = if metadata_len != -1 {
             let mut metadata = vec![0; metadata_len as usize];
             cursor.read_exact(&mut metadata)?;
-            Some(String::from_utf8(metadata)?)
+            Some(
+                String::from_utf8(metadata)
+                    .map_err(|e| AppError::MalformedProtocol(e.to_string()))?,
+            )
         } else {
             None
         };

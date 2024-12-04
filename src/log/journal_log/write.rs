@@ -313,6 +313,9 @@ impl JournalLog {
     ///
     /// 返回一个 `AppError` 表示未找到活动段。
     pub fn no_active_segment_error(&self) -> AppError {
-        AppError::CommonError(format!("未找到活动段，主题分区: {}", self.topic_partition))
+        AppError::IllegalStateError(format!(
+            "no active segment, topic partition: {}",
+            self.topic_partition.id()
+        ))
     }
 }

@@ -239,9 +239,10 @@ impl PrimaryType for NPString {
         } else {
             // trace!("Reading NPString with length: {}", length);
             Ok(ProtocolType::NPString(NPString {
-                value: Some(String::from_utf8(
-                    buffer.split_to(length as usize).to_vec(),
-                )?),
+                value: Some(
+                    String::from_utf8(buffer.split_to(length as usize).to_vec())
+                        .map_err(|e| AppError::MalformedProtocol(e.to_string()))?,
+                ),
             }))
         }
     }

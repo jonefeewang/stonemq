@@ -4,7 +4,6 @@ use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{JournalPartition, QueuePartition, TopicData, TopicPartition};
 use crate::request::{ErrorCode, KafkaError, PartitionResponse};
 use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
-use crate::AppError::InvalidValue;
 use crate::{global_config, AppError, AppResult, KvStore, Shutdown};
 use dashmap::DashMap;
 use std::borrow::Cow;
@@ -142,7 +141,9 @@ impl ReplicaManager {
         // Here, a simulated journal topic list includes: journal-0, journal-1
         let journal_tps = kv_store
             .get(JOURNAL_TOPICS_LIST)
-            .ok_or(InvalidValue("journal_topics_list", String::new()))?;
+            .ok_or(AppError::InvalidValue(
+                "kv config journal_topics_list".to_string(),
+            ))?;
         let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
         let mut partitions = self.create_journal_partitions(broker_id, tp_strs, rt)?;
         self.all_journal_partitions.extend(
@@ -162,7 +163,9 @@ impl ReplicaManager {
         // Here, simulate 10 queue partitions (with 5 queue partitions allocated to each journal).
         let queue_tps = kv_store
             .get(QUEUE_TOPICS_LIST)
-            .ok_or(InvalidValue("queue_topics_list", String::new()))?;
+            .ok_or(AppError::InvalidValue(
+                "kv config queue_topics_list".to_string(),
+            ))?;
         let tp_strs: Vec<&str> = queue_tps.split(',').collect();
         let mut partitions = self.create_queue_partitions(broker_id, tp_strs, rt)?;
         self.all_queue_partitions.extend(

@@ -1,7 +1,7 @@
 use crate::log::IndexFile;
 use crate::log::{file_records::FileRecords, log_segment::LogSegment};
 use crate::message::TopicPartition;
-use crate::AppResult;
+use crate::{AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
 use tokio::runtime::Runtime;
@@ -60,7 +60,15 @@ impl QueueLog {
                                     index_file_max_size as usize,
                                     false,
                                 ))?;
-                                index_files.insert(file_prefix.parse::<i64>()?, index_file);
+                                index_files.insert(
+                                    file_prefix.parse::<i64>().map_err(|_| {
+                                        AppError::InvalidValue(format!(
+                                            "invalid index file name: {}",
+                                            file_prefix
+                                        ))
+                                    })?,
+                                    index_file,
+                                );
                             }
                             ".log" => {
                                 // TODO: 修复还未flush到磁盘上的数据，就是recovery_point到log最后的一个offset数据

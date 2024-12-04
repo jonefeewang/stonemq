@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::{BufMut, BytesMut};
 use once_cell::sync::Lazy;
@@ -99,12 +99,9 @@ impl SyncGroupRequest {
         let member_id = value_set.get_field_value(MEMBER_ID_KEY_NAME).into();
         let group_assignment: ArrayType =
             value_set.get_field_value(GROUP_ASSIGNMENT_KEY_NAME).into();
-        let group_assignment_ary =
-            group_assignment
-                .values
-                .ok_or(AppError::ProtocolError(Cow::Borrowed(
-                    "group assignment is empty",
-                )))?;
+        let group_assignment_ary = group_assignment.values.ok_or(AppError::MalformedProtocol(
+            "group assignment is empty".to_string(),
+        ))?;
         let mut group_assignment = HashMap::with_capacity(group_assignment_ary.len());
         for member_assignment in group_assignment_ary {
             let mut member_assignment_value_set: ValueSet = member_assignment.into();
