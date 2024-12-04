@@ -13,7 +13,7 @@ use tracing::error;
 
 use crate::message::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
-use crate::request::{ApiRequest, RequestProcessor};
+use crate::request::{ApiRequest, RequestContext, RequestProcessor};
 use crate::AppResult;
 use crate::{AppError, ReplicaManager};
 
@@ -149,14 +149,13 @@ async fn process_request(
     let api_request = ApiRequest::try_from((request_body, &request_header));
     if let Ok(api_request) = api_request {
         // 处理请求的具体逻辑
-        let response = RequestProcessor::process_request(
-            api_request,
+        let context = RequestContext {
             client_ip,
-            &request_header,
+            request_header,
             replica_manager,
             group_coordinator,
-        )
-        .await;
+        };
+        let response = RequestProcessor::process_request(api_request, &context).await;
         if let Err(e) = response_tx.send(response) {
             // 这种发送错误，往往是无法恢复的，直接打印错误，继续处理下一个请求，无需反馈给客户端
             error!("Failed to send response: {:?}", e);

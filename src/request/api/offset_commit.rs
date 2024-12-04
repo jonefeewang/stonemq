@@ -1,10 +1,39 @@
 use std::{collections::HashMap, io::Read};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use tracing::debug;
 
 use crate::{message::TopicPartition, AppResult};
 
-use super::errors::KafkaError;
+use crate::request::errors::KafkaError;
+use crate::request::RequestContext;
+
+use super::ApiHandler;
+
+pub struct OffsetCommitRequestHandler;
+impl ApiHandler for OffsetCommitRequestHandler {
+    type Request = OffsetCommitRequest;
+    type Response = OffsetCommitResponse;
+
+    async fn handle_request(
+        &self,
+        request: OffsetCommitRequest,
+        context: &RequestContext,
+    ) -> OffsetCommitResponse {
+        debug!("offset commit request: {:?}", request);
+        let result = context
+            .group_coordinator
+            .clone()
+            .handle_commit_offsets(
+                &request.group_id,
+                &request.member_id,
+                request.generation_id,
+                request.offset_data,
+            )
+            .await;
+        OffsetCommitResponse::new(0, result)
+    }
+}
 
 #[derive(Debug)]
 pub struct PartitionOffsetCommitData {

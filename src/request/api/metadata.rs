@@ -1,7 +1,33 @@
 use crate::service::Node;
 use crate::AppError;
 
-use super::errors::{ErrorCode, KafkaError};
+use crate::{
+    request::errors::{ErrorCode, KafkaError},
+    request::RequestContext,
+};
+
+use super::ApiHandler;
+
+pub struct MetadataRequestHandler;
+impl ApiHandler for MetadataRequestHandler {
+    type Request = MetaDataRequest;
+    type Response = MetadataResponse;
+
+    async fn handle_request(
+        &self,
+        request: MetaDataRequest,
+        context: &RequestContext,
+    ) -> MetadataResponse {
+        let metadata = context.replica_manager.get_queue_metadata(
+            request
+                .topics
+                .as_ref()
+                .map(|v| v.iter().map(|s| s.as_str()).collect()),
+        );
+        // send metadata to client
+        MetadataResponse::new(metadata, Node::new_localhost())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct MetaDataRequest {

@@ -1,6 +1,43 @@
 use std::collections::BTreeMap;
 
 use bytes::{Bytes, BytesMut};
+use tracing::debug;
+
+use crate::request::RequestContext;
+
+use super::ApiHandler;
+
+pub struct JoinGroupRequestHandler;
+impl ApiHandler for JoinGroupRequestHandler {
+    type Request = JoinGroupRequest;
+    type Response = JoinGroupResponse;
+
+    async fn handle_request(
+        &self,
+        mut request: JoinGroupRequest,
+        context: &RequestContext,
+    ) -> JoinGroupResponse {
+        if let Some(client_id) = context.request_header.client_id.clone() {
+            request.client_id = client_id;
+        }
+        let join_result = context
+            .group_coordinator
+            .clone()
+            .handle_join_group(request)
+            .await;
+
+        let join_group_response = JoinGroupResponse::new(
+            join_result.error as i16,
+            join_result.generation_id,
+            join_result.sub_protocol,
+            join_result.member_id,
+            join_result.leader_id,
+            join_result.members,
+        );
+        debug!("join group response");
+        join_group_response
+    }
+}
 
 #[derive(Debug)]
 pub struct ProtocolMetadata {

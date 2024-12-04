@@ -2,13 +2,16 @@ mod api;
 mod base;
 mod schema_base;
 mod types;
+// protocol codec
 pub use schema_base::ProtocolCodec;
+// api key and version
 pub use types::{Acks, ApiKey, ApiVersion};
 
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, sync::Arc};
 use types::ApiVersion::{V0, V1, V2, V3, V4, V5};
 
+// supported api versions summary
 pub static SUPPORTED_API_VERSIONS: Lazy<Arc<HashMap<i16, Vec<ApiVersion>>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(ApiKey::ApiVersionKey as i16, vec![V0, V1]);

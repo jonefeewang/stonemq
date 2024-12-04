@@ -1,4 +1,34 @@
-use super::errors::{ErrorCode, KafkaError};
+use tracing::debug;
+
+use crate::{
+    request::errors::{ErrorCode, KafkaError},
+    request::RequestContext,
+};
+
+use super::ApiHandler;
+
+pub struct HeartbeatRequestHandler;
+impl ApiHandler for HeartbeatRequestHandler {
+    type Request = HeartbeatRequest;
+    type Response = HeartbeatResponse;
+
+    async fn handle_request(
+        &self,
+        request: HeartbeatRequest,
+        context: &RequestContext,
+    ) -> HeartbeatResponse {
+        debug!("received heartbeat request");
+        let result = context
+            .group_coordinator
+            .clone()
+            .handle_heartbeat(&request.group_id, &request.member_id, request.generation_id)
+            .await;
+        match result {
+            Ok(_) => HeartbeatResponse::new(KafkaError::None, 0),
+            Err(e) => HeartbeatResponse::new(e, 0),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct HeartbeatRequest {

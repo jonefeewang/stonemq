@@ -2,6 +2,24 @@ use std::collections::HashMap;
 
 use crate::protocol::{ApiVersion, SUPPORTED_API_VERSIONS};
 
+use crate::request::RequestContext;
+
+use super::handler::ApiHandler;
+
+pub struct ApiVersionRequestHandler;
+impl ApiHandler for ApiVersionRequestHandler {
+    type Request = ApiVersionRequest;
+    type Response = ApiVersionResponse;
+
+    async fn handle_request(
+        &self,
+        request: ApiVersionRequest,
+        _context: &RequestContext,
+    ) -> ApiVersionResponse {
+        request.process()
+    }
+}
+
 #[derive(Debug)]
 pub struct ApiVersionRequest {
     _version: ApiVersion,

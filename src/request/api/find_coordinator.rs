@@ -1,5 +1,23 @@
 use crate::service::Node;
 
+use crate::request::RequestContext;
+
+use super::ApiHandler;
+
+pub struct FindCoordinatorRequestHandler;
+impl ApiHandler for FindCoordinatorRequestHandler {
+    type Request = FindCoordinatorRequest;
+    type Response = FindCoordinatorResponse;
+
+    async fn handle_request(
+        &self,
+        request: FindCoordinatorRequest,
+        context: &RequestContext,
+    ) -> FindCoordinatorResponse {
+        context.group_coordinator.find_coordinator(request).await
+    }
+}
+
 #[derive(Debug)]
 pub struct FindCoordinatorRequest {
     pub coordinator_key: String,

@@ -1,9 +1,15 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use tracing::instrument;
+
 use crate::message::{TopicData, TopicPartition};
 use crate::protocol::Acks;
 use crate::{AppError, AppResult};
+
+use crate::request::RequestContext;
+
+use super::ApiHandler;
 
 #[derive(Debug, Clone)]
 pub struct ProduceRequest {
@@ -61,4 +67,28 @@ pub struct PartitionResponse {
 pub struct ProduceResponse {
     pub responses: BTreeMap<TopicPartition, PartitionResponse>,
     pub throttle_time: Option<i32>,
+}
+
+pub struct ProduceRequestHandler;
+
+impl ApiHandler for ProduceRequestHandler {
+    type Request = ProduceRequest;
+    type Response = ProduceResponse;
+
+    #[instrument(skip(self, request, context))]
+    async fn handle_request(
+        &self,
+        request: ProduceRequest,
+        context: &RequestContext,
+    ) -> ProduceResponse {
+        let tp_response = context
+            .replica_manager
+            .append_records(request.topic_data)
+            .await;
+
+        ProduceResponse {
+            responses: tp_response,
+            throttle_time: None,
+        }
+    }
 }

@@ -5,6 +5,24 @@ use crate::{
     AppError, AppResult,
 };
 
+use super::ApiHandler;
+use crate::request::RequestContext;
+
+pub struct FetchRequestHandler;
+
+impl ApiHandler for FetchRequestHandler {
+    type Request = FetchRequest;
+    type Response = FetchResponse;
+
+    async fn handle_request(
+        &self,
+        request: FetchRequest,
+        context: &RequestContext,
+    ) -> FetchResponse {
+        context.replica_manager.clone().fetch_message(request).await
+    }
+}
+
 #[derive(Debug)]
 pub enum IsolationLevel {
     ReadUncommitted,

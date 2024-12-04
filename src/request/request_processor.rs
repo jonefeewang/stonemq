@@ -1,399 +1,93 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use bytes::BytesMut;
+use tracing::trace;
 
-use bytes::{Bytes, BytesMut};
-use tracing::{debug, instrument, trace};
-
-use crate::request::errors::KafkaError;
-use crate::service::Node;
-use crate::{message::GroupCoordinator, ReplicaManager};
-
-use super::{request_header::RequestHeader, ApiRequest};
 use crate::protocol::ProtocolCodec;
-use crate::request::{
-    ApiVersionRequest, ErrorCode, FetchOffsetsRequest, FetchOffsetsResponse, FetchRequest,
-    FindCoordinatorRequest, HeartbeatRequest, HeartbeatResponse, JoinGroupRequest,
-    JoinGroupResponse, LeaveGroupRequest, LeaveGroupResponse, MetaDataRequest, MetadataResponse,
-    OffsetCommitRequest, OffsetCommitResponse, ProduceRequest, ProduceResponse, SyncGroupRequest,
-    SyncGroupResponse,
-};
+use crate::request::api::ApiVersionRequestHandler;
+use crate::request::api::FetchOffsetsRequestHandler;
+use crate::request::api::FetchRequestHandler;
+use crate::request::api::FindCoordinatorRequestHandler;
+use crate::request::api::HeartbeatRequestHandler;
+use crate::request::api::JoinGroupRequestHandler;
+use crate::request::api::LeaveGroupRequestHandler;
+use crate::request::api::MetadataRequestHandler;
+use crate::request::api::OffsetCommitRequestHandler;
+use crate::request::api::ProduceRequestHandler;
+use crate::request::api::SyncGroupRequestHandler;
 
-#[derive(Debug)]
-pub struct RequestProcessor {}
+use crate::request::ApiRequest;
+use crate::request::RequestContext;
+
+use super::api::ApiHandler;
+
+/// 通用异步处理器
+async fn execute_handler<H>(handler: H, request: H::Request, context: &RequestContext) -> BytesMut
+where
+    H: ApiHandler + Sync,
+{
+    // 调用具体的 handler 来生成响应
+    let response = handler.handle_request(request, context).await;
+
+    // 将响应编码为字节流
+    response.encode(
+        &context.request_header.api_version,
+        context.request_header.correlation_id,
+    )
+}
+
+pub struct RequestProcessor;
 
 impl RequestProcessor {
-    pub async fn process_request(
-        request: ApiRequest,
-        client_ip: String,
-        request_header: &RequestHeader,
-        replica_manager: Arc<ReplicaManager>,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
+    pub async fn process_request(request: ApiRequest, context: &RequestContext) -> BytesMut {
         trace!(
             "Processing request: {:?} with request header{:?}",
             request,
-            request_header
+            context.request_header
         );
         match request {
             ApiRequest::Produce(request) => {
-                Self::handle_produce_request(request, request_header, client_ip, replica_manager)
-                    .await
+                let handler = ProduceRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::Fetch(request) => {
-                Self::handle_fetch_request(request_header, request, client_ip, replica_manager)
-                    .await
+                let handler = FetchRequestHandler;
+                execute_handler(handler, request, context).await
             }
-
             ApiRequest::Metadata(request) => {
-                Self::handle_metadata_request(request_header, request, client_ip, replica_manager)
-                    .await
+                let handler = MetadataRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::ApiVersion(request) => {
-                Self::handle_api_version_request(request_header, request, client_ip).await
+                let handler = ApiVersionRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::FindCoordinator(request) => {
-                Self::handle_find_coordinator_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = FindCoordinatorRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::JoinGroup(request) => {
-                // join group 的信号在handle_join_group_request中发送
-                Self::handle_join_group_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = JoinGroupRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::SyncGroup(request) => {
-                Self::handle_sync_group_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = SyncGroupRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::LeaveGroup(request) => {
-                Self::handle_leave_group_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = LeaveGroupRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::Heartbeat(request) => {
-                Self::handle_heartbeat_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = HeartbeatRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::OffsetCommit(request) => {
-                Self::handle_offset_commit_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = OffsetCommitRequestHandler;
+                execute_handler(handler, request, context).await
             }
             ApiRequest::FetchOffsets(request) => {
-                Self::handle_fetch_offsets_request(
-                    request_header,
-                    request,
-                    client_ip,
-                    group_coordinator,
-                )
-                .await
+                let handler = FetchOffsetsRequestHandler;
+                execute_handler(handler, request, context).await
             }
-        }
-    }
-
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_produce_request(
-        produce_request: ProduceRequest,
-        request_header: &RequestHeader,
-        client_ip: String,
-        replica_manager: Arc<ReplicaManager>,
-    ) -> BytesMut {
-        let tp_response = replica_manager
-            .append_records(produce_request.topic_data)
-            .await;
-        let response = ProduceResponse {
-            responses: tp_response,
-            throttle_time: None,
-        };
-        trace!("produce response: {:?}", response);
-
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_fetch_request(
-        request_header: &RequestHeader,
-        request: FetchRequest,
-        client_ip: String,
-        replica_manager: Arc<ReplicaManager>,
-    ) -> BytesMut {
-        debug!("fetch request: {:?}", request);
-        let fetch_response = replica_manager.fetch_message(request).await;
-        debug!("fetch response: {:?}", fetch_response);
-        fetch_response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_api_version_request(
-        request_header: &RequestHeader,
-        request: ApiVersionRequest,
-        client_ip: String,
-    ) -> BytesMut {
-        let response = request.process();
-        debug!("api versions request");
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_metadata_request(
-        request_header: &RequestHeader,
-        request: MetaDataRequest,
-        client_ip: String,
-        replica_manager: Arc<ReplicaManager>,
-    ) -> BytesMut {
-        // send metadata for specific topics
-        debug!("metadata request");
-
-        let metadata = replica_manager.get_queue_metadata(
-            request
-                .topics
-                .as_ref()
-                .map(|v| v.iter().map(|s| s.as_str()).collect()),
-        );
-        // send metadata to client
-        let metadata_reps = MetadataResponse::new(metadata, Node::new_localhost());
-        metadata_reps.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_find_coordinator_request(
-        request_header: &RequestHeader,
-        request: FindCoordinatorRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        let response = group_coordinator.find_coordinator(request).await;
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_join_group_request(
-        request_header: &RequestHeader,
-        mut request: JoinGroupRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        if let Some(client_id) = request_header.client_id.clone() {
-            request.client_id = client_id;
-        }
-        let join_result = group_coordinator.handle_join_group(request).await;
-
-        let join_group_response = JoinGroupResponse::new(
-            join_result.error as i16,
-            join_result.generation_id,
-            join_result.sub_protocol,
-            join_result.member_id,
-            join_result.leader_id,
-            join_result.members,
-        );
-        debug!("join group response");
-        join_group_response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_sync_group_request(
-        request_header: &RequestHeader,
-        request: SyncGroupRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        debug!("sync group request: {:?}", request);
-        // request 中的bytesmut 来自于connection中的buffer，不能破坏掉，需要返还给connection，这里将BytesMut转换成Bytes，返还BytesMut
-        let group_assignment = request
-            .group_assignment
-            .iter()
-            .map(|(k, v)| (k.clone(), Bytes::from(v.clone())))
-            .collect();
-        let sync_group_result = group_coordinator
-            .handle_sync_group(
-                &request.group_id,
-                &request.member_id,
-                request.generation_id,
-                group_assignment,
-            )
-            .await;
-        debug!("sync group response: {:?}", sync_group_result);
-        match sync_group_result {
-            Ok(response) => {
-                response.encode(&request_header.api_version, request_header.correlation_id)
-            }
-            Err(e) => {
-                let error_code = ErrorCode::from(&e);
-                SyncGroupResponse::new(error_code, 0, Bytes::new())
-                    .encode(&request_header.api_version, request_header.correlation_id)
-            }
-        }
-    }
-    pub async fn handle_leave_group_request(
-        request_header: &RequestHeader,
-        request: LeaveGroupRequest,
-        _client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        let response_result = group_coordinator
-            .handle_group_leave(&request.group_id, &request.member_id)
-            .await;
-        let response = LeaveGroupResponse::new(response_result);
-
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_heartbeat_request(
-        request_header: &RequestHeader,
-        request: HeartbeatRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        debug!("received heartbeat request");
-        let result = group_coordinator
-            .handle_heartbeat(&request.group_id, &request.member_id, request.generation_id)
-            .await;
-        let response = match result {
-            Ok(_) => HeartbeatResponse::new(KafkaError::None, 0),
-            Err(e) => HeartbeatResponse::new(e, 0),
-        };
-
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_offset_commit_request(
-        request_header: &RequestHeader,
-        request: OffsetCommitRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        debug!("offset commit request: {:?}", request);
-        let result = group_coordinator
-            .handle_commit_offsets(
-                &request.group_id,
-                &request.member_id,
-                request.generation_id,
-                request.offset_data,
-            )
-            .await;
-
-        debug!("offset commit result: {:?}", result);
-        let response = OffsetCommitResponse::new(0, result);
-        response.encode(&request_header.api_version, request_header.correlation_id)
-    }
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(
-            client_id = request_header.client_id,
-            correlation_id = request_header.correlation_id,
-            client_host = client_ip,
-        )
-    )]
-    pub async fn handle_fetch_offsets_request(
-        request_header: &RequestHeader,
-        request: FetchOffsetsRequest,
-        client_ip: String,
-        group_coordinator: Arc<GroupCoordinator>,
-    ) -> BytesMut {
-        let result = group_coordinator.handle_fetch_offsets(&request.group_id, request.partitions);
-        debug!("fetch offsets result: {:?}", result);
-        if let Ok(offsets) = result {
-            let response = FetchOffsetsResponse::new(KafkaError::None, offsets);
-            response.encode(&request_header.api_version, request_header.correlation_id)
-        } else {
-            FetchOffsetsResponse::new(result.err().unwrap(), HashMap::new())
-                .encode(&request_header.api_version, request_header.correlation_id)
         }
     }
 }
