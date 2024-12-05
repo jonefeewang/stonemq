@@ -1,6 +1,6 @@
-mod load;
-mod read;
-mod write;
+mod queue_load;
+mod queue_read;
+mod queue_write;
 
 use crossbeam::atomic::AtomicCell;
 use tokio::sync::RwLock;

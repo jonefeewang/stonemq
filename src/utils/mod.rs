@@ -1,5 +1,4 @@
 mod delayed_async_operation;
-mod delayed_sync_operation;
 mod mini_kv_db;
 
 use crossbeam::atomic::AtomicCell;

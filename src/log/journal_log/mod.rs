@@ -1,6 +1,6 @@
-mod load;
-mod read;
-mod write;
+mod journal_load;
+mod journal_read;
+mod journal_write;
 
 
 
