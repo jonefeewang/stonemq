@@ -96,12 +96,6 @@ impl BrokerConfig {
             std::process::exit(1);
         });
 
-        Self::validate_config(&server_config);
-
         Ok(server_config)
-    }
-
-    fn validate_config(_config: &BrokerConfig) {
-        todo!()
     }
 }

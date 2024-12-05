@@ -104,15 +104,37 @@ impl LogManager {
             )));
         }
 
+        let logs = self.do_load_journal_log(index_file_max_size, rt)?;
+        info!(
+            "load {} logs from dir:{} finished",
+            logs.len(),
+            self.journal_log_path
+        );
+        Ok(logs)
+    }
+
+    fn do_load_journal_log(
+        &self,
+        index_file_max_size: u32,
+        rt: &Runtime,
+    ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
         // JournalLog 要加载recovery_checkpoints和split_checkpoint，还有queue_log的next_offset_checkpoint
         let recovery_checkpoints =
             rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
         let split_checkpoints = rt.block_on(self.split_checkpoint.read_checkpoints())?;
 
         let mut logs = vec![];
-        let mut dir = fs::read_dir(&self.journal_log_path)?;
-        while let Some(dir) = dir.next().transpose()? {
-            let file_type = dir.metadata()?.file_type();
+        let mut dir = fs::read_dir(&self.journal_log_path)
+            .map_err(|e| AppError::DetailedIoError(format!("read journal log path error: {}", e)))?;
+        while let Some(dir) = dir
+            .next()
+            .transpose()
+            .map_err(|e| AppError::DetailedIoError(format!("read journal log path error: {}", e)))?
+        {
+            let file_type = dir
+                .metadata()
+                .map_err(|e| AppError::DetailedIoError(format!("read journal log path error: {}", e)))?
+                .file_type();
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
                 let split_offset = split_checkpoints.get(&tp).unwrap_or(&-1).to_owned();
@@ -132,11 +154,6 @@ impl LogManager {
                 warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
             }
         }
-        info!(
-            "load {} logs from dir:{} finished",
-            logs.len(),
-            self.journal_log_path
-        );
         Ok(logs)
     }
 
@@ -155,14 +172,36 @@ impl LogManager {
             )));
         }
 
+        let logs = self.do_load_queue_logs(index_file_max_size, rt)?;
+        info!(
+            "load {} logs from dir:{} finished",
+            logs.len(),
+            self.queue_log_path
+        );
+        Ok(logs)
+    }
+
+    fn do_load_queue_logs(
+        &self,
+        index_file_max_size: u32,
+        rt: &Runtime,
+    ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
         // 加载检查点文件
         let recovery_checkpoints =
             rt.block_on(self.queue_recovery_checkpoints.read_checkpoints())?;
 
         let mut logs = vec![];
-        let mut dir = fs::read_dir(&self.queue_log_path)?;
-        while let Some(dir) = dir.next().transpose()? {
-            let file_type = dir.metadata()?.file_type();
+        let mut dir = fs::read_dir(&self.queue_log_path)
+            .map_err(|e| AppError::DetailedIoError(format!("read queue log path error: {}", e)))?;
+        while let Some(dir) = dir
+            .next()
+            .transpose()
+            .map_err(|e| AppError::DetailedIoError(format!("read queue log path error: {}", e)))?
+        {
+            let file_type = dir
+                .metadata()
+                .map_err(|e| AppError::DetailedIoError(format!("read queue log path error: {}", e)))?
+                .file_type();
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
@@ -174,11 +213,6 @@ impl LogManager {
                 warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
             }
         }
-        info!(
-            "load {} logs from dir:{} finished",
-            logs.len(),
-            self.queue_log_path
-        );
         Ok(logs)
     }
 
@@ -192,8 +226,8 @@ impl LogManager {
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             Entry::Vacant(vacant) => {
-                warn!(
-                    "journal log for topic-partition:{} not found",
+                info!(
+                    "create journal log for topic-partition:{}",
                     topic_partition.id()
                 );
 
@@ -275,7 +309,10 @@ impl LogManager {
                 .collect();
             self.journal_recovery_checkpoints
                 .write_checkpoints(check_points)
-                .await?;
+                .await
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!("write journal recovery checkpoint error: {}", e))
+                })?;
 
             // 写入queue的recovery_checkpoint
             let queue_check_points: HashMap<TopicPartition, i64> = self
@@ -289,7 +326,10 @@ impl LogManager {
                 .collect();
             self.queue_recovery_checkpoints
                 .write_checkpoints(queue_check_points)
-                .await?;
+                .await
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!("write queue recovery checkpoint error: {}", e))
+                })?;
 
             let split_checkpoints: HashMap<TopicPartition, i64> = self
                 .journal_logs
@@ -302,7 +342,8 @@ impl LogManager {
                 .collect();
             self.split_checkpoint
                 .write_checkpoints(split_checkpoints)
-                .await?;
+                .await
+                .map_err(|e| AppError::DetailedIoError(format!("write split checkpoint error: {}", e)))?;
 
             for entry in self.journal_logs.iter() {
                 let log = entry.value();

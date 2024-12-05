@@ -1,5 +1,5 @@
 use crate::{
-    request::errors::{KafkaError, KafkaResult},
+    request::kafka_errors::{KafkaError, KafkaResult},
     request::RequestContext,
 };
 

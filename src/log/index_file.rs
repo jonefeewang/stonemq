@@ -39,7 +39,7 @@ impl IndexFile {
         path: P,
         index_file_max_size: usize,
         read_only: bool,
-    ) -> AppResult<Self> {
+    ) -> std::io::Result<Self> {
         let path = path.as_ref();
         let file_exists = path.exists();
 
@@ -123,11 +123,12 @@ impl IndexFile {
     ///
     /// # Returns
     /// A Result indicating success or failure
-    pub async fn resize(&self, new_size: usize) -> AppResult<()> {
+    pub async fn resize(&self, new_size: usize) -> std::io::Result<()> {
         let mut mode = self.mode.write().await;
         match &mut *mode {
-            IndexFileMode::ReadOnly(_) => Err(AppError::InvalidOperation(
-                "try to resize read-only index file".into(),
+            IndexFileMode::ReadOnly(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "try to resize read-only index file",
             )),
             IndexFileMode::ReadWrite(mmap) => {
                 debug!("resizing index file:{:?} to size: {}", self.file, new_size);
@@ -202,11 +203,11 @@ impl IndexFile {
             } else {
                 if mid == entries - 1
                     || u32::from_be_bytes([
-                        mmap[offset + INDEX_ENTRY_SIZE],
-                        mmap[offset + INDEX_ENTRY_SIZE + 1],
-                        mmap[offset + INDEX_ENTRY_SIZE + 2],
-                        mmap[offset + INDEX_ENTRY_SIZE + 3],
-                    ]) > target_offset
+                    mmap[offset + INDEX_ENTRY_SIZE],
+                    mmap[offset + INDEX_ENTRY_SIZE + 1],
+                    mmap[offset + INDEX_ENTRY_SIZE + 2],
+                    mmap[offset + INDEX_ENTRY_SIZE + 3],
+                ]) > target_offset
                 {
                     let position = u32::from_be_bytes([
                         mmap[offset + 4],
@@ -234,7 +235,8 @@ impl IndexFile {
                 "try to flush read-only index file".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
-                mmap.flush()?;
+                mmap.flush()
+                    .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))?;
                 Ok(())
             }
         }
@@ -246,7 +248,12 @@ impl IndexFile {
     /// A Result containing a boolean indicating if the index file is full or an error
     pub async fn is_full(&self) -> AppResult<bool> {
         let entries = self.entries.load();
-        let file_size = self.file.metadata().await?.len() as usize;
+        let file_size = self
+            .file
+            .metadata()
+            .await
+            .map_err(|e| AppError::DetailedIoError(format!("get index file metadata error: {}", e)))?
+            .len() as usize;
         let is_full = (entries + 1) * INDEX_ENTRY_SIZE > file_size;
         Ok(is_full)
     }
@@ -268,7 +275,8 @@ impl IndexFile {
                 debug!("close read-only index file");
             }
             IndexFileMode::ReadWrite(mmap) => {
-                mmap.flush()?;
+                mmap.flush()
+                    .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))?;
                 debug!("close read-write index file");
             }
         }
@@ -293,7 +301,9 @@ impl IndexFile {
         }
         // 获取写锁
         if new_size > 0 {
-            self.resize(new_size).await?;
+            self.resize(new_size)
+                .await
+                .map_err(|e| AppError::DetailedIoError(format!("trim index file error: {}", e)))?;
         }
         Ok(())
     }
@@ -523,7 +533,11 @@ mod tests {
         assert!(matches!(result, Err(AppError::InvalidOperation(_))));
 
         let result = read_only_file.resize(2048).await;
-        assert!(matches!(result, Err(AppError::InvalidOperation(_))));
+        assert!(matches!(
+            result,
+            Err(ref e) if e.kind() == std::io::ErrorKind::InvalidInput
+                && e.to_string() == "try to resize read-only index file"
+        ));
 
         let result = read_only_file.flush().await;
         assert!(matches!(result, Err(AppError::InvalidOperation(_))));

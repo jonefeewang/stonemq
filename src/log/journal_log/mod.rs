@@ -2,8 +2,6 @@ mod journal_load;
 mod journal_read;
 mod journal_write;
 
-
-
 use std::{collections::BTreeMap, sync::Arc};
 
 use crossbeam::atomic::AtomicCell;
@@ -17,7 +15,7 @@ use crate::{
         NEXT_OFFSET_CHECKPOINT_FILE_NAME,
     },
     message::TopicPartition,
-    AppResult,
+    AppError, AppResult,
 };
 
 /// 表示日志分区的日志管理器。
@@ -82,10 +80,15 @@ impl JournalLog {
         index_file_max_size: u32,
     ) -> AppResult<Self> {
         let dir = topic_partition.journal_partition_dir();
-        tokio::fs::create_dir_all(&dir).await?;
+        tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "create journal partition dir: {} error: {}",
+                dir, e
+            ))
+        })?;
 
         let segments = if segments.is_empty() {
-            info!("日志目录中未找到段文件: {}", dir);
+            info!("create initial log segment for journal partition: {}", dir);
             let initial_log_file_name = format!("{}/0.log", dir);
             let initial_index_file_name = format!("{}/0.index", dir);
             let segment = Arc::new(LogSegment::open(
@@ -93,7 +96,8 @@ impl JournalLog {
                 0,
                 FileRecords::open(initial_log_file_name).await?,
                 IndexFile::new(initial_index_file_name, index_file_max_size as usize, false)
-                    .await?,
+                    .await
+                    .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?,
                 None,
             ));
             let mut segments = BTreeMap::new();

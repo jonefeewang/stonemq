@@ -1,13 +1,13 @@
 mod api;
-mod errors;
+mod kafka_errors;
 mod request_context;
 mod request_header;
 mod request_processor;
 
 // request processor and utility
-pub use errors::ErrorCode;
-pub use errors::KafkaError;
-pub use errors::KafkaResult;
+pub use kafka_errors::ErrorCode;
+pub use kafka_errors::KafkaError;
+pub use kafka_errors::KafkaResult;
 pub use request_context::RequestContext;
 pub use request_header::RequestHeader;
 pub use request_processor::RequestProcessor;

@@ -6,7 +6,7 @@ use tracing::debug;
 use crate::AppError;
 use crate::{message::TopicPartition, AppResult};
 
-use crate::request::errors::KafkaError;
+use crate::request::kafka_errors::KafkaError;
 use crate::request::RequestContext;
 
 use super::ApiHandler;
@@ -62,7 +62,9 @@ impl PartitionOffsetCommitData {
         let metadata_len = cursor.get_i32();
         let metadata = if metadata_len != -1 {
             let mut metadata = vec![0; metadata_len as usize];
-            cursor.read_exact(&mut metadata)?;
+            cursor
+                .read_exact(&mut metadata)
+                .map_err(|e| AppError::DetailedIoError(format!("read metadata error: {}", e)))?;
             Some(
                 String::from_utf8(metadata)
                     .map_err(|e| AppError::MalformedProtocol(e.to_string()))?,

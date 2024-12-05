@@ -51,9 +51,22 @@ impl FileRecords {
             .append(true)
             .write(true)
             .open(&file_name)
-            .await?;
+            .await
+            .map_err(|e| {
+                AppError::DetailedIoError(format!(
+                    "open file: {} error: {} while open file records",
+                    file_name.as_ref().to_string_lossy(),
+                    e
+                ))
+            })?;
 
-        let metadata = file.metadata().await?;
+        let metadata = file.metadata().await.map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "get file: {} metadata error: {} while open file records",
+                file_name.as_ref().to_string_lossy(),
+                e
+            ))
+        })?;
         let (tx, rx) = mpsc::channel(100);
 
         let file_name = file_name.as_ref().to_string_lossy().into_owned();
@@ -80,14 +93,14 @@ impl FileRecords {
             while let Some(message) = rx.recv().await {
                 match message {
                     FileOp::AppendJournal((
-                        journal_offset,
-                        topic_partition,
-                        first_batch_queue_base_offset,
-                        last_batch_queue_base_offset,
-                        records_count,
-                        records,
-                        resp_tx,
-                    )) => {
+                                              journal_offset,
+                                              topic_partition,
+                                              first_batch_queue_base_offset,
+                                              last_batch_queue_base_offset,
+                                              records_count,
+                                              records,
+                                              resp_tx,
+                                          )) => {
                         match Self::append_journal_recordbatch(
                             &mut writer,
                             (
@@ -99,7 +112,7 @@ impl FileRecords {
                                 records,
                             ),
                         )
-                        .await
+                            .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -110,21 +123,26 @@ impl FileRecords {
                             }
                             Err(error) => {
                                 error!("append record error:{:?}", error);
-                                resp_tx.send(Err(error)).unwrap_or_else(|_| {
-                                    error!("send error response error");
-                                });
+                                resp_tx
+                                    .send(Err(AppError::DetailedIoError(format!(
+                                        "append record error:{:?}",
+                                        error
+                                    ))))
+                                    .unwrap_or_else(|_| {
+                                        error!("send error response error");
+                                    });
                             }
                         }
                     }
                     FileOp::AppendQueue((
-                        journal_offset,
-                        topic_partition,
-                        first_batch_queue_base_offset,
-                        last_batch_queue_base_offset,
-                        records_count,
-                        records,
-                        resp_tx,
-                    )) => {
+                                            journal_offset,
+                                            topic_partition,
+                                            first_batch_queue_base_offset,
+                                            last_batch_queue_base_offset,
+                                            records_count,
+                                            records,
+                                            resp_tx,
+                                        )) => {
                         match Self::append_queue_recordbatch(
                             &mut writer,
                             (
@@ -136,7 +154,7 @@ impl FileRecords {
                                 records,
                             ),
                         )
-                        .await
+                            .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -147,9 +165,14 @@ impl FileRecords {
                             }
                             Err(error) => {
                                 error!("append record error:{:?}", error);
-                                resp_tx.send(Err(error)).unwrap_or_else(|_| {
-                                    error!("send error response error");
-                                });
+                                resp_tx
+                                    .send(Err(AppError::DetailedIoError(format!(
+                                        "append record error:{:?}",
+                                        error
+                                    ))))
+                                    .unwrap_or_else(|_| {
+                                        error!("send error response error");
+                                    });
                             }
                         }
                     }
@@ -210,18 +233,13 @@ impl FileRecords {
             records_count,
             records,
         ): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
-    ) -> AppResult<usize> {
+    ) -> std::io::Result<usize> {
         trace!("正在将日志追加到文件...");
 
         let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();
 
-        let msg = records.buffer.ok_or_else(|| {
-            AppError::IllegalStateError(format!(
-                "append to file, message is empty, topic partition: {}",
-                topic_partition_id
-            ))
-        })?;
+        let msg = records.buffer.unwrap();
 
         let total_size =
             JournalLog::calculate_journal_log_overhead(&topic_partition) + msg.remaining() as u32;
@@ -242,17 +260,11 @@ impl FileRecords {
 
     pub async fn append_queue_recordbatch(
         buf_writer: &mut BufWriter<File>,
-        (_, topic_partition, _, _, _, records): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
-    ) -> AppResult<usize> {
-        let topic_partition_id = topic_partition.id();
+        (_, _, _, _, _, records): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
+    ) -> std::io::Result<usize> {
         let total_write = records.size();
 
-        let msg = records.buffer.ok_or_else(|| {
-            AppError::IllegalStateError(format!(
-                "append to file, message is empty, topic partition: {}",
-                topic_partition_id
-            ))
-        })?;
+        let msg = records.buffer.unwrap();
         buf_writer.write_all(msg.as_ref()).await?;
         buf_writer.flush().await?;
         Ok(total_write)

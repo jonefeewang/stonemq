@@ -1,8 +1,8 @@
-use crate::global_config;
 use crate::log::{file_records::FileRecords, log_segment::PositionInfo};
 use crate::log::{LogType, NO_POSITION_INFO};
 use crate::message::{LogFetchInfo, MemoryRecords, TopicPartition};
 use crate::AppResult;
+use crate::{global_config, AppError};
 use bytes::BytesMut;
 use std::path::PathBuf;
 use tokio::fs;
@@ -38,7 +38,8 @@ impl QueueLog {
                     std::io::ErrorKind::NotFound,
                     format!("未找到偏移量 {} 的段", offset),
                 )
-            })?;
+            })
+            .map_err(|e| AppError::DetailedIoError(format!("get relative position info error: {}", e)))?;
         segment.get_relative_position(offset).await
     }
 
@@ -71,7 +72,13 @@ impl QueueLog {
         let queue_topic_dir =
             PathBuf::from(global_config().log.queue_base_dir.clone()).join(topic_partition.id());
         let segment_path = queue_topic_dir.join(format!("{}.log", ref_position_info.base_offset));
-        let queue_seg_file = fs::File::open(&segment_path).await?;
+        let queue_seg_file = fs::File::open(&segment_path).await.map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "open queue segment file: {} error: {} while read records",
+                segment_path.to_string_lossy(),
+                e
+            ))
+        })?;
 
         // 这里会报UnexpectedEof，其他io错误,以及not found，总之无法继续读取消息了，下游需要重试
         let seek_result = FileRecords::seek(
@@ -80,7 +87,7 @@ impl QueueLog {
             ref_position_info,
             LogType::Queue,
         )
-        .await;
+            .await;
 
         trace!("seek_result: {:?}", seek_result);
 
@@ -95,7 +102,11 @@ impl QueueLog {
 
         let (mut segment_file, current_position) = seek_result.unwrap();
 
-        let total_len = segment_file.metadata().await?.len();
+        let total_len = segment_file
+            .metadata()
+            .await
+            .map_err(|e| AppError::DetailedIoError(format!("get file metadata error: {} while read records", e)))?
+            .len();
 
         // 如果是非活动段的话，直接取到末尾，就是一个record完整结束，如果是活动段的话，可能会截断
         let max_position = if let Some(max_read_size) =
@@ -127,7 +138,13 @@ impl QueueLog {
             // 剩余长度小于max_size，则直接读取剩余所有消息,
             // 如果读的恰好是活动段，因为有并发写入，meta信息可能滞后,读取可能偏少，不过没有关系，读取不够的话，下游会重试
             let mut buffer = BytesMut::zeroed(left_len as usize);
-            let _ = segment_file.read(&mut buffer).await?;
+            let _ = segment_file.read(&mut buffer).await.map_err(|e| {
+                AppError::DetailedIoError(format!(
+                    "read queue segment file: {} error: {} while read records",
+                    segment_path.to_string_lossy(),
+                    e
+                ))
+            })?;
 
             let records = MemoryRecords::new(buffer);
             trace!(
@@ -144,7 +161,13 @@ impl QueueLog {
 
         // 这里需要把max_size转换为真实record的最终截断位置，而不是在record的中间
         let mut buffer = BytesMut::zeroed(max_size as usize);
-        let _ = segment_file.read(&mut buffer).await?;
+        let _ = segment_file.read(&mut buffer).await.map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read queue segment file: {} error: {} while read records",
+                segment_path.to_string_lossy(),
+                e
+            ))
+        })?;
         let records = MemoryRecords::new(buffer);
         trace!(
             "get records first batch base offset enough---: {:?}",

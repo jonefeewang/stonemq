@@ -4,7 +4,7 @@ use tracing::debug;
 
 use crate::message::TopicPartition;
 
-use crate::request::errors::KafkaError;
+use crate::request::kafka_errors::KafkaError;
 use crate::request::request_context::RequestContext;
 
 use crate::request::api::ApiHandler;

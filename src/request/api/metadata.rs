@@ -2,7 +2,7 @@ use crate::service::Node;
 use crate::AppError;
 
 use crate::{
-    request::errors::{ErrorCode, KafkaError},
+    request::kafka_errors::{ErrorCode, KafkaError},
     request::RequestContext,
 };
 

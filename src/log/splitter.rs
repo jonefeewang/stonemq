@@ -55,7 +55,7 @@ impl SplitterTask {
         );
         while !shutdown.is_shutdown() {
             let target_offset = self.journal_log.split_offset.load() + 1;
-            debug!("循环开始，读取目标offset: {}", target_offset);
+            debug!("start loop and read target offset: {}", target_offset);
 
             match self
                 .process_target_offset(target_offset, &mut shutdown)

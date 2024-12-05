@@ -1,6 +1,3 @@
-use std::io;
-use std::io::ErrorKind;
-
 use bytes::{Buf, BytesMut};
 
 use crate::protocol::{ApiKey, ProtocolCodec};
@@ -99,18 +96,16 @@ impl RequestFrame {
         let bytes_slice = buffer.get(0..4).unwrap();
         let body_size = i32::from_be_bytes(bytes_slice.try_into().unwrap());
         if body_size < 0 {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                format!("frame size {} less than 0", body_size),
-            )
-            .into());
+            return Err(AppError::DetailedIoError(format!(
+                "frame size {} less than 0",
+                body_size
+            )));
         }
         if body_size > global_config().network.max_package_size as i32 {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", body_size),
-            )
-            .into());
+            return Err(AppError::DetailedIoError(format!(
+                "Frame of length {} is too large.",
+                body_size
+            )));
         }
         if buffer.remaining() < body_size as usize + 4 {
             buffer.reserve(body_size as usize + 4);

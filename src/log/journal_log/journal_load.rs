@@ -14,7 +14,7 @@ use crate::{
         NEXT_OFFSET_CHECKPOINT_FILE_NAME,
     },
     message::TopicPartition,
-    AppResult,
+    AppError, AppResult,
 };
 
 use super::JournalLog;
@@ -108,9 +108,32 @@ impl JournalLog {
         let mut index_files = BTreeMap::new();
         let mut log_files = BTreeMap::new();
 
-        let mut read_dir = std::fs::read_dir(dir)?;
-        while let Some(file) = read_dir.next().transpose()? {
-            if file.metadata()?.file_type().is_file() {
+        let mut read_dir = std::fs::read_dir(&dir).map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read dir: {} error: {} while loading journal log",
+                &dir.as_ref().to_string_lossy(),
+                e
+            ))
+        })?;
+        while let Some(file) = read_dir.next().transpose().map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read dir: {} error: {} while loading journal log",
+                dir.as_ref().to_string_lossy(),
+                e
+            ))
+        })? {
+            if file
+                .metadata()
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!(
+                        "get file metadata: {} error: {} while loading journal log",
+                        file.path().to_string_lossy(),
+                        e
+                    ))
+                })?
+                .file_type()
+                .is_file()
+            {
                 let file_name = file.file_name().to_string_lossy().to_string();
                 let dot = file_name.rfind('.');
                 match dot {
@@ -128,11 +151,15 @@ impl JournalLog {
                             }
                             ".index" => {
                                 // journal log 不应有偏移索引文件
-                                let index_file = rt.block_on(IndexFile::new(
-                                    file.path(),
-                                    max_index_file_size,
-                                    false,
-                                ))?;
+                                let index_file = rt
+                                    .block_on(IndexFile::new(
+                                        file.path(),
+                                        max_index_file_size,
+                                        false,
+                                    ))
+                                    .map_err(|e| {
+                                        AppError::DetailedIoError(format!("open index file error: {}", e))
+                                    })?;
                                 index_files.insert(file_prefix.parse::<i64>().unwrap(), index_file);
                             }
                             ".log" => {
@@ -187,5 +214,6 @@ impl JournalLog {
         self.queue_next_offset_checkpoints
             .write_checkpoints(queue_next_offset_info)
             .await
+            .map_err(|e| AppError::DetailedIoError(format!("write checkpoint error: {}", e)))
     }
 }

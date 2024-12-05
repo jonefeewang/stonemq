@@ -1,7 +1,7 @@
 use tracing::debug;
 
 use crate::{
-    request::errors::{ErrorCode, KafkaError},
+    request::kafka_errors::{ErrorCode, KafkaError},
     request::RequestContext,
 };
 

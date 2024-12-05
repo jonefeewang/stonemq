@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bytes::{Bytes, BytesMut};
 use tracing::debug;
 
-use crate::request::errors::ErrorCode;
+use crate::request::kafka_errors::ErrorCode;
 use crate::request::RequestContext;
 
 use super::ApiHandler;

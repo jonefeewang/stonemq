@@ -32,7 +32,16 @@ impl QueueLog {
         let dir = topic_partition.queue_partition_dir();
         info!("从目录加载段文件：{}", dir);
 
-        if std::fs::read_dir(&dir)?.next().is_none() {
+        if std::fs::read_dir(&dir)
+            .map_err(|e| {
+                AppError::DetailedIoError(format!(
+                    "read dir: {} error: {} while loading queue log",
+                    dir, e
+                ))
+            })?
+            .next()
+            .is_none()
+        {
             info!("队列日志目录为空：{}", &dir);
             return Ok(segments);
         }
@@ -40,9 +49,30 @@ impl QueueLog {
         let mut index_files = BTreeMap::new();
         let mut log_files = BTreeMap::new();
 
-        let mut read_dir = std::fs::read_dir(&dir)?;
-        while let Some(file) = read_dir.next().transpose()? {
-            if file.metadata()?.file_type().is_file() {
+        let mut read_dir = std::fs::read_dir(&dir).map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read dir: {} error: {} while loading queue log",
+                dir, e
+            ))
+        })?;
+        while let Some(file) = read_dir.next().transpose().map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read dir: {} error: {} while loading queue log",
+                dir, e
+            ))
+        })? {
+            if file
+                .metadata()
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!(
+                        "get file metadata: {} error: {} while loading queue log",
+                        file.path().to_string_lossy(),
+                        e
+                    ))
+                })?
+                .file_type()
+                .is_file()
+            {
                 let file_name = file.file_name().to_string_lossy().to_string();
                 let dot_index = file_name.rfind('.');
                 match dot_index {
@@ -55,11 +85,15 @@ impl QueueLog {
                         let file_suffix = &file_name[dot_index..];
                         match file_suffix {
                             ".index" => {
-                                let index_file = rt.block_on(IndexFile::new(
-                                    file.path(),
-                                    index_file_max_size as usize,
-                                    false,
-                                ))?;
+                                let index_file = rt
+                                    .block_on(IndexFile::new(
+                                        file.path(),
+                                        index_file_max_size as usize,
+                                        false,
+                                    ))
+                                    .map_err(|e| {
+                                        AppError::DetailedIoError(format!("open index file error: {}", e))
+                                    })?;
                                 index_files.insert(
                                     file_prefix.parse::<i64>().map_err(|_| {
                                         AppError::InvalidValue(format!(

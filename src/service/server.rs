@@ -109,7 +109,7 @@ fn start_request_handler(
                                                     replica_manager.clone(),
                                                     group_coordinator.clone(),
                                                 )
-                                                .await;
+                                                    .await;
                                             }
                                         });
                                         workers.insert(id, new_worker);
@@ -218,8 +218,13 @@ impl ConnectionHandler {
             // 等待响应并写入
             match response_rx.await {
                 Ok(response) => {
-                    self.writer.write_all(&response).await?;
-                    self.writer.flush().await?;
+                    self.writer
+                        .write_all(&response)
+                        .await
+                        .map_err(|e| AppError::DetailedIoError(format!("write response error: {}", e)))?;
+                    self.writer.flush().await.map_err(|e| {
+                        AppError::DetailedIoError(format!("flush response error: {}", e))
+                    })?;
                 }
                 Err(_) => {
                     // 请求处理器panic意外退出，没有发送响应，关闭连接
@@ -330,7 +335,10 @@ impl Server {
                 Ok((socket, _)) => return Ok(socket),
                 Err(err) => {
                     if backoff > 64 {
-                        return Err(err.into());
+                        return Err(AppError::DetailedIoError(format!(
+                            "accept tcp server error: {}",
+                            err
+                        )));
                     }
                 }
             }

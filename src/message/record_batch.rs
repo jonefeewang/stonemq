@@ -76,7 +76,9 @@ impl RecordBatch {
     pub fn set_first_timestamp(&mut self, first_timestamp: i64) -> AppResult<()> {
         let mut cursor = Cursor::new(self.buffer.as_mut());
         cursor.set_position(FIRST_TIMESTAMP_OFFSET as u64);
-        cursor.write_all(&first_timestamp.to_be_bytes())?;
+        cursor
+            .write_all(&first_timestamp.to_be_bytes())
+            .map_err(|e| AppError::DetailedIoError(format!("write first timestamp error: {}", e)))?;
         Ok(())
     }
 

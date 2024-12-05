@@ -106,8 +106,9 @@ impl LogSegment {
         let file_name = dir.join(format!("{}.log", base_offset));
         let index_file_name = dir.join(format!("{}.index", base_offset));
         let file_records = FileRecords::open(file_name).await?;
-        let offset_index =
-            IndexFile::new(index_file_name, index_file_max_size as usize, false).await?;
+        let offset_index = IndexFile::new(index_file_name, index_file_max_size as usize, false)
+            .await
+            .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
         let segment = LogSegment {
             _topic_partition: topic_partition.clone(),
             file_records,

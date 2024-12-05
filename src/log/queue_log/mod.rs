@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::log::log_segment::LogSegment;
 use crate::message::TopicPartition;
-use crate::AppResult;
+use crate::{AppError, AppResult};
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -62,7 +62,9 @@ impl QueueLog {
 
         if !Path::new(&dir).exists() {
             info!("log dir does not exists, create queue log dir:{}", dir);
-            std::fs::create_dir_all(&dir)?;
+            std::fs::create_dir_all(&dir).map_err(|e| {
+                AppError::DetailedIoError(format!("create queue log dir: {} error: {}", dir, e))
+            })?;
         }
 
         if segments.is_empty() {

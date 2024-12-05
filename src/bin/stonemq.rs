@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use stonemq::{setup_tracing, GLOBAL_CONFIG};
 use stonemq::{AppResult, Broker, BrokerConfig};
 use tokio::runtime;
+use tracing::error;
 
 #[derive(Parser)]
 #[command(version)]
@@ -23,16 +24,23 @@ pub enum Command {
     PrintConfig,
 }
 
-fn main() -> AppResult<()> {
-    // 加载 .env 文件
+fn main() {
+    if let Err(e) = run() {
+        error!("stonemq started failed: {}", e);
+        eprintln!("stonemq started failed: {}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> AppResult<()> {
     dotenv().ok();
 
-    // startup tokio runtime
+
     let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
 
     let _otel_guard = rt.block_on(setup_tracing());
 
-    //setup config
+    // setup config
     let commandline: CommandLine = CommandLine::parse();
     let config_path = commandline.conf.as_ref().map_or_else(
         || {
@@ -42,7 +50,7 @@ fn main() -> AppResult<()> {
         },
         PathBuf::from,
     );
-    // note: 这里无法使用once cell，因为config_path需要从命令行引入
+
     let broker_config = BrokerConfig::set_up_config(config_path)?;
     GLOBAL_CONFIG
         .set(broker_config)

@@ -23,7 +23,7 @@ impl JournalLog {
             .ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("未找到偏移量 {} 的段", offset),
+                    format!("not found segment for offset: {}", offset),
                 )
             })?;
         segment.get_relative_position(offset).await

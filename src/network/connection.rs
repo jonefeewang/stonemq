@@ -1,11 +1,10 @@
-use std::io::{self, ErrorKind};
-
 use bytes::BytesMut;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::net::tcp::OwnedReadHalf;
 
 use crate::network::RequestFrame;
+use crate::AppError;
 use crate::AppResult;
 
 /// Represents a connection to a client.
@@ -48,16 +47,21 @@ impl Connection {
             if let Some(frame) = RequestFrame::parse(&mut self.buffer)? {
                 return Ok(Some(frame));
             }
-            if 0 == self.reader.read_buf(&mut self.buffer).await? {
+            if 0 == self
+                .reader
+                .read_buf(&mut self.buffer)
+                .await
+                .map_err(|e| AppError::DetailedIoError(format!("read frame error: {}", e)))?
+            {
                 return if self.buffer.is_empty() {
                     // client has closed the connection gracefully
                     Ok(None)
                 } else {
                     // client close the connection while sending a frame
-                    Err(
-                        io::Error::new(ErrorKind::ConnectionReset, "connection reset by peer")
-                            .into(),
-                    )
+
+                    Err(AppError::DetailedIoError(
+                        "client close the connection while sending a frame".to_string(),
+                    ))
                 };
             }
         }

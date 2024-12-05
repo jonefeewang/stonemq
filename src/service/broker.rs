@@ -104,11 +104,11 @@ impl Broker {
             shutdown_complete_tx.clone(),
             node,
         )
-        .await;
+            .await;
         let group_coordinator = Arc::new(group_coordinator);
 
         let server = Server::new(
-            bind_result?,
+            bind_result.map_err(|e| AppError::DetailedIoError(format!("bind tcp server error: {}", e)))?,
             Arc::new(Semaphore::new(max_connection)),
             notify_shutdown.clone(),
             shutdown_complete_tx,

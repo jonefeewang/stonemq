@@ -1,5 +1,3 @@
-use std::io;
-
 use crate::request::KafkaError;
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -17,8 +15,11 @@ pub enum AppError {
     #[error("invalid value: {0}")]
     InvalidValue(String),
 
-    #[error("I/O {0}")]
-    Io(#[from] io::Error),
+    #[error("I/O error: {0}")]
+    DetailedIoError(String),
+
+    #[error("io error: {0}")]
+    IoError(#[from] std::io::Error),
 
     #[error("channel send error: {0}")]
     ChannelSendError(String),
@@ -35,7 +36,7 @@ pub enum AppError {
     #[error("connection error: {0}")]
     ConnectionError(String),
 
-    /// marker error
+    /// marker error    
     Incomplete,
 
     /// kafka protocol errors
