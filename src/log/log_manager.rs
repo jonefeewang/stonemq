@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use super::queue_log::QueueLog;
 use super::splitter::SplitterTask;
@@ -124,8 +124,9 @@ impl LogManager {
         let split_checkpoints = rt.block_on(self.split_checkpoint.read_checkpoints())?;
 
         let mut logs = vec![];
-        let mut dir = fs::read_dir(&self.journal_log_path)
-            .map_err(|e| AppError::DetailedIoError(format!("read journal log path error: {}", e)))?;
+        let mut dir = fs::read_dir(&self.journal_log_path).map_err(|e| {
+            AppError::DetailedIoError(format!("read journal log path error: {}", e))
+        })?;
         while let Some(dir) = dir
             .next()
             .transpose()
@@ -133,9 +134,12 @@ impl LogManager {
         {
             let file_type = dir
                 .metadata()
-                .map_err(|e| AppError::DetailedIoError(format!("read journal log path error: {}", e)))?
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!("read journal log path error: {}", e))
+                })?
                 .file_type();
             if file_type.is_dir() {
+                debug!("load journal log for dir:{}", dir.path().to_string_lossy());
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
                 let split_offset = split_checkpoints.get(&tp).unwrap_or(&-1).to_owned();
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
@@ -147,9 +151,9 @@ impl LogManager {
                     index_file_max_size,
                     rt,
                 )?;
-
-                trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
+            } else if dir.file_name().to_string_lossy().ends_with("checkpoints") {
+                trace!("skip recovery file: {:?}", dir.path().to_string_lossy());
             } else {
                 warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
             }
@@ -200,7 +204,9 @@ impl LogManager {
         {
             let file_type = dir
                 .metadata()
-                .map_err(|e| AppError::DetailedIoError(format!("read queue log path error: {}", e)))?
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!("read queue log path error: {}", e))
+                })?
                 .file_type();
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
@@ -311,7 +317,10 @@ impl LogManager {
                 .write_checkpoints(check_points)
                 .await
                 .map_err(|e| {
-                    AppError::DetailedIoError(format!("write journal recovery checkpoint error: {}", e))
+                    AppError::DetailedIoError(format!(
+                        "write journal recovery checkpoint error: {}",
+                        e
+                    ))
                 })?;
 
             // 写入queue的recovery_checkpoint
@@ -328,7 +337,10 @@ impl LogManager {
                 .write_checkpoints(queue_check_points)
                 .await
                 .map_err(|e| {
-                    AppError::DetailedIoError(format!("write queue recovery checkpoint error: {}", e))
+                    AppError::DetailedIoError(format!(
+                        "write queue recovery checkpoint error: {}",
+                        e
+                    ))
                 })?;
 
             let split_checkpoints: HashMap<TopicPartition, i64> = self
@@ -343,7 +355,9 @@ impl LogManager {
             self.split_checkpoint
                 .write_checkpoints(split_checkpoints)
                 .await
-                .map_err(|e| AppError::DetailedIoError(format!("write split checkpoint error: {}", e)))?;
+                .map_err(|e| {
+                    AppError::DetailedIoError(format!("write split checkpoint error: {}", e))
+                })?;
 
             for entry in self.journal_logs.iter() {
                 let log = entry.value();
@@ -381,6 +395,7 @@ impl LogManager {
         journal_topic_partition: TopicPartition,
         queue_topic_partition: HashSet<TopicPartition>,
         shutdown: Shutdown,
+        shutdown_complete_tx: Sender<()>,
     ) -> AppResult<()> {
         let journal_log = self
             .journal_logs
@@ -404,10 +419,17 @@ impl LogManager {
             queue_logs,
             journal_topic_partition.clone(),
             read_wait_interval,
+            shutdown_complete_tx,
         );
 
         splitter.run(shutdown).await?;
         // tokio::time::sleep(Duration::from_secs(10)).await;
         Ok(())
+    }
+}
+
+impl Drop for LogManager {
+    fn drop(&mut self) {
+        debug!("log manager dropped");
     }
 }

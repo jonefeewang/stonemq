@@ -153,12 +153,16 @@ impl JournalLog {
                                 // journal log 不应有偏移索引文件
                                 let index_file = rt
                                     .block_on(IndexFile::new(
-                                        file.path(),
+                                        &file.path(),
                                         max_index_file_size,
                                         false,
                                     ))
                                     .map_err(|e| {
-                                        AppError::DetailedIoError(format!("open index file error: {}", e))
+                                        AppError::DetailedIoError(format!(
+                                            "open index file: {} error: {}",
+                                            file.path().to_string_lossy(),
+                                            e
+                                        ))
                                     })?;
                                 index_files.insert(file_prefix.parse::<i64>().unwrap(), index_file);
                             }

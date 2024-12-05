@@ -9,7 +9,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tokio::time::{self, Duration};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::group_consume::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
@@ -38,6 +38,7 @@ fn start_request_handler(
     replica_manager: Arc<ReplicaManager>,
     group_coordinator: Arc<GroupCoordinator>,
     num_workers: usize,
+    notify_shutdown: broadcast::Sender<()>,
 ) -> async_channel::Sender<RequestTask> {
     let (request_tx, request_rx) = async_channel::bounded(1024);
     tokio::spawn(async move {
@@ -57,12 +58,21 @@ fn start_request_handler(
                     process_request(request, replica_manager.clone(), group_coordinator.clone())
                         .await;
                 }
+                debug!("request handler exit");
             });
             workers.insert(i, handle);
         }
 
         // 启动监控线程监控worker状态
+        let mut shutdown = Shutdown::new(notify_shutdown.subscribe());
         loop {
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    debug!("request handler monitor received shutdown signal");
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+            }
             // 遍历任务并检查状态
             for id in 0..workers.len() {
                 if let Some(handle) = workers.remove(&id) {
@@ -109,7 +119,7 @@ fn start_request_handler(
                                                     replica_manager.clone(),
                                                     group_coordinator.clone(),
                                                 )
-                                                    .await;
+                                                .await;
                                             }
                                         });
                                         workers.insert(id, new_worker);
@@ -125,9 +135,8 @@ fn start_request_handler(
                     }
                 }
             }
-
-            tokio::time::sleep(Duration::from_secs(2)).await;
         }
+        debug!("request handler exit monitor loop");
     });
     request_tx
 }
@@ -189,6 +198,7 @@ impl ConnectionHandler {
             let maybe_frame = tokio::select! {
                 res = self.connection.read_frame() => res?,
                 _ = shutdown.recv() => {
+                    debug!("connection handler exit read loop after recv shutdown signal");
                     return Ok(());
                 }
             };
@@ -218,10 +228,9 @@ impl ConnectionHandler {
             // 等待响应并写入
             match response_rx.await {
                 Ok(response) => {
-                    self.writer
-                        .write_all(&response)
-                        .await
-                        .map_err(|e| AppError::DetailedIoError(format!("write response error: {}", e)))?;
+                    self.writer.write_all(&response).await.map_err(|e| {
+                        AppError::DetailedIoError(format!("write response error: {}", e))
+                    })?;
                     self.writer.flush().await.map_err(|e| {
                         AppError::DetailedIoError(format!("flush response error: {}", e))
                     })?;
@@ -235,6 +244,7 @@ impl ConnectionHandler {
                 }
             }
         }
+        debug!("connection handler exit read loop");
 
         Ok(())
     }
@@ -291,6 +301,7 @@ impl Server {
             self.replica_manager.clone(),
             self.group_coordinator.clone(),
             num_cpus::get(),
+            self.notify_shutdown.clone(),
         );
 
         loop {
@@ -348,3 +359,15 @@ impl Server {
         }
     }
 }
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        debug!("tcp server dropped");
+    }
+}
+impl Drop for ConnectionHandler {
+    fn drop(&mut self) {
+        debug!("connection handler dropped");
+    }
+}
+

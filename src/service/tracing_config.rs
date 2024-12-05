@@ -171,26 +171,30 @@ pub async fn setup_tracing() -> OtelGuard {
 
     // stdout fmt layer
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_timer(timer)
-        .with_target(true) // 是否显示日志目标
-        .with_thread_names(true) // 是否显示线程名称
-        .with_thread_ids(true) // 是否显示线程ID
-        .with_file(true)
-        .with_line_number(true)
-        .with_ansi(true)
-        .with_writer(writer);
+    // let fmt_layer = tracing_subscriber::fmt::layer()
+    //     .with_timer(timer)
+    //     .with_target(true) // 是否显示日志目标
+    //     .with_thread_names(true) // 是否显示线程名称
+    //     .with_thread_ids(true) // 是否显示线程ID
+    //     .with_file(true)
+    //     .with_line_number(true)
+    //     .with_ansi(true)
+    //     .with_writer(writer);
 
     // otel meter provider
     let meter_provider = init_meter_provider();
     // otel tracer
-    let tracer = init_tracer();
+    // let tracer = init_tracer();
 
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(MetricsLayer::new(meter_provider.clone()))
-        .with(OpenTelemetryLayer::new(tracer))
-        .with(tracing_subscriber::EnvFilter::from_default_env())
+    // tracing_subscriber::registry()
+    //     .with(fmt_layer)
+    //     .with(MetricsLayer::new(meter_provider.clone()))
+    //     .with(OpenTelemetryLayer::new(tracer))
+    //     .with(tracing_subscriber::EnvFilter::from_default_env())
+    //     .init();
+
+    console_subscriber::ConsoleLayer::builder()
+        .retention(Duration::from_secs(30))
         .init();
 
     // otel guard

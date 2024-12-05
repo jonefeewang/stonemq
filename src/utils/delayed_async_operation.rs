@@ -7,7 +7,7 @@ use tokio::time::sleep;
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
 use tokio_util::time::DelayQueue;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::Shutdown;
 
@@ -213,6 +213,11 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         for key in keys_to_remove {
             self.watchers.remove(&key);
         }
+    }
+}
+impl<T: DelayedAsyncOperation> Drop for DelayedAsyncOperationPurgatory<T> {
+    fn drop(&mut self) {
+        debug!("purgatory {} dropped", self.name);
     }
 }
 

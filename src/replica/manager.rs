@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use super::{JournalReplica, QueueReplica, ReplicaManager};
 
@@ -236,10 +236,11 @@ impl ReplicaManager {
         // 启动journal log splitter
         for (journal_tp, queue_tps) in journal_to_queues {
             let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
+            let shutdown_complete_tx = self._shutdown_complete_tx.clone();
             let log_manager = self.log_manager.clone();
             rt.spawn(async move {
                 if let Err(e) = log_manager
-                    .start_splitter_task(journal_tp, queue_tps, shutdown)
+                    .start_splitter_task(journal_tp, queue_tps, shutdown, shutdown_complete_tx)
                     .await
                 {
                     error!("Splitter task error: {:?}", e);
@@ -357,5 +358,11 @@ impl ReplicaManager {
         self.queue_2_journal
             .get(queue_topic_partition)
             .map(|tp| tp.clone())
+    }
+}
+
+impl Drop for ReplicaManager {
+    fn drop(&mut self) {
+        debug!("replica manager dropped");
     }
 }

@@ -146,7 +146,8 @@ impl LogSegment {
             LogType::Queue => global_config().log.queue_index_interval_bytes,
         };
 
-        if index_interval <= self.bytes_since_last_index_entry.load() {
+        // if index_interval <= self.bytes_since_last_index_entry.load() {
+        if true {
             //正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
                 .add_entry(relative_offset as u32, (self.file_records.size()) as u32)

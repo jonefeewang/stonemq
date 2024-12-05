@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
 use tracing::{debug, error, instrument, trace};
 
@@ -28,6 +29,7 @@ pub struct SplitterTask {
     queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>>,
     topic_partition: TopicPartition,
     read_wait_interval: Interval,
+    _shutdown_complete_tx: Sender<()>,
 }
 impl SplitterTask {
     pub fn new(
@@ -35,12 +37,14 @@ impl SplitterTask {
         queue_logs: BTreeMap<TopicPartition, Arc<QueueLog>>,
         topic_partition: TopicPartition,
         read_wait_interval: Interval,
+        _shutdown_complete_tx: Sender<()>,
     ) -> Self {
         SplitterTask {
             journal_log,
             queue_logs,
             topic_partition,
             read_wait_interval,
+            _shutdown_complete_tx,
         }
     }
     #[instrument(name = "splitter_run", skip_all, fields(target_offset))]
@@ -88,6 +92,7 @@ impl SplitterTask {
                 }
             }
         }
+        debug!("splitter task exit");
         Ok(())
     }
 

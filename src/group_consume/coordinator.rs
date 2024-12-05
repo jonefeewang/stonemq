@@ -1002,3 +1002,9 @@ pub struct JoinGroupResult {
     pub leader_id: String,
     pub error: ErrorCode,
 }
+
+impl Drop for GroupCoordinator {
+    fn drop(&mut self) {
+        debug!("group coordinator dropped");
+    }
+}

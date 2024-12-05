@@ -56,7 +56,7 @@ impl Broker {
         rt.block_on(Self::run_tcp_server(
             replica_manager.clone(),
             notify_shutdown.clone(),
-            shutdown_complete_tx,
+            shutdown_complete_tx.clone(),
         ))?;
 
         // tcp server has been shutdown, send shutdown signal
@@ -65,6 +65,7 @@ impl Broker {
             .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
         drop(log_manager);
         drop(replica_manager);
+        drop(shutdown_complete_tx);
         // rt.block_on(async { drop(_otel_guard) });
         // wait for shutdown complete
         trace!("waiting for shutdown complete...");
@@ -104,11 +105,12 @@ impl Broker {
             shutdown_complete_tx.clone(),
             node,
         )
-            .await;
+        .await;
         let group_coordinator = Arc::new(group_coordinator);
 
         let server = Server::new(
-            bind_result.map_err(|e| AppError::DetailedIoError(format!("bind tcp server error: {}", e)))?,
+            bind_result
+                .map_err(|e| AppError::DetailedIoError(format!("bind tcp server error: {}", e)))?,
             Arc::new(Semaphore::new(max_connection)),
             notify_shutdown.clone(),
             shutdown_complete_tx,

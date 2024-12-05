@@ -1,6 +1,6 @@
 use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::path::Path;
+use std::{os::unix::fs::PermissionsExt, path::Path};
 use tokio::fs::File;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
@@ -47,6 +47,7 @@ impl IndexFile {
             File::options().read(true).open(path).await?
         } else {
             File::options()
+                .read(true)
                 .write(true)
                 .create(true)
                 .append(true)
@@ -61,15 +62,6 @@ impl IndexFile {
             file.set_len(index_file_max_size as u64).await?;
         }
 
-        let mode = if read_only {
-            IndexFileMode::ReadOnly(unsafe {
-                let mmap_options = MmapOptions::new();
-                mmap_options.map(&file)?
-            })
-        } else {
-            IndexFileMode::ReadWrite(unsafe { MmapOptions::new().map_mut(&file)? })
-        };
-
         let entries = if file_exists { original_entries } else { 0 };
 
         trace!(
@@ -79,6 +71,23 @@ impl IndexFile {
             entries,
             read_only
         );
+
+        let mode = if read_only {
+            IndexFileMode::ReadOnly(unsafe {
+                let mmap_options = MmapOptions::new();
+                mmap_options.map(&file)?
+            })
+        } else {
+            let metadata = file.metadata().await?;
+            let permissions = metadata.permissions();
+
+            trace!(
+                "index file permissions - readonly: {}, mode: {:o}",
+                permissions.readonly(),
+                permissions.mode()
+            );
+            IndexFileMode::ReadWrite(unsafe { MmapOptions::new().map_mut(&file)? })
+        };
 
         Ok(Self {
             mode: RwLock::new(mode),
@@ -203,11 +212,11 @@ impl IndexFile {
             } else {
                 if mid == entries - 1
                     || u32::from_be_bytes([
-                    mmap[offset + INDEX_ENTRY_SIZE],
-                    mmap[offset + INDEX_ENTRY_SIZE + 1],
-                    mmap[offset + INDEX_ENTRY_SIZE + 2],
-                    mmap[offset + INDEX_ENTRY_SIZE + 3],
-                ]) > target_offset
+                        mmap[offset + INDEX_ENTRY_SIZE],
+                        mmap[offset + INDEX_ENTRY_SIZE + 1],
+                        mmap[offset + INDEX_ENTRY_SIZE + 2],
+                        mmap[offset + INDEX_ENTRY_SIZE + 3],
+                    ]) > target_offset
                 {
                     let position = u32::from_be_bytes([
                         mmap[offset + 4],
@@ -235,8 +244,9 @@ impl IndexFile {
                 "try to flush read-only index file".into(),
             )),
             IndexFileMode::ReadWrite(mmap) => {
-                mmap.flush()
-                    .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))?;
+                mmap.flush().map_err(|e| {
+                    AppError::DetailedIoError(format!("flush index file error: {}", e))
+                })?;
                 Ok(())
             }
         }
@@ -252,7 +262,9 @@ impl IndexFile {
             .file
             .metadata()
             .await
-            .map_err(|e| AppError::DetailedIoError(format!("get index file metadata error: {}", e)))?
+            .map_err(|e| {
+                AppError::DetailedIoError(format!("get index file metadata error: {}", e))
+            })?
             .len() as usize;
         let is_full = (entries + 1) * INDEX_ENTRY_SIZE > file_size;
         Ok(is_full)
@@ -275,8 +287,9 @@ impl IndexFile {
                 debug!("close read-only index file");
             }
             IndexFileMode::ReadWrite(mmap) => {
-                mmap.flush()
-                    .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))?;
+                mmap.flush().map_err(|e| {
+                    AppError::DetailedIoError(format!("flush index file error: {}", e))
+                })?;
                 debug!("close read-write index file");
             }
         }
