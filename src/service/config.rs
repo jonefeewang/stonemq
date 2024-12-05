@@ -27,7 +27,7 @@ pub struct NetworkConfig {
     pub max_package_size: usize,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct GroupConfig {
+pub struct GroupConsumeConfig {
     pub group_min_session_timeout: i32,
     pub group_max_session_timeout: i32,
     pub group_initial_rebalance_delay: i32,
@@ -67,7 +67,7 @@ pub struct BrokerConfig {
     pub general: GeneralConfig,
     pub network: NetworkConfig,
     pub log: LogConfig,
-    pub group: GroupConfig,
+    pub group_consume: GroupConsumeConfig,
 }
 
 impl BrokerConfig {
@@ -91,10 +91,7 @@ impl BrokerConfig {
 
         // println!("raw config {:?}",config);
 
-        let server_config: BrokerConfig = config.try_deserialize().unwrap_or_else(|err| {
-            eprintln!("error in deserializing config: {:?}", err);
-            std::process::exit(1);
-        });
+        let server_config: BrokerConfig = config.try_deserialize()?;
 
         Ok(server_config)
     }

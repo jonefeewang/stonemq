@@ -97,7 +97,7 @@ impl Broker {
         info!("tcp server binding to {} for listening", &listen_address);
         let max_connection = global_config().network.max_connection;
 
-        let group_config = global_config().group.clone();
+        let group_config = global_config().group_consume.clone();
         let node = Node::new_localhost();
         let group_coordinator = GroupCoordinator::startup(
             group_config,

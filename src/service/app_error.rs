@@ -33,8 +33,8 @@ pub enum AppError {
     #[error("Accept error = {0}")]
     Accept(String),
 
-    #[error("connection error: {0}")]
-    ConnectionError(String),
+    #[error("config file error: {0}")]
+    ConfigFileError(#[from] config::ConfigError),
 
     /// marker error    
     Incomplete,

@@ -222,7 +222,7 @@ impl ConnectionHandler {
 
             if let Err(e) = self.request_tx.send(request).await {
                 error!("Failed to send request: {:?}", e);
-                return Err(AppError::ConnectionError("Failed to send request".into()));
+                return Err(AppError::ChannelSendError(e.to_string()));
             }
 
             // 等待响应并写入
@@ -370,4 +370,3 @@ impl Drop for ConnectionHandler {
         debug!("connection handler dropped");
     }
 }
-

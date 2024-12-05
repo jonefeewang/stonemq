@@ -27,8 +27,8 @@ splitter_wait_interval = 10_000
 
 
 ###### journal config
-# default segment size 10M
-journal_segment_size = 10_240
+# default segment size 1M
+journal_segment_size = 1_024
 journal_base_dir = "test_data/journal"
 # default index file size 10M
 journal_index_file_size = 2048
@@ -37,8 +37,8 @@ journal_index_interval_bytes = 256
 
 
 ###### queue config
-# default segment size 10M
-queue_segment_size = 10_240
+# default segment size 1M
+queue_segment_size = 1_024
 queue_base_dir = "test_data/queue"
 # default index file size 10M
 queue_index_file_size = 2048
@@ -48,7 +48,7 @@ queue_index_interval_bytes = 256
 kv_store_path = "test_data/kv_store/kv.db"
 
 
-[group]
+[group_consume]
 ###### group config
 group_min_session_timeout = 6_000
 group_max_session_timeout = 300_000

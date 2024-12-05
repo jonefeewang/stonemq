@@ -24,7 +24,7 @@ use crate::{
         KafkaResult, PartitionOffsetCommitData, PartitionOffsetData, ProtocolMetadata,
         SyncGroupResponse,
     },
-    service::{GroupConfig, Node},
+    service::{GroupConsumeConfig, Node},
     utils::DelayedAsyncOperationPurgatory,
 };
 
@@ -34,7 +34,7 @@ use super::delayed_join::{DelayedHeartbeat, DelayedJoin, InitialDelayedJoin};
 pub struct GroupCoordinator {
     active: AtomicCell<bool>,
     node: Node,
-    group_config: GroupConfig,
+    group_config: GroupConsumeConfig,
     group_manager: GroupMetadataManager,
     delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedJoin>>,
     initial_delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
@@ -45,7 +45,7 @@ impl GroupCoordinator {
     async fn new(
         node: Node,
         group_manager: GroupMetadataManager,
-        group_config: GroupConfig,
+        group_config: GroupConsumeConfig,
         delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedJoin>>,
         initial_delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
         delayed_heartbeat_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedHeartbeat>>,
@@ -61,7 +61,7 @@ impl GroupCoordinator {
         }
     }
     pub async fn startup(
-        group_config: GroupConfig,
+        group_config: GroupConsumeConfig,
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
         node: Node,

@@ -26,8 +26,8 @@ pub enum Command {
 
 fn main() {
     if let Err(e) = run() {
-        error!("stonemq started failed: {}", e);
-        eprintln!("stonemq started failed: {}", e);
+        error!("Stonemq started failed: {}", e);
+        eprintln!("Stonemq started failed: {}", e);
         std::process::exit(1);
     }
 }
