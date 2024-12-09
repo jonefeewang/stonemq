@@ -238,10 +238,20 @@ impl LogSegment {
         self.offset_index.flush().await?;
         Ok(size)
     }
-    pub async fn open_file_records(&mut self, topic_partition: &TopicPartition) -> AppResult<()> {
-        let dir = topic_partition.queue_partition_dir();
-        let file_name = PathBuf::from(dir).join(format!("{}.log", self.base_offset));
+    pub async fn become_active(
+        &mut self,
+        fr_file_name: impl AsRef<Path>,
+        index_file_name: impl AsRef<Path>,
+        index_file_max_size: u32,
+    ) -> AppResult<()> {
+        let file_name = PathBuf::from(fr_file_name.as_ref());
         self.file_records = Some(FileRecords::open(file_name).await?);
+
+        let new_index_file = IndexFile::new(index_file_name, index_file_max_size as usize, false)
+            .await
+            .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
+
+        self.offset_index = new_index_file;
         Ok(())
     }
     pub async fn close_file_records(&mut self) -> AppResult<()> {

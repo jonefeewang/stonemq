@@ -24,6 +24,7 @@ use tracing::{error, trace};
 pub struct FileRecords {
     pub tx: Sender<FileOp>,
     size: Arc<AtomicCell<usize>>,
+    active: Arc<AtomicCell<bool>>,
     file_name: String,
 }
 
@@ -72,6 +73,7 @@ impl FileRecords {
         let file_name = file_name.as_ref().to_string_lossy().into_owned();
         let file_records = Self {
             tx,
+            active: Arc::new(AtomicCell::new(true)),
             size: Arc::new(AtomicCell::new(metadata.len() as usize)),
             file_name,
         };
@@ -88,19 +90,20 @@ impl FileRecords {
         size: Arc<AtomicCell<usize>>,
     ) {
         let file_name = self.file_name.clone();
+        let active_clone = self.active.clone();
         tokio::spawn(async move {
             let mut writer = BufWriter::new(file);
             while let Some(message) = rx.recv().await {
                 match message {
                     FileOp::AppendJournal((
-                                              journal_offset,
-                                              topic_partition,
-                                              first_batch_queue_base_offset,
-                                              last_batch_queue_base_offset,
-                                              records_count,
-                                              records,
-                                              resp_tx,
-                                          )) => {
+                        journal_offset,
+                        topic_partition,
+                        first_batch_queue_base_offset,
+                        last_batch_queue_base_offset,
+                        records_count,
+                        records,
+                        resp_tx,
+                    )) => {
                         match Self::append_journal_recordbatch(
                             &mut writer,
                             (
@@ -112,7 +115,7 @@ impl FileRecords {
                                 records,
                             ),
                         )
-                            .await
+                        .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -135,14 +138,14 @@ impl FileRecords {
                         }
                     }
                     FileOp::AppendQueue((
-                                            journal_offset,
-                                            topic_partition,
-                                            first_batch_queue_base_offset,
-                                            last_batch_queue_base_offset,
-                                            records_count,
-                                            records,
-                                            resp_tx,
-                                        )) => {
+                        journal_offset,
+                        topic_partition,
+                        first_batch_queue_base_offset,
+                        last_batch_queue_base_offset,
+                        records_count,
+                        records,
+                        resp_tx,
+                    )) => {
                         match Self::append_queue_recordbatch(
                             &mut writer,
                             (
@@ -154,7 +157,7 @@ impl FileRecords {
                                 records,
                             ),
                         )
-                            .await
+                        .await
                         {
                             Ok(total_write) => {
                                 trace!("{} file append finished .", &file_name);
@@ -189,12 +192,15 @@ impl FileRecords {
                         }
                     },
                 }
+                if !active_clone.load() {
+                    break;
+                }
             }
             trace!("{} file records append thread exit", &file_name)
         });
     }
     pub async fn stop_job_task(&self) {
-        self.tx.closed().await;
+        self.active.store(false);
     }
 
     /// 将日志记录批次追加到日志文件中

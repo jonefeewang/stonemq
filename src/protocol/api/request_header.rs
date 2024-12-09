@@ -32,25 +32,6 @@ pub static REQUEST_HEADER_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
 
 /// Implementation of methods for the RequestHeader struct
 impl RequestHeader {
-    /// Writes the request header to a byte stream
-    ///
-    /// # Arguments
-    ///
-    /// * `stream` - A mutable reference to a BytesMut instance where the request header will be written
-    ///
-    /// # Returns
-    ///
-    /// * `AppResult<()>` - An application-specific result type
-    pub async fn write_to(self, writer: &mut BytesMut) {
-        let schema = Arc::clone(&REQUEST_HEADER_SCHEMA);
-        let mut schema_data = ValueSet::new(schema);
-        schema_data.append_field_value(API_KEY, self.api_key.into());
-        schema_data.append_field_value(API_VERSION_KEY_NAME, self.api_version.into());
-        schema_data.append_field_value(CORRELATION_ID_KEY_NAME, self.correlation_id.into());
-        schema_data.append_field_value(CLIENT_ID_KEY_NAME, self.client_id.clone().into());
-        schema_data.write_to(writer)
-    }
-
     /// Reads a request header from a byte stream
     ///
     /// # Arguments

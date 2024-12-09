@@ -271,29 +271,9 @@ impl IndexFile {
     }
 
     /// Returns the number of entries in the index file.
+    #[cfg(test)]
     pub fn entry_count(&self) -> usize {
         self.entries.load()
-    }
-
-    /// Closes the index file.
-    ///
-    /// # Returns
-    /// A Result indicating success or failure
-    pub async fn close(&self) -> AppResult<()> {
-        self.trim_to_valid_size().await?;
-        let mut mode = self.mode.write().await;
-        match &mut *mode {
-            IndexFileMode::ReadOnly(_) => {
-                debug!("close read-only index file");
-            }
-            IndexFileMode::ReadWrite(mmap) => {
-                mmap.flush().map_err(|e| {
-                    AppError::DetailedIoError(format!("flush index file error: {}", e))
-                })?;
-                debug!("close read-write index file");
-            }
-        }
-        Ok(())
     }
 
     /// Trims is the index file to the valid size.

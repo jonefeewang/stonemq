@@ -7,11 +7,10 @@ use std::collections::BTreeMap;
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use tokio::sync::{Mutex, RwLock};
-use tracing::info;
 
 use crate::{
     global_config,
-    log::{CheckPointFile, IndexFile, NEXT_OFFSET_CHECKPOINT_FILE_NAME},
+    log::{CheckPointFile, NEXT_OFFSET_CHECKPOINT_FILE_NAME},
     message::TopicPartition,
     AppError, AppResult,
 };
@@ -81,18 +80,8 @@ impl JournalLog {
         })?;
 
         let index_file_max_size = global_config().log.journal_index_file_size;
+        let segment = LogSegment::new(topic_partition, dir, 0, index_file_max_size as u32).await?;
 
-        let index_file = IndexFile::new(
-            format!("{}/0.index", dir),
-            index_file_max_size as usize,
-            false,
-        )
-        .await
-        .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
-
-        info!("create initial log segment for journal partition: {}", dir);
-        let mut segment = LogSegment::open(topic_partition.clone(), 0, index_file, None);
-        segment.open_file_records(topic_partition).await?;
         let mut segments = BTreeMap::new();
         segments.insert(0, segment);
 

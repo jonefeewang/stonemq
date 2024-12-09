@@ -39,7 +39,9 @@ impl QueueLog {
                     format!("未找到偏移量 {} 的段", offset),
                 )
             })
-            .map_err(|e| AppError::DetailedIoError(format!("get relative position info error: {}", e)))?;
+            .map_err(|e| {
+                AppError::DetailedIoError(format!("get relative position info error: {}", e))
+            })?;
         segment.get_relative_position(offset).await
     }
 
@@ -49,7 +51,7 @@ impl QueueLog {
         if floor_segment.is_some() {
             // active segment
             let (_, active_segment) = floor_segment.unwrap();
-            Some(active_segment.size().unwrap() as usize)
+            Some(active_segment.size().unwrap())
         } else {
             None
         }
@@ -87,7 +89,7 @@ impl QueueLog {
             ref_position_info,
             LogType::Queue,
         )
-            .await;
+        .await;
 
         trace!("seek_result: {:?}", seek_result);
 
@@ -105,7 +107,12 @@ impl QueueLog {
         let total_len = segment_file
             .metadata()
             .await
-            .map_err(|e| AppError::DetailedIoError(format!("get file metadata error: {} while read records", e)))?
+            .map_err(|e| {
+                AppError::DetailedIoError(format!(
+                    "get file metadata error: {} while read records",
+                    e
+                ))
+            })?
             .len();
 
         // 如果是非活动段的话，直接取到末尾，就是一个record完整结束，如果是活动段的话，可能会截断

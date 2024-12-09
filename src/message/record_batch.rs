@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 use std::io::{Cursor, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
+
 use tracing::error;
 
 use crate::message::batch_header::BatchHeader;
@@ -78,7 +78,9 @@ impl RecordBatch {
         cursor.set_position(FIRST_TIMESTAMP_OFFSET as u64);
         cursor
             .write_all(&first_timestamp.to_be_bytes())
-            .map_err(|e| AppError::DetailedIoError(format!("write first timestamp error: {}", e)))?;
+            .map_err(|e| {
+                AppError::DetailedIoError(format!("write first timestamp error: {}", e))
+            })?;
         Ok(())
     }
 
@@ -127,7 +129,7 @@ impl RecordBatch {
                 batch_size, max_msg_size
             )));
         }
-        if batch_size < RECORD_BATCH_OVERHEAD {
+        if batch_size + (LOG_OVERHEAD as i32) < RECORD_BATCH_OVERHEAD {
             return Err(AppError::CorruptMessage(format!(
                 "Message size {} is less than the record batch overhead {}",
                 batch_size, RECORD_BATCH_OVERHEAD
@@ -326,7 +328,7 @@ impl RecordBatchBuilder {
         self.buffer.put_i32(NO_SEQUENCE);
         self.buffer.put_i32(0); //record count
     }
-
+    #[cfg(test)]
     pub fn append_record_with_offset<T: AsRef<[u8]>>(
         &mut self,
         offset: i64,
@@ -336,7 +338,7 @@ impl RecordBatchBuilder {
     ) {
         self.append_record(Some(offset), Some(timestamp), key, value, None);
     }
-
+    #[cfg(test)]
     pub fn append_record<T: AsRef<[u8]>>(
         &mut self,
         offset: Option<i64>,
@@ -388,6 +390,7 @@ impl RecordBatchBuilder {
         self._record_count += 1;
     }
 
+    #[cfg(test)]
     fn write_record<T: AsRef<[u8]>>(
         &mut self,
         record_size: usize,
@@ -435,6 +438,7 @@ impl RecordBatchBuilder {
         }
     }
 
+    #[cfg(test)]
     pub fn build(&mut self) -> RecordBatch {
         let mut cursor = Cursor::new(self.buffer.as_mut());
 
@@ -472,14 +476,15 @@ impl RecordBatchBuilder {
 
         RecordBatch::new(self.buffer.split())
     }
+    #[cfg(test)]
 
     fn current_millis() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as i64
     }
-
+    #[cfg(test)]
     fn calculate_size(data: &[u8]) -> usize {
         if data.is_empty() {
             (-1).required_space()
@@ -487,7 +492,7 @@ impl RecordBatchBuilder {
             data.len().required_space() + data.len()
         }
     }
-
+    #[cfg(test)]
     fn append_data(buffer: &mut BytesMut, data: &[u8]) {
         if data.is_empty() {
             buffer.put_slice((-1).encode_var_vec().as_ref());
@@ -496,7 +501,7 @@ impl RecordBatchBuilder {
             buffer.put_slice(data);
         }
     }
-
+    #[cfg(test)]
     fn next_sequence_offset(&mut self) -> i64 {
         let ret = self._last_offset;
         self._last_offset += 1;

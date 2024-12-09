@@ -108,6 +108,7 @@ impl ReplicaManager {
                         },
                     );
                 } else if let Err(e) = append_result {
+                    error!("append records error: {:?}", e);
                     tp_response.insert(
                         topic_partition.clone(),
                         error_response(

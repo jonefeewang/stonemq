@@ -1,9 +1,11 @@
+use std::path::PathBuf;
+
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
     global_config,
-    log::{log_segment::LogSegment, IndexFile, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME},
+    log::{log_segment::LogSegment, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME},
     message::{MemoryRecords, RecordBatch, TopicPartition},
     AppError, AppResult,
 };
@@ -233,27 +235,15 @@ impl JournalLog {
         self.flush_segment(active_seg).await?;
         active_seg.close_file_records().await?;
 
-
         let new_base_offset = self.next_offset.load();
-        let index_file = IndexFile::new(
-            format!(
-                "{}/{}.index",
-                self.topic_partition.journal_partition_dir(),
-                new_base_offset
-            ),
-            self.index_file_max_size as usize,
-            false,
-        )
-        .await
-        .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
-
-        let mut new_seg = LogSegment::open(
-            self.topic_partition.clone(),
+        let index_file_dir = PathBuf::from(self.topic_partition.journal_partition_dir());
+        let new_seg = LogSegment::new(
+            &self.topic_partition,
+            index_file_dir,
             new_base_offset,
-            index_file,
-            None,
-        );
-        new_seg.open_file_records(&self.topic_partition).await?;
+            self.index_file_max_size,
+        )
+        .await?;
 
         segments.insert(new_base_offset, new_seg);
         debug!("journal log roll segment: {}", new_base_offset);
@@ -316,11 +306,5 @@ impl JournalLog {
             "no active segment, topic partition: {}",
             self.topic_partition.id()
         ))
-    }
-
-    pub async fn close(&self) -> AppResult<()> {
-        self.flush().await?;
-
-        Ok(())
     }
 }

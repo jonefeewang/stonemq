@@ -4,7 +4,7 @@ mod queue_write;
 
 use crossbeam::atomic::AtomicCell;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::log::log_segment::LogSegment;
 use crate::message::TopicPartition;
@@ -60,12 +60,10 @@ impl QueueLog {
             })?;
         }
 
-        let index_file_max_size = global_config().log.queue_index_file_size as u32;
         let mut segments = BTreeMap::new();
 
-        warn!("no segment file found in queue log dir:{}", dir);
-        let mut segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
-        segment.open_file_records(&topic_partition).await?;
+        let index_file_max_size = global_config().log.queue_index_file_size as u32;
+        let segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
         segments.insert(0, segment);
 
         Ok(QueueLog {

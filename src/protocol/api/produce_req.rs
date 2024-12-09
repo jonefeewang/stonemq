@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bytes::BytesMut;
 use once_cell::sync::Lazy;
-use tracing::trace;
 
 use crate::message::TopicData;
 use crate::message::{MemoryRecords, PartitionMsgData};
@@ -36,9 +35,7 @@ impl ProtocolCodec<ProduceRequest> for ProduceRequest {
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
-        trace!("ProduceRequest read start");
         let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
-        trace!("ProduceRequest schema read start ----{:?}", schema);
         let produce_req_value_set = schema.read_from(buffer)?;
         let produce_request = ProduceRequest::decode_from_value_set(produce_req_value_set)?;
         Ok(produce_request)

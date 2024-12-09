@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
@@ -72,7 +75,6 @@ impl JournalLog {
             topic_partition: topic_partition.clone(),
             index_file_max_size,
         };
-        // open active segment
         rt.block_on(log.open_active_segment())?;
 
         info!(
@@ -219,11 +221,26 @@ impl JournalLog {
     /// 打开活跃的segment
     pub async fn open_active_segment(&self) -> AppResult<()> {
         let mut segments = self.segments.write().await;
-        let (_, active_seg) = segments
+        if segments.is_empty() {
+            let dir = PathBuf::from(self.topic_partition.journal_partition_dir());
+            let segment =
+                LogSegment::new(&self.topic_partition, dir, 0, self.index_file_max_size).await?;
+            segments.insert(0, segment);
+        }
+        let (base_offset, active_seg) = segments
             .iter_mut()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error())?;
-        active_seg.open_file_records(&self.topic_partition).await?;
+        
+        let file_name = PathBuf::from(self.topic_partition.journal_partition_dir())
+            .join(format!("{}.log", base_offset));
+        let index_file_name = PathBuf::from(self.topic_partition.journal_partition_dir())
+            .join(format!("{}.index", base_offset));
+
+        active_seg
+            .become_active(file_name, index_file_name, self.index_file_max_size)
+            .await?;
+
         Ok(())
     }
 }
