@@ -12,3 +12,4 @@ target/
 /test_data/
 
 stonemq.log.*
+*.sh

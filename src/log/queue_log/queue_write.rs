@@ -155,15 +155,15 @@ impl QueueLog {
     async fn roll_segment(&self) -> AppResult<()> {
         let mut segments = self.segments.write().await;
         let (_, active_seg) = segments
-            .iter()
+            .iter_mut()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
 
         active_seg.flush().await?;
+        active_seg.close_file_records().await?;
         self.recover_point.store(self.last_offset.load());
 
         let new_base_offset = self.last_offset.load() + 1;
-
         let new_seg = LogSegment::new(
             &self.topic_partition,
             self.topic_partition.queue_partition_dir(),

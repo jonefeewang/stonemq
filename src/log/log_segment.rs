@@ -244,4 +244,16 @@ impl LogSegment {
         self.file_records = Some(FileRecords::open(file_name).await?);
         Ok(())
     }
+    pub async fn close_file_records(&mut self) -> AppResult<()> {
+        if let Some(file_records) = self.file_records.take() {
+            file_records.stop_job_task().await;
+        } else {
+            return Err(AppError::InvalidOperation(format!(
+                "inactive segment can not close file records:{}",
+                self.base_offset
+            )));
+        }
+
+        Ok(())
+    }
 }

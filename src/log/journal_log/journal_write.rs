@@ -226,14 +226,15 @@ impl JournalLog {
     async fn roll_segment(&self) -> AppResult<()> {
         let mut segments = self.segments.write().await; // 获取写锁以进行原子滚动操作
         let (_, active_seg) = segments
-            .iter()
+            .iter_mut()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error())?;
 
         self.flush_segment(active_seg).await?;
+        active_seg.close_file_records().await?;
+
 
         let new_base_offset = self.next_offset.load();
-
         let index_file = IndexFile::new(
             format!(
                 "{}/{}.index",
