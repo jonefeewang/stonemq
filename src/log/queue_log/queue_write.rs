@@ -104,11 +104,11 @@ impl QueueLog {
     /// Returns `AppResult<()>` indicating success or failure.
     pub async fn flush(&self) -> AppResult<()> {
         let segments = self.segments.write().await;
-        let active_seg = segments
+        let (_, active_seg) = segments
             .iter()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
-        active_seg.1.flush().await?;
+        active_seg.flush().await?;
         self.recover_point.store(self.last_offset.load());
         Ok(())
     }

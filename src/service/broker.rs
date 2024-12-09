@@ -34,8 +34,6 @@ pub struct Broker;
 
 impl Broker {
     pub fn start(rt: &Runtime) -> AppResult<()> {
-        //setup tracing
-
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
@@ -117,6 +115,8 @@ impl Broker {
             replica_manager.clone(),
             group_coordinator.clone(),
         );
+
+        info!("server startup complete");
         tokio::select! {
           res = server.run() => {
               if let Err(err) = res {

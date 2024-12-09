@@ -190,8 +190,15 @@ impl ReplicaManager {
             return Err(AppError::IllegalStateError("没有可用的 JournalLog".into()));
         }
 
+        let mut sorted_queue_partitions = self
+            .all_queue_partitions
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect::<Vec<_>>();
+        sorted_queue_partitions.sort_by_key(|entry| entry.id());
+
         // 使用迭代器索引来实现轮询
-        self.all_queue_partitions
+        sorted_queue_partitions
             .iter()
             .enumerate()
             .for_each(|(index, entry)| {
@@ -201,7 +208,7 @@ impl ReplicaManager {
                     partition: journal_partition as i32,
                 };
                 self.queue_2_journal
-                    .insert(entry.topic_partition.clone(), journal_topic);
+                    .insert(entry.clone(), journal_topic);
             });
 
         info!(

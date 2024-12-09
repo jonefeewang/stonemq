@@ -34,7 +34,7 @@ pub struct JournalLog {
     _log_start_offset: AtomicCell<i64>,
 
     /// 下一个偏移量。
-    next_offset: AtomicCell<i64>,
+    pub(crate) next_offset: AtomicCell<i64>,
 
     /// 恢复点偏移量。
     pub(crate) recover_point: AtomicCell<i64>,

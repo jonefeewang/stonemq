@@ -334,6 +334,11 @@ impl LogManager {
                 .map(|entry| {
                     let tp = entry.key();
                     let log = entry.value();
+                    debug!(
+                        "split progress:{}/{}",
+                        log.split_offset.load(),
+                        log.next_offset.load()
+                    );
                     (tp.clone(), log.split_offset.load())
                 })
                 .collect();

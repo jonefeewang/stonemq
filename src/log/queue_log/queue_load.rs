@@ -90,7 +90,7 @@ impl QueueLog {
                                     .block_on(IndexFile::new(
                                         file.path(),
                                         index_file_max_size as usize,
-                                        false,
+                                        true,
                                     ))
                                     .map_err(|e| {
                                         AppError::DetailedIoError(format!(

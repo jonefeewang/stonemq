@@ -25,6 +25,7 @@ pub enum Command {
 }
 
 fn main() {
+    print_art();
     if let Err(e) = run() {
         error!("Stonemq started failed: {}", e);
         eprintln!("Stonemq started failed: {}", e);
@@ -34,7 +35,6 @@ fn main() {
 
 fn run() -> AppResult<()> {
     dotenv().ok();
-
 
     let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
 
@@ -59,4 +59,31 @@ fn run() -> AppResult<()> {
     Broker::start(&rt)?;
 
     Ok(())
+}
+
+fn print_art() {
+    let stone_mq_art = r#"
+    ================================================
+                   Welcome to StoneMQ 🚀
+                The Rock of Message Queues!
+
+                  __________
+               .-'          `-.
+             .'   .-"""""""-.  '.
+            /    /  .---.   |    \
+           |    |  (o   o)  |     |   ____
+           |    |    (_)    ;     |  [____]
+           |     \         /     /
+            \     '.     .'     /
+             '-.    `"""'    .-'
+                `-._______.-'
+
+    StoneMQ Features:
+    -----------------
+    * Reliable, High-Performance Queue 🧱
+    * Built for Distributed Systems 🌐
+    * Written in Rust 🦀, Lightning Fast
+    ================================================
+"#;
+    println!("{}", stone_mq_art);
 }
