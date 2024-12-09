@@ -58,7 +58,7 @@ impl JournalLog {
             ))
         })?;
         Ok((
-            active_seg.size() as u32,
+            active_seg.size().unwrap() as u32,
             active_seg.offset_index_full().await?,
         ))
     }

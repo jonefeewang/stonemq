@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::log::log_segment::LogSegment;
 use crate::message::TopicPartition;
-use crate::{AppError, AppResult};
+use crate::{global_config, AppError, AppResult};
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -50,14 +50,7 @@ impl QueueLog {
     /// # Returns
     ///
     /// Returns a `Result` containing the new `QueueLog` instance on success.
-    pub async fn new(
-        topic_partition: &TopicPartition,
-        mut segments: BTreeMap<i64, LogSegment>,
-        log_start_offset: i64,
-        recovery_offset: i64,
-        next_offset: i64,
-        index_file_max_size: u32,
-    ) -> AppResult<Self> {
+    pub async fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
         let dir = topic_partition.queue_partition_dir();
 
         if !Path::new(&dir).exists() {
@@ -67,18 +60,20 @@ impl QueueLog {
             })?;
         }
 
-        if segments.is_empty() {
-            warn!("no segment file found in queue log dir:{}", dir);
-            let segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
-            segments.insert(0, segment);
-        }
+        let index_file_max_size = global_config().log.queue_index_file_size as u32;
+        let mut segments = BTreeMap::new();
+
+        warn!("no segment file found in queue log dir:{}", dir);
+        let mut segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
+        segment.open_file_records(&topic_partition).await?;
+        segments.insert(0, segment);
 
         Ok(QueueLog {
             topic_partition: topic_partition.clone(),
             segments: RwLock::new(segments),
-            log_start_offset,
-            recover_point: AtomicCell::new(recovery_offset),
-            last_offset: AtomicCell::new(next_offset),
+            log_start_offset: 0,
+            recover_point: AtomicCell::new(-1),
+            last_offset: AtomicCell::new(0),
             index_file_max_size,
         })
     }

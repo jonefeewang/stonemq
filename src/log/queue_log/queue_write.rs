@@ -42,13 +42,13 @@ impl QueueLog {
 
         let (active_seg_size, active_segment_offset_index_full) = {
             let segments = self.segments.read().await;
-            let active_seg = segments
+            let (_, active_seg) = segments
                 .iter()
                 .next_back()
                 .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
             (
-                active_seg.1.size() as u32,
-                active_seg.1.offset_index_full().await?,
+                active_seg.size().unwrap() as u32,
+                active_seg.offset_index_full().await?,
             )
         };
 
@@ -225,7 +225,7 @@ impl QueueLog {
             )
             .await?;
         rx.await
-            .map_err(|e| AppError::ChannelRecvError(e.to_string()))?;
+            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
         Ok(())
     }
     /// Creates an error for when no active segment is found.

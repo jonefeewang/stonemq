@@ -21,7 +21,7 @@ impl QueueLog {
         let leo_info = PositionInfo {
             base_offset: *base_offset,
             offset: self.last_offset.load(),
-            position: active_seg.size() as i64,
+            position: active_seg.size().unwrap() as i64,
         };
         Ok(leo_info)
     }
@@ -49,7 +49,7 @@ impl QueueLog {
         if floor_segment.is_some() {
             // active segment
             let (_, active_segment) = floor_segment.unwrap();
-            Some(active_segment.size())
+            Some(active_segment.size().unwrap() as usize)
         } else {
             None
         }

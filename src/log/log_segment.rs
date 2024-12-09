@@ -16,7 +16,7 @@ use super::LogType;
 #[derive(Debug)]
 pub struct LogSegment {
     _topic_partition: TopicPartition,
-    file_records: FileRecords,
+    file_records: Option<FileRecords>,
     base_offset: i64,
     time_index: Option<IndexFile>,
     offset_index: IndexFile,
@@ -34,14 +34,13 @@ impl LogSegment {
     pub fn open(
         topic_partition: TopicPartition,
         base_offset: i64,
-        file_records: FileRecords,
         offset_index: IndexFile,
         time_index: Option<IndexFile>,
     ) -> Self {
         Self {
             _topic_partition: topic_partition,
             base_offset,
-            file_records,
+            file_records: None,
             offset_index,
             time_index,
             bytes_since_last_index_entry: AtomicCell::new(0),
@@ -85,8 +84,14 @@ impl LogSegment {
         };
         Ok(pos_info)
     }
-    pub fn size(&self) -> usize {
-        self.file_records.size()
+    pub fn size(&self) -> AppResult<usize> {
+        if self.file_records.is_none() {
+            return Err(AppError::InvalidOperation(format!(
+                "inactive segment can not get size:{}",
+                self.base_offset
+            )));
+        }
+        Ok(self.file_records.as_ref().unwrap().size())
     }
     pub fn base_offset(&self) -> i64 {
         self.base_offset
@@ -96,6 +101,7 @@ impl LogSegment {
         self.offset_index.is_full().await
     }
 
+    /// 运行时创建一个新的segment
     pub async fn new(
         topic_partition: &TopicPartition,
         dir: impl AsRef<Path>,
@@ -111,7 +117,7 @@ impl LogSegment {
             .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
         let segment = LogSegment {
             _topic_partition: topic_partition.clone(),
-            file_records,
+            file_records: Some(file_records),
             base_offset,
             time_index: None,
             offset_index,
@@ -132,6 +138,13 @@ impl LogSegment {
             oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
+        if self.file_records.is_none() {
+            return Err(AppError::InvalidOperation(format!(
+                "inactive segment can not append record:{}",
+                self.base_offset
+            )));
+        }
+
         // 计算是否更新index file
 
         let records_size = records_package.5.size();
@@ -141,6 +154,7 @@ impl LogSegment {
         };
         let relative_offset = first_offset - self.base_offset;
 
+        #[allow(unused_variables)]
         let index_interval = match log_type {
             LogType::Journal => global_config().log.journal_index_interval_bytes,
             LogType::Queue => global_config().log.queue_index_interval_bytes,
@@ -150,12 +164,15 @@ impl LogSegment {
         if true {
             //正常情况下是不会满的，因为在写入之前会判断是否满了
             self.offset_index
-                .add_entry(relative_offset as u32, (self.file_records.size()) as u32)
+                .add_entry(
+                    relative_offset as u32,
+                    (self.file_records.as_ref().unwrap().size()) as u32,
+                )
                 .await?;
             trace!(
                 "write index entry: {},{},{:?}",
                 relative_offset,
-                self.file_records.size(),
+                self.file_records.as_ref().unwrap().size(),
                 self.offset_index
             );
             if self.time_index.is_some() {
@@ -165,7 +182,7 @@ impl LogSegment {
                     .unwrap()
                     .add_entry(
                         (first_offset - self.base_offset) as u32,
-                        self.file_records.size() as u32,
+                        self.file_records.as_ref().unwrap().size() as u32,
                     )
                     .await?;
             }
@@ -178,6 +195,8 @@ impl LogSegment {
         match log_type {
             LogType::Journal => {
                 self.file_records
+                    .as_ref()
+                    .unwrap()
                     .tx
                     .send(FileOp::AppendJournal(records_package))
                     .await
@@ -185,6 +204,8 @@ impl LogSegment {
             }
             LogType::Queue => {
                 self.file_records
+                    .as_ref()
+                    .unwrap()
                     .tx
                     .send(FileOp::AppendQueue(records_package))
                     .await
@@ -196,8 +217,16 @@ impl LogSegment {
     }
 
     pub(crate) async fn flush(&self) -> AppResult<u64> {
+        if self.file_records.is_none() {
+            return Err(AppError::InvalidOperation(format!(
+                "inactive segment can not flush:{}",
+                self.base_offset
+            )));
+        }
         let (tx, rx) = oneshot::channel::<AppResult<u64>>();
         self.file_records
+            .as_ref()
+            .unwrap()
             .tx
             .send(FileOp::Flush(tx))
             .await
@@ -208,5 +237,11 @@ impl LogSegment {
         self.offset_index.trim_to_valid_size().await?;
         self.offset_index.flush().await?;
         Ok(size)
+    }
+    pub async fn open_file_records(&mut self, topic_partition: &TopicPartition) -> AppResult<()> {
+        let dir = topic_partition.queue_partition_dir();
+        let file_name = PathBuf::from(dir).join(format!("{}.log", self.base_offset));
+        self.file_records = Some(FileRecords::open(file_name).await?);
+        Ok(())
     }
 }

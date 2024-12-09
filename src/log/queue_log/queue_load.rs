@@ -1,5 +1,5 @@
+use crate::log::log_segment::LogSegment;
 use crate::log::IndexFile;
-use crate::log::{file_records::FileRecords, log_segment::LogSegment};
 use crate::message::TopicPartition;
 use crate::{AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
@@ -92,7 +92,10 @@ impl QueueLog {
                                         false,
                                     ))
                                     .map_err(|e| {
-                                        AppError::DetailedIoError(format!("open index file error: {}", e))
+                                        AppError::DetailedIoError(format!(
+                                            "open index file error: {}",
+                                            e
+                                        ))
                                     })?;
                                 index_files.insert(
                                     file_prefix.parse::<i64>().map_err(|_| {
@@ -110,9 +113,7 @@ impl QueueLog {
                                 let base_offset = file_prefix.parse::<i64>();
                                 match base_offset {
                                     Ok(base_offset) => {
-                                        let file_records =
-                                            rt.block_on(FileRecords::open(file.path()))?;
-                                        log_files.insert(base_offset, file_records);
+                                        log_files.insert(base_offset, 0);
                                     }
                                     Err(_) => {
                                         warn!("无效的段文件名：{}", file_prefix);
@@ -130,19 +131,14 @@ impl QueueLog {
             }
         }
 
-        for (base_offset, file_records) in log_files {
+        for (base_offset, _) in log_files {
             let offset_index = index_files.remove(&base_offset);
             if let Some(offset_index) = offset_index {
-                let segment = LogSegment::open(
-                    topic_partition.clone(),
-                    base_offset,
-                    file_records,
-                    offset_index,
-                    None,
-                );
+                let segment =
+                    LogSegment::open(topic_partition.clone(), base_offset, offset_index, None);
                 segments.insert(base_offset, segment);
             } else {
-                error!("未找到偏移索引文件：{}", base_offset);
+                error!("can not find index file for segment:{}", base_offset);
             }
         }
 
@@ -184,6 +180,17 @@ impl QueueLog {
             last_offset: AtomicCell::new(recover_point),
             index_file_max_size,
         };
+        rt.block_on(log.open_active_segment());
         Ok(log)
+    }
+    /// 打开活跃的segment
+    pub async fn open_active_segment(&self) -> AppResult<()> {
+        let mut segments = self.segments.write().await;
+        let (_, active_seg) = segments
+            .iter_mut()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
+        active_seg.open_file_records(&self.topic_partition).await?;
+        Ok(())
     }
 }

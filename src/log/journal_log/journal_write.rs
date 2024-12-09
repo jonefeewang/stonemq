@@ -1,14 +1,9 @@
-use std::sync::Arc;
-
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
     global_config,
-    log::{
-        file_records::FileRecords, log_segment::LogSegment, IndexFile, LogAppendInfo, LogType,
-        DEFAULT_LOG_APPEND_TIME,
-    },
+    log::{log_segment::LogSegment, IndexFile, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME},
     message::{MemoryRecords, RecordBatch, TopicPartition},
     AppError, AppResult,
 };
@@ -79,7 +74,7 @@ impl JournalLog {
             log_append_info.records_count,
             memory_records,
         )
-            .await?;
+        .await?;
 
         // 追加一个批次，偏移量加1
         self.next_offset.fetch_add(1);
@@ -177,7 +172,7 @@ impl JournalLog {
         Ok(())
     }
 
-    async fn flush_segment(&self, active_seg: &Arc<LogSegment>) -> AppResult<()> {
+    async fn flush_segment(&self, active_seg: &LogSegment) -> AppResult<()> {
         active_seg.flush().await?;
         self.recover_point.store(self.next_offset.load() - 1);
         debug!(
@@ -212,12 +207,15 @@ impl JournalLog {
             + memory_records.size() as u32
             + active_seg_size;
 
-        debug!(
-            "total_size: {},config size: {}, active_seg_index_full: {}",
-            total_size, config.journal_segment_size, active_segment_offset_index_full
-        );
-
-        total_size >= config.journal_segment_size as u32 || active_segment_offset_index_full
+        let condition =
+            total_size >= config.journal_segment_size as u32 || active_segment_offset_index_full;
+        if condition {
+            debug!(
+                "roll segment total_size: {},config size: {}, active_seg_index_full: {}",
+                total_size, config.journal_segment_size, active_segment_offset_index_full
+            );
+        }
+        condition
     }
 
     /// 滚动到新的日志段。
@@ -236,30 +234,28 @@ impl JournalLog {
 
         let new_base_offset = self.next_offset.load();
 
-        let new_seg = Arc::new(LogSegment::open(
-            self.topic_partition.clone(),
-            new_base_offset,
-            FileRecords::open(format!(
-                "{}/{}.log",
+        let index_file = IndexFile::new(
+            format!(
+                "{}/{}.index",
                 self.topic_partition.journal_partition_dir(),
                 new_base_offset
-            ))
-                .await?,
-            IndexFile::new(
-                format!(
-                    "{}/{}.index",
-                    self.topic_partition.journal_partition_dir(),
-                    new_base_offset
-                ),
-                self.index_file_max_size as usize,
-                false,
-            )
-                .await
-                .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?,
+            ),
+            self.index_file_max_size as usize,
+            false,
+        )
+        .await
+        .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
+
+        let mut new_seg = LogSegment::open(
+            self.topic_partition.clone(),
+            new_base_offset,
+            index_file,
             None,
-        ));
+        );
+        new_seg.open_file_records(&self.topic_partition).await?;
+
         segments.insert(new_base_offset, new_seg);
-        debug!("日志段滚动到新的基准偏移量: {}", new_base_offset);
+        debug!("journal log roll segment: {}", new_base_offset);
         Ok(())
     }
 
@@ -305,7 +301,7 @@ impl JournalLog {
             )
             .await?;
         rx.await
-            .map_err(|e| AppError::ChannelRecvError(e.to_string()))?;
+            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
         Ok(())
     }
 
@@ -319,5 +315,11 @@ impl JournalLog {
             "no active segment, topic partition: {}",
             self.topic_partition.id()
         ))
+    }
+
+    pub async fn close(&self) -> AppResult<()> {
+        self.flush().await?;
+
+        Ok(())
     }
 }

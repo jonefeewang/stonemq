@@ -2,7 +2,7 @@ mod journal_load;
 mod journal_read;
 mod journal_write;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
@@ -10,13 +10,13 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::info;
 
 use crate::{
-    log::{
-        file_records::FileRecords, log_segment::LogSegment, CheckPointFile, IndexFile,
-        NEXT_OFFSET_CHECKPOINT_FILE_NAME,
-    },
+    global_config,
+    log::{CheckPointFile, IndexFile, NEXT_OFFSET_CHECKPOINT_FILE_NAME},
     message::TopicPartition,
     AppError, AppResult,
 };
+
+use super::log_segment::LogSegment;
 
 /// 表示日志分区的日志管理器。
 ///
@@ -26,7 +26,7 @@ pub struct JournalLog {
     /// 日志段的有序映射，使用 `RwLock` 以允许多个并发读取和单一写入。
     /// 写入： roll的时候才会用到
     /// 读取： 很多地方会用到,相对于读取的频率，write的频率确实不高
-    segments: RwLock<BTreeMap<i64, Arc<LogSegment>>>,
+    segments: RwLock<BTreeMap<i64, LogSegment>>,
 
     /// 队列下一个偏移信息，使用 `DashMap` 以提供并发安全的哈希映射。
     queue_next_offset_info: DashMap<TopicPartition, i64>,
@@ -71,14 +71,7 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回包含新 `JournalLog` 实例的 `AppResult<Self>`。
-    pub async fn new(
-        topic_partition: TopicPartition,
-        segments: BTreeMap<i64, Arc<LogSegment>>,
-        log_start_offset: i64,
-        log_recovery_point: i64,
-        split_offset: i64,
-        index_file_max_size: u32,
-    ) -> AppResult<Self> {
+    pub async fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
         let dir = topic_partition.journal_partition_dir();
         tokio::fs::create_dir_all(&dir).await.map_err(|e| {
             AppError::DetailedIoError(format!(
@@ -87,25 +80,21 @@ impl JournalLog {
             ))
         })?;
 
-        let segments = if segments.is_empty() {
-            info!("create initial log segment for journal partition: {}", dir);
-            let initial_log_file_name = format!("{}/0.log", dir);
-            let initial_index_file_name = format!("{}/0.index", dir);
-            let segment = Arc::new(LogSegment::open(
-                topic_partition.clone(),
-                0,
-                FileRecords::open(initial_log_file_name).await?,
-                IndexFile::new(initial_index_file_name, index_file_max_size as usize, false)
-                    .await
-                    .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?,
-                None,
-            ));
-            let mut segments = BTreeMap::new();
-            segments.insert(0, segment);
-            segments
-        } else {
-            segments
-        };
+        let index_file_max_size = global_config().log.journal_index_file_size;
+
+        let index_file = IndexFile::new(
+            format!("{}/0.index", dir),
+            index_file_max_size as usize,
+            false,
+        )
+        .await
+        .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
+
+        info!("create initial log segment for journal partition: {}", dir);
+        let mut segment = LogSegment::open(topic_partition.clone(), 0, index_file, None);
+        segment.open_file_records(topic_partition).await?;
+        let mut segments = BTreeMap::new();
+        segments.insert(0, segment);
 
         Ok(Self {
             segments: RwLock::new(segments),
@@ -115,13 +104,13 @@ impl JournalLog {
                 &topic_partition.journal_partition_dir(),
                 NEXT_OFFSET_CHECKPOINT_FILE_NAME
             )),
-            _log_start_offset: AtomicCell::new(log_start_offset),
-            next_offset: AtomicCell::new(log_recovery_point + 1),
-            recover_point: AtomicCell::new(log_recovery_point),
-            split_offset: AtomicCell::new(split_offset),
+            _log_start_offset: AtomicCell::new(0),
+            next_offset: AtomicCell::new(0),
+            recover_point: AtomicCell::new(-1),
+            split_offset: AtomicCell::new(-1),
             write_lock: Mutex::new(()),
-            topic_partition,
-            index_file_max_size,
+            topic_partition: topic_partition.clone(),
+            index_file_max_size: index_file_max_size as u32,
         })
     }
 }

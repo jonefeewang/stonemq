@@ -351,14 +351,6 @@ impl ReplicaManager {
             }
         }
     }
-    pub fn get_journal_partition(
-        &self,
-        queue_topic_partition: &TopicPartition,
-    ) -> Option<TopicPartition> {
-        self.queue_2_journal
-            .get(queue_topic_partition)
-            .map(|tp| tp.clone())
-    }
 }
 
 impl Drop for ReplicaManager {

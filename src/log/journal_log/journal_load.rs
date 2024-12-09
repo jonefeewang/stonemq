@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{collections::BTreeMap, path::Path};
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
@@ -8,16 +8,13 @@ use tokio::{
 };
 use tracing::{error, info, trace, warn};
 
+use super::JournalLog;
+use crate::log::log_segment::LogSegment;
 use crate::{
-    log::{
-        file_records::FileRecords, log_segment::LogSegment, CheckPointFile, IndexFile,
-        NEXT_OFFSET_CHECKPOINT_FILE_NAME,
-    },
+    log::{CheckPointFile, IndexFile, NEXT_OFFSET_CHECKPOINT_FILE_NAME},
     message::TopicPartition,
     AppError, AppResult,
 };
-
-use super::JournalLog;
 impl JournalLog {
     /// 从已有的数据加载 `JournalLog`。
     ///
@@ -75,6 +72,8 @@ impl JournalLog {
             topic_partition: topic_partition.clone(),
             index_file_max_size,
         };
+        // open active segment
+        rt.block_on(log.open_active_segment())?;
 
         info!(
             "load journal log:{} next_offset:{},recover_point:{},split_offset:{}",
@@ -104,7 +103,7 @@ impl JournalLog {
         dir: impl AsRef<Path>,
         max_index_file_size: usize,
         rt: &Runtime,
-    ) -> AppResult<BTreeMap<i64, Arc<LogSegment>>> {
+    ) -> AppResult<BTreeMap<i64, LogSegment>> {
         let mut index_files = BTreeMap::new();
         let mut log_files = BTreeMap::new();
 
@@ -155,7 +154,7 @@ impl JournalLog {
                                     .block_on(IndexFile::new(
                                         &file.path(),
                                         max_index_file_size,
-                                        false,
+                                        true,
                                     ))
                                     .map_err(|e| {
                                         AppError::DetailedIoError(format!(
@@ -170,9 +169,7 @@ impl JournalLog {
                                 let base_offset = file_prefix.parse::<i64>();
                                 match base_offset {
                                     Ok(base_offset) => {
-                                        let file_records =
-                                            rt.block_on(FileRecords::open(file.path()))?;
-                                        log_files.insert(base_offset, file_records);
+                                        log_files.insert(base_offset, 0);
                                     }
                                     Err(_) => {
                                         warn!("无效的段文件名: {}", file_prefix);
@@ -190,19 +187,18 @@ impl JournalLog {
             }
         }
         let mut segments = BTreeMap::new();
-        for (base_offset, file_records) in log_files {
+        for (base_offset, _) in log_files {
             let offset_index = index_files.remove(&base_offset);
             if let Some(offset_index) = offset_index {
-                let segment = LogSegment::open(
-                    topic_partition.clone(),
-                    base_offset,
-                    file_records,
-                    offset_index,
-                    None,
-                );
-                segments.insert(base_offset, Arc::new(segment));
+                let segment =
+                    LogSegment::open(topic_partition.clone(), base_offset, offset_index, None);
+                segments.insert(base_offset, segment);
             } else {
-                error!("未找到偏移索引文件: {}", base_offset);
+                error!("can not find index file for segment:{}", base_offset);
+                return Err(AppError::DetailedIoError(format!(
+                    "can not find index file for segment:{}",
+                    base_offset
+                )));
             }
         }
 
@@ -219,5 +215,15 @@ impl JournalLog {
             .write_checkpoints(queue_next_offset_info)
             .await
             .map_err(|e| AppError::DetailedIoError(format!("write checkpoint error: {}", e)))
+    }
+    /// 打开活跃的segment
+    pub async fn open_active_segment(&self) -> AppResult<()> {
+        let mut segments = self.segments.write().await;
+        let (_, active_seg) = segments
+            .iter_mut()
+            .next_back()
+            .ok_or_else(|| self.no_active_segment_error())?;
+        active_seg.open_file_records(&self.topic_partition).await?;
+        Ok(())
     }
 }

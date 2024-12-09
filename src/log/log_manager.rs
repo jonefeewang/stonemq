@@ -227,7 +227,6 @@ impl LogManager {
         topic_partition: &TopicPartition,
         rt: &Runtime,
     ) -> AppResult<Arc<JournalLog>> {
-        let index_file_max_size = global_config().log.journal_index_file_size;
         let log = self.journal_logs.entry(topic_partition.clone());
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
@@ -237,14 +236,7 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = rt.block_on(JournalLog::new(
-                    topic_partition.clone(),
-                    BTreeMap::new(),
-                    0,
-                    -1,
-                    -1,
-                    index_file_max_size as u32,
-                ))?;
+                let journal_log = rt.block_on(JournalLog::new(topic_partition))?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
@@ -257,18 +249,11 @@ impl LogManager {
         rt: &Runtime,
     ) -> AppResult<Arc<QueueLog>> {
         let log = self.queue_logs.entry(topic_partition.clone());
-        let index_file_max_size = global_config().log.queue_index_file_size as u32;
+
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             Entry::Vacant(vacant) => {
-                let log = Arc::new(rt.block_on(QueueLog::new(
-                    topic_partition,
-                    BTreeMap::new(),
-                    0,
-                    0,
-                    0,
-                    index_file_max_size,
-                ))?);
+                let log = Arc::new(rt.block_on(QueueLog::new(topic_partition))?);
                 vacant.insert(log.clone());
                 Ok(log)
             }
