@@ -47,8 +47,6 @@ fn start_request_handler(
         // CAUTION: There is a potential risk here: handling client-initiated requests might lead to intentional or unintentional panics,
         // causing widespread processor exits. Although recovery mechanisms can be implemented,
         // such incidents may still result in fluctuations in request processing.
-
-        // 处理客户端上来的请求时，特别是解析协议时，需要做防护，防止客户端故意造成panic
         for i in 0..num_workers {
             let rx: async_channel::Receiver<RequestTask> = request_rx.clone();
             let replica_manager = replica_manager.clone();
@@ -63,7 +61,7 @@ fn start_request_handler(
             workers.insert(i, handle);
         }
 
-        // 启动监控线程监控worker状态
+        // start monitor thread to monitor worker status
         let mut shutdown = Shutdown::new(notify_shutdown.subscribe());
         loop {
             tokio::select! {
@@ -73,10 +71,10 @@ fn start_request_handler(
                 }
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
             }
-            // 遍历任务并检查状态
+            // iterate over tasks and check status
             for id in 0..workers.len() {
                 if let Some(handle) = workers.remove(&id) {
-                    // 提取出 JoinHandle 并检查其运行状态
+                    // extract JoinHandle and check its running status
                     match time::timeout(Duration::from_millis(200), handle).await {
                         Ok(join_result) => {
                             match join_result {
@@ -101,13 +99,13 @@ fn start_request_handler(
                                                 message
                                             );
                                         } else {
-                                            // 打印动态类型的名称
+                                            // print dynamic type name
                                             error!(
                                                 "Processor Task panicked with an unknown type: {}",
                                                 get_type_name(&payload)
                                             );
                                         }
-                                        // 重新生成一个新的任务
+                                        // re-generate a new task
                                         let rx = request_rx.clone();
                                         let replica_manager = replica_manager.clone();
                                         let group_coordinator = group_coordinator.clone();
@@ -158,7 +156,7 @@ async fn process_request(
     } = request;
     let api_request = ApiRequest::try_from((request_body, &request_header));
     if let Ok(api_request) = api_request {
-        // 处理请求的具体逻辑
+        // handle request logic
         let context = RequestContext {
             client_ip,
             request_header,
@@ -167,20 +165,20 @@ async fn process_request(
         };
         let response = RequestProcessor::process_request(api_request, &context).await;
         if let Err(e) = response_tx.send(response) {
-            // 这种发送错误，往往是无法恢复的，直接打印错误，继续处理下一个请求，无需反馈给客户端
+            // this send error is usually irrecoverable, print error and continue to process next request, no need to feedback to client
             error!("Failed to send response: {:?}", e);
         }
     } else {
-        // 解析请求失败，返回错误响应,发送给客户端
+        // request parsing failed, return error response, send to client
         error!(
             "Failed to parse request: {:?} for connection: {}",
             &request_header, connection_id
         );
-        todo!("返回错误响应给客户端")
+        todo!("return error response to client")
     }
 }
 
-// 每个连接的处理器
+// handler for each connection
 struct ConnectionHandler {
     notify_shutdown: broadcast::Sender<()>,
     _shutdown_complete_tx: mpsc::Sender<()>,
@@ -194,7 +192,8 @@ impl ConnectionHandler {
     async fn handle_connection(&mut self) -> AppResult<()> {
         let mut shutdown = Shutdown::new(self.notify_shutdown.subscribe());
         loop {
-            // 读取请求 如果客户端优雅关闭连接，则返回None，如果意外关闭，则返回Err
+            // read request from client, if client close the connection gracefully, return None,
+            //if client close the connection unexpectedly, return Err
             let maybe_frame = tokio::select! {
                 res = self.connection.read_frame() => res?,
                 _ = shutdown.recv() => {
@@ -209,10 +208,10 @@ impl ConnectionHandler {
                 None => break,
             };
 
-            // 为每个请求创建一个新的 oneshot channel
+            // create a new oneshot channel for each request
             let (response_tx, response_rx) = oneshot::channel();
 
-            // 发送到全局处理队列
+            // send request to global request queue
             let request = RequestTask {
                 connection_id: self.connection_id,
                 client_ip: self.connection.client_ip.clone(),
@@ -225,7 +224,7 @@ impl ConnectionHandler {
                 return Err(AppError::ChannelSendError(e.to_string()));
             }
 
-            // 等待响应并写入
+            // wait for response and write to client
             match response_rx.await {
                 Ok(response) => {
                     self.writer.write_all(&response).await.map_err(|e| {
@@ -236,7 +235,7 @@ impl ConnectionHandler {
                     })?;
                 }
                 Err(_) => {
-                    // 请求处理器panic意外退出，没有发送响应，关闭连接
+                    // request processor panic and exit without sending response, close connection
                     error!("Request processor dropped without sending response");
                     return Err(AppError::IllegalStateError(
                         "Response channel closed".into(),
@@ -334,7 +333,7 @@ impl Server {
                 if let Err(err) = handler.handle_connection().await {
                     error!("Connection error: {:?}", err);
                 }
-                // 不管是优雅关闭，还是意外关闭，都要释放连接
+                // whether gracefully or unexpectedly closed, release connection
                 drop(permit);
             });
         }

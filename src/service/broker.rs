@@ -10,7 +10,7 @@ use tokio::runtime::Runtime;
 use tokio::signal;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{broadcast, mpsc, Semaphore};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info};
 
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -64,9 +64,7 @@ impl Broker {
         drop(log_manager);
         drop(replica_manager);
         drop(shutdown_complete_tx);
-        // rt.block_on(async { drop(_otel_guard) });
-        // wait for shutdown complete
-        trace!("waiting for shutdown complete...");
+        debug!("waiting for shutdown complete...");
         rt.block_on(async {
             shutdown_complete_rx.recv().await;
         });
