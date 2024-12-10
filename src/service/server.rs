@@ -250,6 +250,7 @@ impl ConnectionHandler {
     }
 }
 
+#[derive(Debug)]
 pub struct Server {
     listener: TcpListener,
     limit_connections: Arc<Semaphore>,
@@ -296,6 +297,7 @@ impl Server {
     /// Exit with an error if failing to accept new connections.
     ///
     /// Returns `AppResult<()>` indicating the success or failure of running the server.
+    #[tracing::instrument]
     pub async fn run(&self) -> AppResult<()> {
         let request_sender = start_request_handler(
             self.replica_manager.clone(),

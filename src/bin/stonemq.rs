@@ -1,7 +1,7 @@
 use clap::Parser;
 use dotenv::dotenv;
 use std::path::PathBuf;
-use stonemq::{setup_tracing, GLOBAL_CONFIG};
+use stonemq::{setup_tracing, LogMode, GLOBAL_CONFIG};
 use stonemq::{AppResult, Broker, BrokerConfig};
 use tokio::runtime;
 use tracing::error;
@@ -12,8 +12,6 @@ pub struct CommandLine {
     /// path to config file
     #[arg(short, long)]
     pub conf: Option<String>,
-    #[command(subcommand)]
-    pub command: Option<Command>,
     /// log level (v: info, vv: debug, vvv: trace)
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -25,7 +23,6 @@ pub enum Command {
 }
 
 fn main() {
-    print_art();
     if let Err(e) = run() {
         error!("Stonemq started failed: {}", e);
         eprintln!("Stonemq started failed: {}", e);
@@ -34,14 +31,21 @@ fn main() {
 }
 
 fn run() -> AppResult<()> {
+    let commandline: CommandLine = CommandLine::parse();
     dotenv().ok();
+    // command line override env RUST_LOG
+    // let log_level = match commandline.verbose {
+    //     0 => "info",
+    //     1 => "debug",
+    //     2 => "trace",
+    //     _ => "trace",
+    // };
+    // std::env::set_var("RUST_LOG", log_level);
 
     let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
-
-    let _otel_guard = rt.block_on(setup_tracing());
+    let _otel_guard = rt.block_on(setup_tracing(true, LogMode::Perf));
 
     // setup config
-    let commandline: CommandLine = CommandLine::parse();
     let config_path = commandline.conf.as_ref().map_or_else(
         || {
             let mut path = PathBuf::from("./");
@@ -59,31 +63,4 @@ fn run() -> AppResult<()> {
     Broker::start(&rt)?;
 
     Ok(())
-}
-
-fn print_art() {
-    let stone_mq_art = r#"
-    ================================================
-                   Welcome to StoneMQ 🚀
-                The Rock of Message Queues!
-
-                  __________
-               .-'          `-.
-             .'   .-"""""""-.  '.
-            /    /  .---.   |    \
-           |    |  (o   o)  |     |   ____
-           |    |    (_)    ;     |  [____]
-           |     \         /     /
-            \     '.     .'     /
-             '-.    `"""'    .-'
-                `-._______.-'
-
-    StoneMQ Features:
-    -----------------
-    * Reliable, High-Performance Queue 🧱
-    * Built for Distributed Systems 🌐
-    * Written in Rust 🦀, Lightning Fast
-    ================================================
-"#;
-    println!("{}", stone_mq_art);
 }

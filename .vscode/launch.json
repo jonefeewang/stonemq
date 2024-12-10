@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        ////////////////////////debug unit test//////////////////////////////////////
         {
             "type": "lldb",
             "request": "launch",
@@ -24,6 +25,7 @@
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "rust: cargo build"
         },
+        ////////////////////////debug stonemq//////////////////////////////////////
         {
             "type": "lldb",
             "request": "launch",
@@ -31,13 +33,11 @@
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=stonemq",
-                    "--package=stonemq"
                 ],
                 "filter": {
                     "name": "stonemq",
                     "kind": "bin"
-                }
+                },
             },
             "args": [],
             "cwd": "${workspaceFolder}",
@@ -46,8 +46,9 @@
                 "process handle SIGTERM -p true -s false -n true",
                 "process handle SIGQUIT -p true -s false -n true"
             ],
-            "preLaunchTask": "rust: cargo build",
+            // "preLaunchTask": "rust: cargo build",
         },
+        ////////////////////////debug log-parser//////////////////////////////////////
         {
             "type": "lldb",
             "request": "launch",
@@ -70,6 +71,7 @@
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "rust: cargo build"
         },
+        ////////////////////////debug unit tests in executable 'stonemq'//////////////////////////////////////
         {
             "type": "lldb",
             "request": "launch",
@@ -90,6 +92,7 @@
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "rust: cargo build"
         },
+        ////////////////////////debug integration test 'config'//////////////////////////////////////
         {
             "type": "lldb",
             "request": "launch",

@@ -10,6 +10,7 @@ mod utils;
 
 pub use log::CheckPointFile;
 pub use message::MemoryRecords;
+pub use service::LogMode;
 pub use service::GLOBAL_CONFIG;
 pub use service::{
     global_config, setup_local_tracing, setup_tracing, AppError, AppResult, Broker, BrokerConfig,

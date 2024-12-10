@@ -28,6 +28,184 @@ use super::AppError;
 
 pub type AppResult<T> = Result<T, AppError>;
 
+pub enum LogMode {
+    Prod,
+    Perf,
+    Dev,
+}
+
+pub struct OtelGuard {
+    meter_provider: Option<SdkMeterProvider>,
+    _worker_guard: Option<WorkerGuard>,
+}
+
+impl Drop for OtelGuard {
+    fn drop(&mut self) {
+        if let Some(meter_provider) = self.meter_provider.as_mut() {
+            if let Err(err) = meter_provider.shutdown() {
+                eprintln!("{err:?}");
+            }
+        }
+
+        opentelemetry::global::shutdown_tracer_provider();
+        tracing::info!("shutdown otel tracer provider");
+    }
+}
+
+pub fn setup_local_tracing() -> AppResult<()> {
+    // load .env file
+    dotenv().ok();
+    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_timer(timer)
+        .with_target(true) // show log target
+        .with_thread_names(true) // show thread name
+        .with_thread_ids(true) // show thread id
+        .with_line_number(true);
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+    Ok(())
+}
+
+pub async fn setup_tracing(tracing_off: bool, log_mode: LogMode) -> OtelGuard {
+    // file appender
+    let file_appender = tracing_appender::rolling::hourly("logs", "stonemq.log");
+    let (non_blocking, worker_guard) = tracing_appender::non_blocking(file_appender);
+
+    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
+
+    // config by log_mode
+    match log_mode {
+        LogMode::Prod => {
+            // PROD mode: only use file appender
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .with_timer(timer)
+                .with_target(true)
+                .with_thread_names(true)
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_ansi(true)
+                .with_writer(non_blocking);
+
+            if !tracing_off {
+                // enable OpenTelemetry
+                let meter_provider = init_meter_provider();
+                let tracer = init_tracer();
+
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(MetricsLayer::new(meter_provider.clone()))
+                    .with(OpenTelemetryLayer::new(tracer))
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: Some(meter_provider),
+                    _worker_guard: Some(worker_guard),
+                }
+            } else {
+                // disable tracing, only use fmt_layer
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: None,
+                    _worker_guard: Some(worker_guard),
+                }
+            }
+        }
+
+        LogMode::Perf => {
+            // PERF mode: output to console and file
+            let writer = non_blocking.and(std::io::stdout);
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .with_timer(timer.clone())
+                .with_target(true)
+                .with_thread_names(true)
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_ansi(true)
+                .with_writer(writer);
+
+            if !tracing_off {
+                let meter_provider = init_meter_provider();
+                let tracer = init_tracer();
+
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(MetricsLayer::new(meter_provider.clone()))
+                    .with(OpenTelemetryLayer::new(tracer))
+                    .with(console_subscriber::spawn())
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: Some(meter_provider),
+                    _worker_guard: Some(worker_guard),
+                }
+            } else {
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(console_subscriber::spawn())
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: None,
+                    _worker_guard: Some(worker_guard),
+                }
+            }
+        }
+
+        LogMode::Dev => {
+            // DEV mode: output to console and file
+            let writer = non_blocking.and(std::io::stdout);
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .with_timer(timer)
+                .with_target(true)
+                .with_thread_names(true)
+                .with_thread_ids(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_ansi(true)
+                .with_writer(writer);
+
+            if !tracing_off {
+                let meter_provider = init_meter_provider();
+                let tracer = init_tracer();
+
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(MetricsLayer::new(meter_provider.clone()))
+                    .with(OpenTelemetryLayer::new(tracer))
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: Some(meter_provider),
+                    _worker_guard: Some(worker_guard),
+                }
+            } else {
+                tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(tracing_subscriber::EnvFilter::from_default_env())
+                    .init();
+
+                OtelGuard {
+                    meter_provider: None,
+                    _worker_guard: Some(worker_guard),
+                }
+            }
+        }
+    }
+}
+
 fn resource() -> Resource {
     Resource::from_schema_url(
         [
@@ -126,83 +304,4 @@ fn init_tracer() -> Tracer {
         .with_exporter(opentelemetry_otlp::new_exporter().tonic())
         .install_batch(runtime::Tokio)
         .unwrap()
-}
-
-pub struct OtelGuard {
-    meter_provider: SdkMeterProvider,
-    _worker_guard: WorkerGuard,
-}
-
-impl Drop for OtelGuard {
-    fn drop(&mut self) {
-        if let Err(err) = self.meter_provider.shutdown() {
-            eprintln!("{err:?}");
-        }
-
-        opentelemetry::global::shutdown_tracer_provider();
-        tracing::info!("shutdown otel tracer provider");
-    }
-}
-
-pub fn setup_local_tracing() -> AppResult<()> {
-    // 加载 .env 文件
-    dotenv().ok();
-    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_timer(timer)
-        .with_target(true) // 是否显示日志目标
-        .with_thread_names(true) // 是否显示线程名称
-        .with_thread_ids(true) // 是否显示线程ID
-        .with_line_number(true);
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-    Ok(())
-}
-
-pub async fn setup_tracing() -> OtelGuard {
-    let file_appender = tracing_appender::rolling::hourly("logs", "stonemq.log");
-    // 创建同时写入到控制台和文件的写入器
-
-    // 创建一个非阻塞的写入器
-    let (non_blocking, worker_guard) = tracing_appender::non_blocking(file_appender);
-
-    // 创建同时写入到控制台和文件的写入器
-    let writer = non_blocking.and(std::io::stdout);
-
-    // stdout fmt layer
-    let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_timer(timer)
-        .with_target(true) // 是否显示日志目标
-        .with_thread_names(true) // 是否显示线程名称
-        .with_thread_ids(true) // 是否显示线程ID
-        .with_file(true)
-        .with_line_number(true)
-        .with_ansi(true)
-        .with_writer(writer);
-
-    // otel meter provider
-    let meter_provider = init_meter_provider();
-    // otel tracer
-    let tracer = init_tracer();
-
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(MetricsLayer::new(meter_provider.clone()))
-        .with(OpenTelemetryLayer::new(tracer))
-        .with(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
-    // console_subscriber::ConsoleLayer::builder()
-    //     .retention(Duration::from_secs(30))
-    //     .init();
-
-    // otel guard
-    OtelGuard {
-        meter_provider,
-        _worker_guard: worker_guard,
-    }
-    // Ok(())
 }

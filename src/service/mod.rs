@@ -14,3 +14,4 @@ pub use server::Server;
 pub use shutdown::Shutdown;
 pub use tracing_config::setup_local_tracing;
 pub use tracing_config::setup_tracing;
+pub use tracing_config::LogMode;
