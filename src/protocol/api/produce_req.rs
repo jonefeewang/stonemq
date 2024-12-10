@@ -25,7 +25,7 @@ pub const RECORD_SET_KEY_NAME: &str = "record_set";
 
 impl ProtocolCodec<ProduceRequest> for ProduceRequest {
     fn encode(self, api_version: &ApiVersion, _correlation_id: i32) -> BytesMut {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce).unwrap();
         let mut produce_req_value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut produce_req_value_set)
             .unwrap();
@@ -35,7 +35,7 @@ impl ProtocolCodec<ProduceRequest> for ProduceRequest {
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<ProduceRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Produce)?;
         let produce_req_value_set = schema.read_from(buffer)?;
         let produce_request = ProduceRequest::decode_from_value_set(produce_req_value_set)?;
         Ok(produce_request)

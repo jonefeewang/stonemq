@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use crate::protocol::{ApiVersion, SUPPORTED_API_VERSIONS};
-
-use crate::request::RequestContext;
+use crate::{
+    protocol::{ApiVersion, SUPPORTED_API_VERSIONS},
+    request::{ErrorCode, RequestContext},
+};
 
 use super::handler::ApiHandler;
 
@@ -40,10 +41,18 @@ impl ApiVersionRequest {
                 ),
             );
         }
-        ApiVersionResponse {
-            error_code: 0,
-            throttle_time_ms: 0,
-            api_versions,
+        if self._version.as_i16() > ApiVersion::V2.as_i16() {
+            ApiVersionResponse {
+                error_code: ErrorCode::UnsupportedVersion as i16,
+                throttle_time_ms: 0,
+                api_versions,
+            }
+        } else {
+            ApiVersionResponse {
+                error_code: 0,
+                throttle_time_ms: 0,
+                api_versions,
+            }
         }
     }
 }

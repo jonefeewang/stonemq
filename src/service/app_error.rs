@@ -54,6 +54,9 @@ pub enum AppError {
 
     #[error("invalid topic: {0}")]
     InvalidTopic(String),
+
+    #[error("unsupported api version: {0}")]
+    UnsupportedVersion(i16),
 }
 
 impl From<AppError> for KafkaError {
@@ -64,6 +67,7 @@ impl From<AppError> for KafkaError {
             AppError::MessageTooLarge(s) => KafkaError::MessageTooLarge(s),
             AppError::InvalidRequest(s) => KafkaError::InvalidRequest(s),
             AppError::InvalidTopic(s) => KafkaError::InvalidTopic(s),
+            AppError::UnsupportedVersion(s) => KafkaError::UnsupportedVersion(s.to_string()),
             _ => KafkaError::Unknown(value.to_string()),
         }
     }

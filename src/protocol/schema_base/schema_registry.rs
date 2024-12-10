@@ -1,7 +1,9 @@
-use crate::protocol::api::{FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA};
+use crate::protocol::api::{
+    FETCH_REQUEST_V5_SCHEMA, FETCH_RESPONSE_V5_SCHEMA, LEAVE_GROUP_REQUEST_V1_SCHEMA,
+};
 use crate::protocol::api::{
     FIND_COORDINATOR_REQUEST_V1_SCHEMA, FIND_COORDINATOR_RESPONSE_V1_SCHEMA,
-    LEAVE_GROUP_REQUEST_V1_SCHEMA, LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
+    LEAVE_GROUP_RESPONSE_V1_SCHEMA, OFFSET_COMMIT_REQUEST_V3_SCHEMA,
     OFFSET_COMMIT_RESPONSE_V3_SCHEMA, OFFSET_FETCH_REQUEST_V3_SCHEMA,
     OFFSET_FETCH_RESPONSE_V3_SCHEMA,
 };
@@ -21,7 +23,7 @@ use crate::protocol::api::{
 use crate::protocol::api::{PRODUCE_REQUEST_SCHEMA_V0, PRODUCE_REQUEST_SCHEMA_V3};
 use crate::protocol::api::{PRODUCE_RESPONSE_V0, PRODUCE_RESPONSE_V1, PRODUCE_RESPONSE_V2};
 use crate::protocol::schema_base::Schema;
-use crate::AppResult;
+use crate::{AppError, AppResult};
 
 use crate::protocol::types::ApiVersion;
 use crate::protocol::types::ApiVersion::{V0, V1, V2, V3, V4, V5};
@@ -35,59 +37,72 @@ pub trait ProtocolCodec<T> {
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<T>;
 
-    fn fetch_request_schema_for_api(api_version: &ApiVersion, api_key: &ApiKey) -> Arc<Schema> {
+    fn fetch_request_schema_for_api(
+        api_version: &ApiVersion,
+        api_key: &ApiKey,
+    ) -> AppResult<Arc<Schema>> {
         match (api_key, api_version) {
             // Produce API
-            (Produce, V0 | V1 | V2) => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0),
-            (Produce, V3) => Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3),
-            (Produce, V4 | V5) => todo!("not exist"),
+            (Produce, V0 | V1 | V2) => Ok(Arc::clone(&PRODUCE_REQUEST_SCHEMA_V0)),
+            (Produce, V3) => Ok(Arc::clone(&PRODUCE_REQUEST_SCHEMA_V3)),
+            (Produce, V4 | V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
 
             // Fetch API
-            (Fetch, V0 | V1 | V2 | V3 | V4) => todo!("too old, not support"),
-            (Fetch, V5) => Arc::clone(&FETCH_REQUEST_V5_SCHEMA),
+            (Fetch, V0 | V1 | V2 | V3 | V4) => {
+                Err(AppError::UnsupportedVersion(api_version.as_i16()))
+            }
+            (Fetch, V5) => Ok(Arc::clone(&FETCH_REQUEST_V5_SCHEMA)),
 
             // Metadata API
-            (Metadata, V0) => Arc::clone(&METADATA_REQUEST_V0),
-            (Metadata, V1 | V2 | V3) => Arc::clone(&METADATA_REQUEST_V1),
-            (Metadata, V4) => Arc::clone(&METADATA_REQUEST_V4),
-            (Metadata, V5) => todo!("not exist"),
+            (Metadata, V0) => Ok(Arc::clone(&METADATA_REQUEST_V0)),
+            (Metadata, V1 | V2 | V3) => Ok(Arc::clone(&METADATA_REQUEST_V1)),
+            (Metadata, V4) => Ok(Arc::clone(&METADATA_REQUEST_V4)),
+            (Metadata, V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
 
             // ApiVersion API
-            (ApiVersionKey, V0 | V1) => Arc::clone(&API_VERSIONS_REQUEST_V0),
-            (ApiVersionKey, V2 | V3 | V4 | V5) => todo!("not exist"),
+            (ApiVersionKey, V0 | V1) => Ok(Arc::clone(&API_VERSIONS_REQUEST_V0)),
+            (ApiVersionKey, V2 | V3 | V4 | V5) => {
+                Err(AppError::UnsupportedVersion(api_version.as_i16()))
+            }
 
             // FindCoordinator API
             (FindCoordinator, V0) => todo!("too old, not support"),
-            (FindCoordinator, V1) => Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA),
-            (FindCoordinator, V2 | V3 | V4 | V5) => todo!("not exist"),
+            (FindCoordinator, V1) => Ok(Arc::clone(&FIND_COORDINATOR_REQUEST_V1_SCHEMA)),
+            (FindCoordinator, V2 | V3 | V4 | V5) => {
+                Err(AppError::UnsupportedVersion(api_version.as_i16()))
+            }
 
             // JoinGroup API
             (JoinGroup, V0) => todo!("too old, not support"),
-            (JoinGroup, V1 | V2) => Arc::clone(&JOIN_GROUP_REQUEST_V2_SCHEMA),
-            (JoinGroup, V3 | V4 | V5) => todo!("not exist"),
+            (JoinGroup, V1 | V2) => Ok(Arc::clone(&JOIN_GROUP_REQUEST_V2_SCHEMA)),
+            (JoinGroup, V3 | V4 | V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
 
             // SyncGroup API
-            (SyncGroup, V0 | V1) => Arc::clone(&SYNC_GROUP_REQUEST_V1_SCHEMA),
-            (SyncGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+            (SyncGroup, V0 | V1 | V2) => Ok(Arc::clone(&SYNC_GROUP_REQUEST_V1_SCHEMA)),
+            (SyncGroup, V3 | V4 | V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
 
             // LeaveGroup API
-            (LeaveGroup, V0 | V1) => Arc::clone(&LEAVE_GROUP_REQUEST_V1_SCHEMA),
-            (LeaveGroup, V2 | V3 | V4 | V5) => todo!("not exist"),
+            (LeaveGroup, V0 | V1) => Ok(Arc::clone(&LEAVE_GROUP_REQUEST_V1_SCHEMA)),
+            (LeaveGroup, V2 | V3 | V4 | V5) => {
+                Err(AppError::UnsupportedVersion(api_version.as_i16()))
+            }
 
             // Heartbeat API
             (Heartbeat, V0) => todo!("too old, not support"),
-            (Heartbeat, V1) => Arc::clone(&HEARTBEAT_REQUEST_V1_SCHEMA),
-            (Heartbeat, V2 | V3 | V4 | V5) => todo!("not exist"),
+            (Heartbeat, V1) => Ok(Arc::clone(&HEARTBEAT_REQUEST_V1_SCHEMA)),
+            (Heartbeat, V2 | V3 | V4 | V5) => {
+                Err(AppError::UnsupportedVersion(api_version.as_i16()))
+            }
 
             // OffsetCommit API
             (OffsetCommit, V0 | V1) => todo!("too old, not support"),
-            (OffsetCommit, V2 | V3) => Arc::clone(&OFFSET_COMMIT_REQUEST_V3_SCHEMA),
-            (OffsetCommit, V4 | V5) => todo!("not exist"),
+            (OffsetCommit, V2 | V3) => Ok(Arc::clone(&OFFSET_COMMIT_REQUEST_V3_SCHEMA)),
+            (OffsetCommit, V4 | V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
 
             // OffsetFetch API
             (OffsetFetch, V0 | V1) => todo!("too old, not support"),
-            (OffsetFetch, V2 | V3) => Arc::clone(&OFFSET_FETCH_REQUEST_V3_SCHEMA),
-            (OffsetFetch, V4 | V5) => todo!("not exist"),
+            (OffsetFetch, V2 | V3) => Ok(Arc::clone(&OFFSET_FETCH_REQUEST_V3_SCHEMA)),
+            (OffsetFetch, V4 | V5) => Err(AppError::UnsupportedVersion(api_version.as_i16())),
         }
     }
     fn fetch_response_schema_for_api(api_version: &ApiVersion, api_key: &ApiKey) -> Arc<Schema> {
@@ -112,7 +127,7 @@ pub trait ProtocolCodec<T> {
             // ApiVersion API
             (ApiVersionKey, V0) => Arc::clone(&API_VERSIONS_RESPONSE_V0),
             (ApiVersionKey, V1) => Arc::clone(&API_VERSIONS_RESPONSE_V1),
-            (ApiVersionKey, _) => todo!(),
+            (ApiVersionKey, _) => Arc::clone(&API_VERSIONS_RESPONSE_V1),
 
             // JoinGroup API
             (JoinGroup, V0 | V1) => todo!("too old, not support"),

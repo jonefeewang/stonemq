@@ -56,7 +56,7 @@ impl ProtocolCodec<HeartbeatRequest> for HeartbeatRequest {
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<HeartbeatRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Heartbeat);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Heartbeat)?;
         let value_set = schema.read_from(buffer)?;
         HeartbeatRequest::decode_from_value_set(value_set)
     }

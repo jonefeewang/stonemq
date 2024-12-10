@@ -12,7 +12,7 @@ use crate::AppResult;
 
 impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata).unwrap();
         let mut metadata_req_value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut metadata_req_value_set);
         let mut writer = BytesMut::with_capacity(metadata_req_value_set.size());
@@ -22,7 +22,7 @@ impl ProtocolCodec<MetaDataRequest> for MetaDataRequest {
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<MetaDataRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Metadata)?;
         let metadata_req_value_set = schema.read_from(buffer)?;
         let produce_request = MetaDataRequest::decode_from_value_set(metadata_req_value_set)?;
         Ok(produce_request)

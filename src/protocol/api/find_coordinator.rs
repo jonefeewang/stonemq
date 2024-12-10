@@ -36,7 +36,7 @@ impl ProtocolCodec<FindCoordinatorRequest> for FindCoordinatorRequest {
         buffer: &mut BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FindCoordinatorRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::FindCoordinator);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::FindCoordinator)?;
         let mut value_set = schema.read_from(buffer)?;
         let coordinator_key = value_set.get_field_value(COORDINATOR_KEY_KEY_NAME).into();
         let coordinator_type = value_set.get_field_value(COORDINATOR_TYPE_KEY_NAME).into();

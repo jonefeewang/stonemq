@@ -1,4 +1,5 @@
 mod api;
+mod api_request;
 mod kafka_errors;
 mod request_context;
 mod request_header;

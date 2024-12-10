@@ -25,7 +25,7 @@ impl ProtocolCodec<FetchRequest> for FetchRequest {
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<FetchRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Fetch);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::Fetch)?;
         let value_set = schema.read_from(buffer)?;
         FetchRequest::decode_from_value_set(value_set)
     }

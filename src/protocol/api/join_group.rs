@@ -32,7 +32,7 @@ impl ProtocolCodec<JoinGroupRequest> for JoinGroupRequest {
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<JoinGroupRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::JoinGroup);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::JoinGroup)?;
         let join_group_req_value_set = schema.read_from(buffer)?;
         let join_group_request = JoinGroupRequest::decode_from_value_set(join_group_req_value_set)?;
         Ok(join_group_request)

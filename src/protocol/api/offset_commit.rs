@@ -35,7 +35,7 @@ const MEMBER_ID_KEY_NAME: &str = "member_id";
 
 impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit).unwrap();
         let mut value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut value_set);
         let body_size = value_set.size();
@@ -51,7 +51,7 @@ impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<OffsetCommitRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit)?;
         let value_set = schema.read_from(buffer)?;
         let offset_commit_request = OffsetCommitRequest::decode_from_value_set(value_set)?;
         Ok(offset_commit_request)

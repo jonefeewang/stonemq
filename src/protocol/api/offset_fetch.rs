@@ -37,7 +37,7 @@ impl ProtocolCodec<FetchOffsetsRequest> for FetchOffsetsRequest {
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<FetchOffsetsRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetFetch);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetFetch)?;
         let fetch_offsets_req_value_set = schema.read_from(buffer)?;
         let fetch_offsets_request =
             FetchOffsetsRequest::decode_from_value_set(fetch_offsets_req_value_set)?;

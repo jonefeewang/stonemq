@@ -86,7 +86,7 @@ impl ProtocolCodec<SyncGroupRequest> for SyncGroupRequest {
     }
 
     fn decode(buffer: &mut BytesMut, api_version: &ApiVersion) -> AppResult<SyncGroupRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::SyncGroup);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::SyncGroup)?;
         let value_set = schema.read_from(buffer)?;
         let sync_group_request = SyncGroupRequest::decode_from_value_set(value_set)?;
         Ok(sync_group_request)

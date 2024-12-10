@@ -154,8 +154,8 @@ async fn process_request(
         response_tx,
         ..
     } = request;
-    let api_request = ApiRequest::try_from((request_body, &request_header));
-    if let Ok(api_request) = api_request {
+    let (api_request, error_response) = ApiRequest::parse_from((request_body, &request_header));
+    if let Some(api_request) = api_request {
         // handle request logic
         let context = RequestContext {
             client_ip,
@@ -169,12 +169,18 @@ async fn process_request(
             error!("Failed to send response: {:?}", e);
         }
     } else {
-        // request parsing failed, return error response, send to client
+        // parse request failed, if it is apiversion request, return a complete response with error code, otherwise drop the oneshot sender and close the connection
         error!(
             "Failed to parse request: {:?} for connection: {}",
             &request_header, connection_id
         );
-        todo!("return error response to client")
+        if let Some(error_response) = error_response {
+            if let Err(e) = response_tx.send(error_response) {
+                error!("Failed to send response: {:?}", e);
+            }
+        } else {
+            drop(response_tx);
+        }
     }
 }
 

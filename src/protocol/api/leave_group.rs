@@ -22,7 +22,7 @@ impl ProtocolCodec<LeaveGroupRequest> for LeaveGroupRequest {
         buffer: &mut bytes::BytesMut,
         api_version: &ApiVersion,
     ) -> AppResult<LeaveGroupRequest> {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::LeaveGroup);
+        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::LeaveGroup)?;
         let leave_group_req_value_set = schema.read_from(buffer)?;
         let leave_group_request =
             LeaveGroupRequest::decode_from_value_set(leave_group_req_value_set)?;
