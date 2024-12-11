@@ -5,7 +5,7 @@ use crate::{AppError, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use tokio::runtime::Runtime;
+
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
@@ -23,11 +23,10 @@ impl QueueLog {
     /// # Returns
     ///
     /// Returns a `Result` containing a `BTreeMap` of base offsets to `LogSegment`s.
-    pub fn load_segments(
+    pub async fn load_segments(
         topic_partition: &TopicPartition,
         _: i64,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<BTreeMap<i64, LogSegment>> {
         let mut segments = BTreeMap::new();
         let dir = topic_partition.queue_partition_dir();
@@ -86,18 +85,15 @@ impl QueueLog {
                         let file_suffix = &file_name[dot_index..];
                         match file_suffix {
                             ".index" => {
-                                let index_file = rt
-                                    .block_on(IndexFile::new(
-                                        file.path(),
-                                        index_file_max_size as usize,
-                                        true,
-                                    ))
-                                    .map_err(|e| {
-                                        AppError::DetailedIoError(format!(
-                                            "open index file error: {}",
-                                            e
-                                        ))
-                                    })?;
+                                let index_file =
+                                    IndexFile::new(file.path(), index_file_max_size as usize, true)
+                                        .await
+                                        .map_err(|e| {
+                                            AppError::DetailedIoError(format!(
+                                                "open index file error: {}",
+                                                e
+                                            ))
+                                        })?;
                                 index_files.insert(
                                     file_prefix.parse::<i64>().map_err(|_| {
                                         AppError::InvalidValue(format!(
@@ -159,14 +155,13 @@ impl QueueLog {
     /// # 返回
     ///
     /// 返回加载的 `QueueLog` 实例。
-    pub fn load_from(
+    pub async fn load_from(
         topic_partition: &TopicPartition,
         recover_point: i64,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<Self> {
         let segments =
-            Self::load_segments(topic_partition, recover_point, index_file_max_size, rt)?;
+            Self::load_segments(topic_partition, recover_point, index_file_max_size).await?;
 
         let log_start_offset = segments
             .first_key_value()
@@ -181,7 +176,7 @@ impl QueueLog {
             last_offset: AtomicCell::new(recover_point),
             index_file_max_size,
         };
-        rt.block_on(log.open_active_segment())?;
+        log.open_active_segment().await?;
 
         Ok(log)
     }
@@ -207,7 +202,7 @@ impl QueueLog {
             .join(format!("{}.log", base_offset));
         let index_file_name = PathBuf::from(self.topic_partition.queue_partition_dir())
             .join(format!("{}.index", base_offset));
-        
+
         active_seg
             .become_active(fr_file_name, index_file_name, self.index_file_max_size)
             .await?;

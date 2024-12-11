@@ -5,10 +5,7 @@ use std::{
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
-use tokio::{
-    runtime::Runtime,
-    sync::{Mutex, RwLock},
-};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, trace, warn};
 
 use super::JournalLog;
@@ -33,16 +30,15 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回加载的 `JournalLog` 实例。
-    pub fn load_from(
+    pub async fn load_from(
         topic_partition: &TopicPartition,
         recover_point: i64,
         split_offset: i64,
         dir: impl AsRef<Path>,
         index_file_max_size: u32,
-
-        rt: &Runtime,
     ) -> AppResult<Self> {
-        let segments = Self::load_segments(topic_partition, dir, index_file_max_size as usize, rt)?;
+        let segments =
+            Self::load_segments(topic_partition, dir, index_file_max_size as usize).await?;
 
         let queue_next_offset_checkpoint_path = format!(
             "{}/{}",
@@ -51,7 +47,7 @@ impl JournalLog {
         );
         let queue_next_offset_checkpoints = CheckPointFile::new(queue_next_offset_checkpoint_path);
 
-        let queue_next_offset = rt.block_on(queue_next_offset_checkpoints.read_checkpoints())?;
+        let queue_next_offset = queue_next_offset_checkpoints.read_checkpoints().await?;
         trace!(
             "load journal log queue_next_offset: {:?}",
             queue_next_offset
@@ -75,7 +71,7 @@ impl JournalLog {
             topic_partition: topic_partition.clone(),
             index_file_max_size,
         };
-        rt.block_on(log.open_active_segment())?;
+        log.open_active_segment().await?;
 
         info!(
             "load journal log:{} next_offset:{},recover_point:{},split_offset:{}",
@@ -100,11 +96,10 @@ impl JournalLog {
     /// # 返回
     ///
     /// 返回加载的日志段映射。
-    fn load_segments(
+    async fn load_segments(
         topic_partition: &TopicPartition,
         dir: impl AsRef<Path>,
         max_index_file_size: usize,
-        rt: &Runtime,
     ) -> AppResult<BTreeMap<i64, LogSegment>> {
         let mut index_files = BTreeMap::new();
         let mut log_files = BTreeMap::new();
@@ -152,19 +147,16 @@ impl JournalLog {
                             }
                             ".index" => {
                                 // journal log 不应有偏移索引文件
-                                let index_file = rt
-                                    .block_on(IndexFile::new(
-                                        &file.path(),
-                                        max_index_file_size,
-                                        true,
-                                    ))
-                                    .map_err(|e| {
-                                        AppError::DetailedIoError(format!(
-                                            "open index file: {} error: {}",
-                                            file.path().to_string_lossy(),
-                                            e
-                                        ))
-                                    })?;
+                                let index_file =
+                                    IndexFile::new(&file.path(), max_index_file_size, true)
+                                        .await
+                                        .map_err(|e| {
+                                            AppError::DetailedIoError(format!(
+                                                "open index file: {} error: {}",
+                                                file.path().to_string_lossy(),
+                                                e
+                                            ))
+                                        })?;
                                 index_files.insert(file_prefix.parse::<i64>().unwrap(), index_file);
                             }
                             ".log" => {
@@ -231,7 +223,7 @@ impl JournalLog {
             .iter_mut()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error())?;
-        
+
         let file_name = PathBuf::from(self.topic_partition.journal_partition_dir())
             .join(format!("{}.log", base_offset));
         let index_file_name = PathBuf::from(self.topic_partition.journal_partition_dir())

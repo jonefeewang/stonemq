@@ -6,7 +6,7 @@ use crate::AppError::{self, IllegalStateError};
 use crate::{global_config, AppResult};
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
+
 use tokio::signal;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{broadcast, mpsc, Semaphore};
@@ -33,29 +33,30 @@ impl Node {
 pub struct Broker;
 
 impl Broker {
-    pub fn start(rt: &Runtime) -> AppResult<()> {
+    pub async fn start() -> AppResult<()> {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
-        let log_manager = log_manager.startup(rt)?;
+        let log_manager = log_manager.startup().await?;
 
         // startup replica manager
         let mut replica_manager = ReplicaManager::new(
             log_manager.clone(),
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
-            rt,
-        );
-        replica_manager.startup(rt)?;
+        )
+        .await;
+        replica_manager.startup().await?;
         let replica_manager = Arc::new(replica_manager);
 
-        rt.block_on(Self::run_tcp_server(
+        Self::run_tcp_server(
             replica_manager.clone(),
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
-        ))?;
+        )
+        .await?;
 
         // tcp server has been shutdown, send shutdown signal
         notify_shutdown
@@ -65,9 +66,7 @@ impl Broker {
         drop(replica_manager);
         drop(shutdown_complete_tx);
         debug!("waiting for shutdown complete...");
-        rt.block_on(async {
-            shutdown_complete_rx.recv().await;
-        });
+        shutdown_complete_rx.recv().await;
 
         info!("broker shutdown complete");
         Ok(())

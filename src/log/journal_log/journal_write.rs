@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
@@ -233,7 +232,6 @@ impl JournalLog {
             .ok_or_else(|| self.no_active_segment_error())?;
 
         self.flush_segment(active_seg).await?;
-        active_seg.close_file_records().await?;
 
         let new_base_offset = self.next_offset.load();
         let index_file_dir = PathBuf::from(self.topic_partition.journal_partition_dir());
@@ -268,15 +266,13 @@ impl JournalLog {
         records_count: u32,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
-        let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments.values().next_back().ok_or_else(|| {
+        let mut segments = self.segments.write().await; // 获取读锁以进行并发读取
+        let active_seg = segments.values_mut().next_back().ok_or_else(|| {
             AppError::IllegalStateError(format!(
                 "active segment not found for topic partition: {}",
                 self.topic_partition.id()
             ))
         })?;
-
-        let (tx, rx) = oneshot::channel();
         active_seg
             .append_record(
                 LogType::Journal,
@@ -287,12 +283,9 @@ impl JournalLog {
                     last_offset,
                     records_count,
                     memory_records,
-                    tx,
                 ),
             )
             .await?;
-        rx.await
-            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
         Ok(())
     }
 

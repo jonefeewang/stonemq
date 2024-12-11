@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use tokio::runtime::Runtime;
+
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info};
@@ -17,22 +17,19 @@ use tracing::{debug, error, info};
 use super::{JournalReplica, QueueReplica, ReplicaManager};
 
 impl ReplicaManager {
-    pub fn new(
+    pub async fn new(
         log_manager: Arc<LogManager>,
         notify_shutdown: broadcast::Sender<()>,
         _shutdown_complete_tx: Sender<()>,
-        rt: &Runtime,
     ) -> Self {
         let notify_shutdown_clone = notify_shutdown.clone();
         let shutdown_complete_tx_clone = _shutdown_complete_tx.clone();
-        let delayed_fetch_purgatory = rt.block_on(async move {
-            DelayedAsyncOperationPurgatory::<DelayedFetch>::new(
-                "delayed_fetch_purgatory",
-                notify_shutdown_clone,
-                shutdown_complete_tx_clone,
-            )
-            .await
-        });
+        let delayed_fetch_purgatory = DelayedAsyncOperationPurgatory::<DelayedFetch>::new(
+            "delayed_fetch_purgatory",
+            notify_shutdown_clone,
+            shutdown_complete_tx_clone,
+        )
+        .await;
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -131,7 +128,7 @@ impl ReplicaManager {
     /// without a cluster concept, retrieve all topic partition information from the kv database here,
     /// simulating how it would be obtained from the leader and ISR request sent by the controller.
     ///
-    pub fn startup(&mut self, rt: &Runtime) -> AppResult<()> {
+    pub async fn startup(&mut self) -> AppResult<()> {
         info!("ReplicaManager starting up...");
         // load all partitions from kv db
         let kv_store_file_path = &global_config().log.kv_store_path;
@@ -146,7 +143,7 @@ impl ReplicaManager {
                 "kv config journal_topics_list".to_string(),
             ))?;
         let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
-        let mut partitions = self.create_journal_partitions(broker_id, tp_strs, rt)?;
+        let mut partitions = self.create_journal_partitions(broker_id, tp_strs).await?;
         self.all_journal_partitions.extend(
             partitions
                 .drain(..)
@@ -168,7 +165,7 @@ impl ReplicaManager {
                 "kv config queue_topics_list".to_string(),
             ))?;
         let tp_strs: Vec<&str> = queue_tps.split(',').collect();
-        let mut partitions = self.create_queue_partitions(broker_id, tp_strs, rt)?;
+        let mut partitions = self.create_queue_partitions(broker_id, tp_strs).await?;
         self.all_queue_partitions.extend(
             partitions
                 .drain(..)
@@ -207,8 +204,7 @@ impl ReplicaManager {
                     topic: "journal".to_string(),
                     partition: journal_partition as i32,
                 };
-                self.queue_2_journal
-                    .insert(entry.clone(), journal_topic);
+                self.queue_2_journal.insert(entry.clone(), journal_topic);
             });
 
         info!(
@@ -246,7 +242,7 @@ impl ReplicaManager {
             let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
             let shutdown_complete_tx = self._shutdown_complete_tx.clone();
             let log_manager = self.log_manager.clone();
-            rt.spawn(async move {
+            tokio::spawn(async move {
                 if let Err(e) = log_manager
                     .start_splitter_task(journal_tp, queue_tps, shutdown, shutdown_complete_tx)
                     .await
@@ -259,11 +255,10 @@ impl ReplicaManager {
         Ok(())
     }
 
-    fn create_journal_partitions(
+    async fn create_journal_partitions(
         &mut self,
         broker_id: i32,
         tp_strs: Vec<&str>,
-        rt: &Runtime,
     ) -> Result<Vec<(TopicPartition, JournalPartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
@@ -280,7 +275,8 @@ impl ReplicaManager {
             // 获取对应的log，没有的话，创建一个
             let log = self
                 .log_manager
-                .get_or_create_journal_log(&topic_partition, rt)?;
+                .get_or_create_journal_log(&topic_partition)
+                .await?;
             let replica = JournalReplica::new(broker_id, topic_partition.clone(), log);
             let partition = JournalPartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
@@ -288,11 +284,10 @@ impl ReplicaManager {
         }
         Ok(partitions)
     }
-    fn create_queue_partitions(
+    async fn create_queue_partitions(
         &self,
         broker_id: i32,
         tp_strs: Vec<&str>,
-        rt: &Runtime,
     ) -> Result<Vec<(TopicPartition, QueuePartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
@@ -308,7 +303,8 @@ impl ReplicaManager {
 
             let log = self
                 .log_manager
-                .get_or_create_queue_log(&topic_partition, rt)?;
+                .get_or_create_queue_log(&topic_partition)
+                .await?;
             let replica = QueueReplica::new(broker_id, topic_partition.clone(), log);
             let partition = QueuePartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);

@@ -131,7 +131,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                                     &purgatory_name,
                                     key
                                 );
-                            }
+                            }   
                         }
                     }
                     Some(expired) = delay_queue.next() => {

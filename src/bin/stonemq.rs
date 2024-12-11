@@ -42,8 +42,12 @@ fn run() -> AppResult<()> {
     // };
     // std::env::set_var("RUST_LOG", log_level);
 
-    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
-    let _otel_guard = rt.block_on(setup_tracing(true, LogMode::Perf));
+    let worker_num = num_cpus::get() * 2;
+    let rt = runtime::Builder::new_multi_thread()
+        .worker_threads(worker_num)
+        .enable_all()
+        .build()?;
+    let _otel_guard = rt.block_on(setup_tracing(true, LogMode::Prod));
 
     // setup config
     let config_path = commandline.conf.as_ref().map_or_else(
@@ -60,7 +64,7 @@ fn run() -> AppResult<()> {
         .set(broker_config)
         .expect("set broker config failed");
 
-    Broker::start(&rt)?;
+    rt.block_on(Broker::start())?;
 
     Ok(())
 }

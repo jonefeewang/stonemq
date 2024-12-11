@@ -1,6 +1,5 @@
 use crate::log::file_records::FileRecords;
 use crate::log::index_file::IndexFile;
-use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
 use crate::AppError;
@@ -8,7 +7,6 @@ use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use std::path::Path;
 use std::path::PathBuf;
-use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::LogType;
@@ -126,7 +124,7 @@ impl LogSegment {
         Ok(segment)
     }
     pub async fn append_record(
-        &self,
+        &mut self,
         log_type: LogType,
         records_package: (
             i64, //
@@ -135,7 +133,6 @@ impl LogSegment {
             i64, // last batch queue base offset
             u32, // records count
             MemoryRecords,
-            oneshot::Sender<AppResult<()>>,
         ),
     ) -> AppResult<()> {
         if self.file_records.is_none() {
@@ -197,21 +194,31 @@ impl LogSegment {
         match log_type {
             LogType::Journal => {
                 self.file_records
-                    .as_ref()
+                    .as_mut()
                     .unwrap()
-                    .tx
-                    .send(FileOp::AppendJournal(records_package))
-                    .await
-                    .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
+                    .append_journal(
+                        records_package.0,
+                        records_package.1,
+                        records_package.2,
+                        records_package.3,
+                        records_package.4,
+                        records_package.5,
+                    )
+                    .await?;
             }
             LogType::Queue => {
                 self.file_records
-                    .as_ref()
+                    .as_mut()
                     .unwrap()
-                    .tx
-                    .send(FileOp::AppendQueue(records_package))
-                    .await
-                    .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
+                    .append_queue(
+                        records_package.0,
+                        records_package.1,
+                        records_package.2,
+                        records_package.3,
+                        records_package.4,
+                        records_package.5,
+                    )
+                    .await?;
             }
         }
 
@@ -225,17 +232,7 @@ impl LogSegment {
                 self.base_offset
             )));
         }
-        let (tx, rx) = oneshot::channel::<AppResult<u64>>();
-        self.file_records
-            .as_ref()
-            .unwrap()
-            .tx
-            .send(FileOp::Flush(tx))
-            .await
-            .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
-        let size = rx
-            .await
-            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
+        let size = self.file_records.as_ref().unwrap().flush().await?;
         self.offset_index.trim_to_valid_size().await?;
         self.offset_index.flush().await?;
         Ok(size)
@@ -254,18 +251,6 @@ impl LogSegment {
             .map_err(|e| AppError::DetailedIoError(format!("open index file error: {}", e)))?;
 
         self.offset_index = new_index_file;
-        Ok(())
-    }
-    pub async fn close_file_records(&mut self) -> AppResult<()> {
-        if let Some(file_records) = self.file_records.take() {
-            file_records.stop_job_task().await;
-        } else {
-            return Err(AppError::InvalidOperation(format!(
-                "inactive segment can not close file records:{}",
-                self.base_offset
-            )));
-        }
-
         Ok(())
     }
 }

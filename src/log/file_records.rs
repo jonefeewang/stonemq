@@ -1,8 +1,6 @@
 use super::LogType;
-use crate::global_config;
 use crate::log::journal_log::JournalLog;
 use crate::log::log_segment::PositionInfo;
-use crate::log::FileOp;
 use crate::message::MemoryRecords;
 use crate::message::TopicPartition;
 use crate::AppError;
@@ -16,37 +14,17 @@ use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Duration;
 use tracing::{error, trace};
 
 #[derive(Debug)]
 pub struct FileRecords {
-    pub tx: Sender<FileOp>,
+    writer: BufWriter<File>,
     size: Arc<AtomicCell<usize>>,
-    active: Arc<AtomicCell<bool>>,
     file_name: String,
 }
 
-/// Splitter的读取和消费的读取还不太一样
-/// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
-/// 而不需要通过FileRecord来读取，自己只要知道从哪个segment开始读取即可，然后读取到哪个位置，然后读取下一个segment
-/// 2.消费的读取是多个并发读取者，而且不连续的数据.可以维护一个BufReader pool，然后读取者从pool中获取一个BufReader
-/// .比如最热active segment, 可能有多个BufReader，而其他segment可能只有一个BufReader
 impl FileRecords {
-    // 未完成，这里应该是消费者读取的位置
-    // pub async fn read(&self, pos: usize, read_exact_byte: usize) -> AppResult<BytesMut> {
-    //     let file = OpenOptions::new()
-    //         .read(true)
-    //         .open(&self.file_name)
-    //         .await?;
-    //     let mut buf = BytesMut::with_capacity(read_exact_byte);
-    //     let mut reader = BufReader::new(file);
-    //     reader.seek(std::io::SeekFrom::Start(pos as u64)).await?;
-    //     reader.read(&mut buf).await?;
-    //     todo!()
-    // }
     pub async fn open<P: AsRef<Path>>(file_name: P) -> AppResult<Self> {
         let file = OpenOptions::new()
             .create(true)
@@ -69,140 +47,104 @@ impl FileRecords {
                 e
             ))
         })?;
-        let file_channel_size = global_config().log.file_records_comm_channel_size;
-        let (tx, rx) = mpsc::channel(file_channel_size);
 
         let file_name = file_name.as_ref().to_string_lossy().into_owned();
-        let file_records = Self {
-            tx,
-            active: Arc::new(AtomicCell::new(true)),
+
+        Ok(Self {
+            writer: BufWriter::new(file),
             size: Arc::new(AtomicCell::new(metadata.len() as usize)),
             file_name,
-        };
-        // 这里使用消息通知模式，是为了避免使用锁
-
-        file_records.start_job_task(file, rx, file_records.size.clone());
-
-        Ok(file_records)
+        })
     }
-    pub fn start_job_task(
-        &self,
-        file: File,
-        mut rx: Receiver<FileOp>,
-        size: Arc<AtomicCell<usize>>,
-    ) {
-        let file_name = self.file_name.clone();
-        let active_clone = self.active.clone();
-        tokio::spawn(async move {
-            let mut writer = BufWriter::new(file);
-            while let Some(message) = rx.recv().await {
-                match message {
-                    FileOp::AppendJournal((
-                        journal_offset,
-                        topic_partition,
-                        first_batch_queue_base_offset,
-                        last_batch_queue_base_offset,
-                        records_count,
-                        records,
-                        resp_tx,
-                    )) => {
-                        match Self::append_journal_recordbatch(
-                            &mut writer,
-                            (
-                                journal_offset,
-                                topic_partition,
-                                first_batch_queue_base_offset,
-                                last_batch_queue_base_offset,
-                                records_count,
-                                records,
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(total_write) => {
-                                trace!("{} file append finished .", &file_name);
-                                size.fetch_add(total_write);
-                                resp_tx.send(Ok(())).unwrap_or_else(|_| {
-                                    error!("send success  response error");
-                                });
-                            }
-                            Err(error) => {
-                                error!("append record error:{:?}", error);
-                                resp_tx
-                                    .send(Err(AppError::DetailedIoError(format!(
-                                        "append record error:{:?}",
-                                        error
-                                    ))))
-                                    .unwrap_or_else(|_| {
-                                        error!("send error response error");
-                                    });
-                            }
-                        }
-                    }
-                    FileOp::AppendQueue((
-                        journal_offset,
-                        topic_partition,
-                        first_batch_queue_base_offset,
-                        last_batch_queue_base_offset,
-                        records_count,
-                        records,
-                        resp_tx,
-                    )) => {
-                        match Self::append_queue_recordbatch(
-                            &mut writer,
-                            (
-                                journal_offset,
-                                topic_partition,
-                                first_batch_queue_base_offset,
-                                last_batch_queue_base_offset,
-                                records_count,
-                                records,
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(total_write) => {
-                                trace!("{} file append finished .", &file_name);
-                                size.fetch_add(total_write);
-                                resp_tx.send(Ok(())).unwrap_or_else(|_| {
-                                    error!("send success  response error");
-                                });
-                            }
-                            Err(error) => {
-                                error!("append record error:{:?}", error);
-                                resp_tx
-                                    .send(Err(AppError::DetailedIoError(format!(
-                                        "append record error:{:?}",
-                                        error
-                                    ))))
-                                    .unwrap_or_else(|_| {
-                                        error!("send error response error");
-                                    });
-                            }
-                        }
-                    }
 
-                    FileOp::Flush(sender) => match writer.get_ref().sync_all().await {
-                        Ok(_) => {
-                            sender.send(Ok(size.load() as u64)).unwrap_or_else(|_| {
-                                error!("send flush success response error");
-                            });
-                            trace!("{} file flush finished .", &file_name);
-                        }
-                        Err(error) => {
-                            error!("flush file error:{:?}", error);
-                        }
-                    },
-                }
-                if !active_clone.load() {
-                    break;
-                }
+    pub async fn append_journal(
+        &mut self,
+        journal_offset: i64,
+        topic_partition: TopicPartition,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+        records: MemoryRecords,
+    ) -> AppResult<()> {
+        match Self::append_journal_recordbatch(
+            &mut self.writer,
+            (
+                journal_offset,
+                topic_partition,
+                first_batch_queue_base_offset,
+                last_batch_queue_base_offset,
+                records_count,
+                records,
+            ),
+        )
+        .await
+        {
+            Ok(total_write) => {
+                trace!("{} file append finished.", &self.file_name);
+                self.size.fetch_add(total_write);
+                Ok(())
             }
-            trace!("{} file records append thread exit", &file_name)
-        });
+            Err(error) => {
+                error!("append record error:{:?}", error);
+                Err(AppError::DetailedIoError(format!(
+                    "append record error:{:?}",
+                    error
+                )))
+            }
+        }
     }
-    pub async fn stop_job_task(&self) {
-        self.active.store(false);
+
+    pub async fn append_queue(
+        &mut self,
+        journal_offset: i64,
+        topic_partition: TopicPartition,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+        records: MemoryRecords,
+    ) -> AppResult<()> {
+        match Self::append_queue_recordbatch(
+            &mut self.writer,
+            (
+                journal_offset,
+                topic_partition,
+                first_batch_queue_base_offset,
+                last_batch_queue_base_offset,
+                records_count,
+                records,
+            ),
+        )
+        .await
+        {
+            Ok(total_write) => {
+                trace!("{} file append finished.", &self.file_name);
+                self.size.fetch_add(total_write);
+                Ok(())
+            }
+            Err(error) => {
+                error!("append record error:{:?}", error);
+                Err(AppError::DetailedIoError(format!(
+                    "append record error:{:?}",
+                    error
+                )))
+            }
+        }
+    }
+
+    pub async fn flush(&self) -> AppResult<u64> {
+        match self.writer.get_ref().sync_all().await {
+            Ok(_) => {
+                trace!("{} file flush finished.", &self.file_name);
+                Ok(self.size.load() as u64)
+            }
+            Err(error) => {
+                error!("flush file error:{:?}", error);
+                Err(AppError::DetailedIoError(format!(
+                    "flush file error:{:?}",
+                    error
+                )))
+            }
+        }
     }
 
     /// 将日志记录批次追加到日志文件中
@@ -242,7 +184,7 @@ impl FileRecords {
             records,
         ): (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> std::io::Result<usize> {
-        trace!("正在将日志追加到文件...");
+        trace!("正将日志追加到文件...");
 
         let topic_partition_id = topic_partition.id();
         let tp_id_bytes = topic_partition_id.as_bytes();

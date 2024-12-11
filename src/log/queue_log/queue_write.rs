@@ -2,7 +2,6 @@ use crate::log::log_segment::LogSegment;
 use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult};
-use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use super::QueueLog;
@@ -160,7 +159,6 @@ impl QueueLog {
             .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
 
         active_seg.flush().await?;
-        active_seg.close_file_records().await?;
         self.recover_point.store(self.last_offset.load());
 
         let new_base_offset = self.last_offset.load() + 1;
@@ -202,15 +200,13 @@ impl QueueLog {
         records_count: u32,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
-        let segments = self.segments.read().await;
-        let active_seg = segments
-            .iter()
+        let mut segments = self.segments.write().await;
+        let (_, active_seg) = segments
+            .iter_mut()
             .next_back()
             .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
 
-        let (tx, rx) = oneshot::channel();
         active_seg
-            .1
             .append_record(
                 LogType::Queue,
                 (
@@ -220,12 +216,9 @@ impl QueueLog {
                     last_batch_queue_base_offset,
                     records_count,
                     memory_records,
-                    tx,
                 ),
             )
             .await?;
-        rx.await
-            .map_err(|e| AppError::ChannelRecvError(e.to_string()))??;
         Ok(())
     }
     /// Creates an error for when no active segment is found.

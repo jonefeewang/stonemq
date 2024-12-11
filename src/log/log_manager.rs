@@ -10,7 +10,7 @@ use crate::{global_config, AppError, AppResult, Shutdown};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
+
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, trace, warn};
@@ -72,27 +72,26 @@ impl LogManager {
     ///
     /// 在broker启动的时候，从硬盘加载所有的日志文件，包括journal和queue日志
     /// 预期在broker启动前加载
-    pub fn startup(mut self, rt: &Runtime) -> AppResult<Arc<LogManager>> {
+    pub async fn startup(mut self) -> AppResult<Arc<LogManager>> {
         info!("log manager startup ...");
         let log_config = &global_config().log;
         let journal_index_file_size = log_config.journal_index_file_size as u32;
         let queue_index_file_size = log_config.queue_index_file_size as u32;
-        let journal_logs = self.load_journal_logs(journal_index_file_size, rt)?;
+        let journal_logs = self.load_journal_logs(journal_index_file_size).await?;
         self.journal_logs.extend(journal_logs);
-        let queue_logs = self.load_queue_logs(queue_index_file_size, rt)?;
+        let queue_logs = self.load_queue_logs(queue_index_file_size).await?;
         self.queue_logs.extend(queue_logs);
 
         // startup background tasks
         let log_manager = Arc::new(self);
-        rt.block_on(log_manager.clone().start_task())?;
+        log_manager.clone().start_task().await?;
         info!("log manager startup completed.");
         Ok(log_manager)
     }
 
-    pub fn load_journal_logs(
+    pub async fn load_journal_logs(
         &self,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
         info!("load journal logs from {}", self.journal_log_path);
 
@@ -104,7 +103,7 @@ impl LogManager {
             )));
         }
 
-        let logs = self.do_load_journal_log(index_file_max_size, rt)?;
+        let logs = self.do_load_journal_log(index_file_max_size).await?;
         info!(
             "load {} logs from dir:{} finished",
             logs.len(),
@@ -113,15 +112,13 @@ impl LogManager {
         Ok(logs)
     }
 
-    fn do_load_journal_log(
+    async fn do_load_journal_log(
         &self,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
         // JournalLog 要加载recovery_checkpoints和split_checkpoint，还有queue_log的next_offset_checkpoint
-        let recovery_checkpoints =
-            rt.block_on(self.journal_recovery_checkpoints.read_checkpoints())?;
-        let split_checkpoints = rt.block_on(self.split_checkpoint.read_checkpoints())?;
+        let recovery_checkpoints = self.journal_recovery_checkpoints.read_checkpoints().await?;
+        let split_checkpoints = self.split_checkpoint.read_checkpoints().await?;
 
         let mut logs = vec![];
         let mut dir = fs::read_dir(&self.journal_log_path).map_err(|e| {
@@ -149,8 +146,8 @@ impl LogManager {
                     split_offset,
                     dir.path(),
                     index_file_max_size,
-                    rt,
-                )?;
+                )
+                .await?;
                 logs.push((tp, Arc::new(log)));
             } else if dir.file_name().to_string_lossy().ends_with("checkpoints") {
                 trace!("skip recovery file: {:?}", dir.path().to_string_lossy());
@@ -161,10 +158,9 @@ impl LogManager {
         Ok(logs)
     }
 
-    pub fn load_queue_logs(
+    pub async fn load_queue_logs(
         &self,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
         info!("load queue logs from {}", self.queue_log_path);
 
@@ -176,7 +172,7 @@ impl LogManager {
             )));
         }
 
-        let logs = self.do_load_queue_logs(index_file_max_size, rt)?;
+        let logs = self.do_load_queue_logs(index_file_max_size).await?;
         info!(
             "load {} logs from dir:{} finished",
             logs.len(),
@@ -185,14 +181,12 @@ impl LogManager {
         Ok(logs)
     }
 
-    fn do_load_queue_logs(
+    async fn do_load_queue_logs(
         &self,
         index_file_max_size: u32,
-        rt: &Runtime,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
         // 加载检查点文件
-        let recovery_checkpoints =
-            rt.block_on(self.queue_recovery_checkpoints.read_checkpoints())?;
+        let recovery_checkpoints = self.queue_recovery_checkpoints.read_checkpoints().await?;
 
         let mut logs = vec![];
         let mut dir = fs::read_dir(&self.queue_log_path)
@@ -211,7 +205,7 @@ impl LogManager {
             if file_type.is_dir() {
                 let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
-                let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size, rt)?;
+                let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size).await?;
 
                 trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
@@ -222,10 +216,9 @@ impl LogManager {
         Ok(logs)
     }
 
-    pub fn get_or_create_journal_log(
+    pub async fn get_or_create_journal_log(
         &self,
         topic_partition: &TopicPartition,
-        rt: &Runtime,
     ) -> AppResult<Arc<JournalLog>> {
         let log = self.journal_logs.entry(topic_partition.clone());
         match log {
@@ -236,24 +229,23 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = rt.block_on(JournalLog::new(topic_partition))?;
+                let journal_log = JournalLog::new(topic_partition).await?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
             }
         }
     }
-    pub fn get_or_create_queue_log(
+    pub async fn get_or_create_queue_log(
         &self,
         topic_partition: &TopicPartition,
-        rt: &Runtime,
     ) -> AppResult<Arc<QueueLog>> {
         let log = self.queue_logs.entry(topic_partition.clone());
 
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             Entry::Vacant(vacant) => {
-                let log = Arc::new(rt.block_on(QueueLog::new(topic_partition))?);
+                let log = Arc::new(QueueLog::new(topic_partition).await?);
                 vacant.insert(log.clone());
                 Ok(log)
             }
