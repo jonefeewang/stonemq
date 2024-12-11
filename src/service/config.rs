@@ -35,6 +35,13 @@ pub struct GroupConsumeConfig {
 /// Represents the configuration for a log.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LogConfig {
+    
+    /// The interval at which recovery checkpoints are written.
+    pub recovery_checkpoint_interval: u64,
+    pub splitter_read_buffer_size: u32,
+    pub splitter_wait_interval: u32,
+    pub file_records_comm_channel_size: usize,
+
     /// The base directory for the journal.
     pub journal_base_dir: String,
     /// The size of each journal segment.
@@ -55,12 +62,6 @@ pub struct LogConfig {
 
     /// The path to the key-value store.
     pub kv_store_path: String,
-    /// The interval at which recovery checkpoints are written.
-    pub recovery_checkpoint_interval: u64,
-
-    pub splitter_read_buffer_size: u32,
-
-    pub splitter_wait_interval: u32,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {

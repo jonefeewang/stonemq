@@ -1,4 +1,5 @@
 use super::LogType;
+use crate::global_config;
 use crate::log::journal_log::JournalLog;
 use crate::log::log_segment::PositionInfo;
 use crate::log::FileOp;
@@ -68,7 +69,8 @@ impl FileRecords {
                 e
             ))
         })?;
-        let (tx, rx) = mpsc::channel(100);
+        let file_channel_size = global_config().log.file_records_comm_channel_size;
+        let (tx, rx) = mpsc::channel(file_channel_size);
 
         let file_name = file_name.as_ref().to_string_lossy().into_owned();
         let file_records = Self {

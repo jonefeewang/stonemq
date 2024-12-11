@@ -19,30 +19,31 @@ max_package_size = 10_048_576
 
 ###### general config
 recovery_checkpoint_interval = 10
-file_records_comm_channel_size = 100
+file_records_comm_channel_size = 1000
 ## default 8192(8kb)
 splitter_read_buffer_size = 8192
 # default 100ms
-splitter_wait_interval = 10_000
+splitter_wait_interval = 100_100
 
 
 ###### journal config
-# default segment size 1M
-journal_segment_size = 10_240
-journal_base_dir = "test_data/journal"
+# default segment size 1G
+journal_segment_size = 1_073_741_824
+journal_base_dir = "/tmp/journal"
 # default index file size 10M
-journal_index_file_size = 2048
+journal_index_file_size = 10_485_760
 # default index interval 4096 bytes
-journal_index_interval_bytes = 256
+journal_index_interval_bytes = 4096
 
 
 ###### queue config
 # default segment size 1M
-queue_segment_size = 10_240
-queue_base_dir = "test_data/queue"
+queue_segment_size = 1_073_741_824
+queue_base_dir = "/tmp/queue"
 # default index file size 10M
-queue_index_file_size = 2048
-queue_index_interval_bytes = 256
+queue_index_file_size = 10_485_760
+# default index interval 4096 bytes
+queue_index_interval_bytes = 4096
 
 ###### kv config
 kv_store_path = "test_data/kv_store/kv.db"
@@ -53,4 +54,3 @@ kv_store_path = "test_data/kv_store/kv.db"
 group_min_session_timeout = 6_000
 group_max_session_timeout = 300_000
 group_initial_rebalance_delay = 3000
-
