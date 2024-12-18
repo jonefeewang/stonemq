@@ -1,8 +1,11 @@
-use crate::log::log_segment::LogSegment;
-use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME};
+use std::sync::Arc;
+
+use crate::log::file_writer::{FlushRequest, QueueLogWriteOp};
+use crate::log::log_segment::{ActiveLogSegment, LogSegmentCommon};
+use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME, FILE_WRITER};
 use crate::message::{MemoryRecords, TopicPartition};
-use crate::{global_config, AppError, AppResult};
-use tracing::{debug, trace};
+use crate::{global_config, AppResult};
+use tracing::trace;
 
 use super::QueueLog;
 
@@ -39,42 +42,24 @@ impl QueueLog {
             first_batch_queue_base_offset,
         );
 
-        let (active_seg_size, active_segment_offset_index_full) = {
-            let segments = self.segments.read().await;
-            let (_, active_seg) = segments
-                .iter()
-                .next_back()
-                .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
-            (
-                active_seg.size().unwrap() as u32,
-                active_seg.offset_index_full().await?,
-            )
-        };
-
-        let need_roll = self
-            .need_roll(
-                active_seg_size,
-                &memory_records,
-                active_segment_offset_index_full,
-            )
-            .await;
-
-        if need_roll {
-            self.roll_segment().await?;
+        // check if need roll new segment
+        if self.should_roll_segment(&memory_records).await? {
+            self.roll_new_segment().await?;
         }
 
-        let log_append_info = LogAppendInfo {
-            first_offset: first_batch_queue_base_offset,
-            last_offset: last_batch_queue_base_offset,
-            _max_timestamp: -1,
-            _offset_of_max_timestamp: -1,
+        // create log append info
+        let log_append_info = self.create_log_append_info(
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
             records_count,
-            _log_append_time: DEFAULT_LOG_APPEND_TIME,
-        };
+        );
 
-        self.append_to_active_segment(
+        // update active segment metadata
+        self.update_active_segment_metadata(&memory_records, log_append_info.first_offset)?;
+
+        // execute write operation
+        self.execute_write_operation(
             journal_offset,
-            topic_partition,
             first_batch_queue_base_offset,
             last_batch_queue_base_offset,
             records_count,
@@ -82,14 +67,142 @@ impl QueueLog {
         )
         .await?;
 
-        self.last_offset
-            .store(log_append_info.first_offset + records_count as i64 - 1);
+        // update last offset
+        self.update_last_offset(log_append_info.first_offset, records_count);
+
         trace!(
             "append records to queue log success, update last offset:{}",
             self.last_offset.load()
         );
 
         Ok(log_append_info)
+    }
+
+    /// check if need roll new segment
+    async fn should_roll_segment(&self, memory_records: &MemoryRecords) -> AppResult<bool> {
+        let (active_segment_size, active_segment_offset_index_full) = {
+            let active_segment = self.active_segment.read();
+            let active_segment_size = active_segment.size();
+            let active_segment_offset_index_full = active_segment.offset_index_full();
+            (active_segment_size, active_segment_offset_index_full)
+        };
+
+        Ok(self.need_roll(
+            active_segment_size,
+            memory_records,
+            active_segment_offset_index_full,
+        ))
+    }
+
+    /// roll new segment
+    async fn roll_new_segment(&self) -> AppResult<()> {
+        let new_base_offset = self.last_offset.load() + 1;
+        let new_seg = ActiveLogSegment::new(
+            &self.topic_partition,
+            new_base_offset,
+            self.index_file_max_size,
+        )?;
+
+        // swap active segment
+        let old_segment = self.swap_active_segment(new_seg)?;
+
+        // handle old segment
+        let old_base_offset = old_segment.base_offset();
+        let readonly_seg = old_segment.into_readonly()?;
+        self.segments
+            .insert(old_base_offset, Arc::new(readonly_seg));
+
+        // flush old segment
+        self.flush_old_segment(old_base_offset).await?;
+
+        // update metadata
+        self.update_segment_metadata(new_base_offset);
+
+        Ok(())
+    }
+
+    /// swap active segment
+    fn swap_active_segment(&self, new_seg: ActiveLogSegment) -> AppResult<ActiveLogSegment> {
+        let mut active_seg = self.active_segment.write();
+        Ok(std::mem::replace(&mut *active_seg, new_seg))
+    }
+
+    /// flush old segment
+    async fn flush_old_segment(&self, old_base_offset: i64) -> AppResult<()> {
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: old_base_offset,
+        };
+        FILE_WRITER.flush(request).await?;
+        Ok(())
+    }
+
+    /// update segment metadata
+    fn update_segment_metadata(&self, new_base_offset: i64) {
+        self.recover_point.store(self.last_offset.load());
+        {
+            let mut segments = self.segments_order.write();
+            segments.insert(new_base_offset);
+        }
+        self.active_segment_id.store(new_base_offset);
+    }
+
+    /// create log append info
+    fn create_log_append_info(
+        &self,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+    ) -> LogAppendInfo {
+        LogAppendInfo {
+            first_offset: first_batch_queue_base_offset,
+            last_offset: last_batch_queue_base_offset,
+            _max_timestamp: -1,
+            _offset_of_max_timestamp: -1,
+            records_count,
+            _log_append_time: DEFAULT_LOG_APPEND_TIME,
+        }
+    }
+
+    /// update active segment metadata
+    fn update_active_segment_metadata(
+        &self,
+        memory_records: &MemoryRecords,
+        first_offset: i64,
+    ) -> AppResult<()> {
+        self.active_segment.write().update_metadata(
+            memory_records.size(),
+            first_offset,
+            LogType::Journal,
+        )
+    }
+
+    /// execute write operation
+    async fn execute_write_operation(
+        &self,
+        journal_offset: i64,
+        first_batch_queue_base_offset: i64,
+        last_batch_queue_base_offset: i64,
+        records_count: u32,
+        memory_records: MemoryRecords,
+    ) -> AppResult<()> {
+        let queue_log_write_op = QueueLogWriteOp {
+            journal_offset,
+            topic_partition: self.topic_partition.clone(),
+            first_batch_queue_base_offset,
+            last_batch_queue_base_offset,
+            records_count,
+            records: memory_records,
+            segment_base_offset: self.active_segment_id.load(),
+        };
+
+        FILE_WRITER.append_queue(queue_log_write_op).await
+    }
+
+    /// update last offset
+    fn update_last_offset(&self, first_offset: i64, records_count: u32) {
+        self.last_offset
+            .store(first_offset + records_count as i64 - 1);
     }
 
     /// Flushes the active segment to disk.
@@ -102,12 +215,14 @@ impl QueueLog {
     ///
     /// Returns `AppResult<()>` indicating success or failure.
     pub async fn flush(&self) -> AppResult<()> {
-        let segments = self.segments.write().await;
-        let (_, active_seg) = segments
-            .iter()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
-        active_seg.flush().await?;
+        self.active_segment.write().flush_index()?;
+
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: self.active_segment_id.load(),
+        };
+        FILE_WRITER.flush(request).await?;
+
         self.recover_point.store(self.last_offset.load());
         Ok(())
     }
@@ -124,9 +239,9 @@ impl QueueLog {
     /// # Returns
     ///
     /// Returns a boolean indicating whether a new segment roll is needed.
-    async fn need_roll(
+    fn need_roll(
         &self,
-        active_seg_size: u32,
+        active_seg_size: u64,
         memory_records: &MemoryRecords,
         active_segment_offset_index_full: bool,
     ) -> bool {
@@ -137,103 +252,8 @@ impl QueueLog {
         //     global_config().log.queue_segment_size as u32,
         //     active_segment_offset_index_full
         // );
-        active_seg_size + memory_records.size() as u32
-            >= global_config().log.queue_segment_size as u32
+        active_seg_size + memory_records.size() as u64
+            >= global_config().log.queue_segment_size as u64
             || active_segment_offset_index_full
-    }
-
-    /// Rolls over to a new log segment.
-    ///
-    /// # Returns
-    ///
-    /// Returns `AppResult<()>` indicating success or failure.
-    ///
-    /// # Performance
-    ///
-    /// This method acquires a write lock on the segments, which may impact concurrent operations.
-    async fn roll_segment(&self) -> AppResult<()> {
-        let mut segments = self.segments.write().await;
-        let (_, active_seg) = segments
-            .iter_mut()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
-
-        active_seg.flush().await?;
-        self.recover_point.store(self.last_offset.load());
-
-        let new_base_offset = self.last_offset.load() + 1;
-        let new_seg = LogSegment::new(
-            &self.topic_partition,
-            self.topic_partition.queue_partition_dir(),
-            new_base_offset,
-            self.index_file_max_size,
-        )
-        .await?;
-        segments.insert(new_base_offset, new_seg);
-        debug!(
-            "Rolled queue log segment to new base offset: {}",
-            new_base_offset
-        );
-        Ok(())
-    }
-
-    /// Appends records to the active segment.
-    ///
-    /// # Arguments
-    ///
-    /// * `topic_partition` - The topic partition.
-    /// * `memory_records` - The memory records to append.
-    ///
-    /// # Returns
-    ///
-    /// Returns `AppResult<()>` indicating success or failure.
-    ///
-    /// # Performance
-    ///
-    /// This method acquires a read lock on the segments, which may impact concurrent operations.
-    async fn append_to_active_segment(
-        &self,
-        journal_offset: i64,
-        topic_partition: TopicPartition,
-        first_batch_queue_base_offset: i64,
-        last_batch_queue_base_offset: i64,
-        records_count: u32,
-        memory_records: MemoryRecords,
-    ) -> AppResult<()> {
-        let mut segments = self.segments.write().await;
-        let (_, active_seg) = segments
-            .iter_mut()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error(&self.topic_partition))?;
-
-        active_seg
-            .append_record(
-                LogType::Queue,
-                (
-                    journal_offset,
-                    topic_partition,
-                    first_batch_queue_base_offset,
-                    last_batch_queue_base_offset,
-                    records_count,
-                    memory_records,
-                ),
-            )
-            .await?;
-        Ok(())
-    }
-    /// Creates an error for when no active segment is found.
-    ///
-    /// # Arguments
-    ///
-    /// * `topic_partition` - The topic partition for which no active segment was found.
-    ///
-    /// # Returns
-    ///
-    /// Returns an `AppError` describing the error condition.
-    pub fn no_active_segment_error(&self, topic_partition: &TopicPartition) -> AppError {
-        AppError::IllegalStateError(format!(
-            "no active segment, topic partition: {}",
-            topic_partition
-        ))
     }
 }

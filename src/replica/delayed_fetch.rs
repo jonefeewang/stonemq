@@ -47,7 +47,7 @@ impl DelayedAsyncOperation for DelayedFetch {
         let mut accumulated_size = 0;
         for (tp, _) in self.request.fetch_data.iter() {
             let log_fetch_info = self.read_position_infos.get(tp).unwrap();
-            if let Ok(partition_current_position) = self.replica_manager.get_leo_info(tp).await {
+            if let Ok(partition_current_position) = self.replica_manager.get_leo_info(tp) {
                 if partition_current_position.base_offset < log_fetch_info.base_offset {
                     return true;
                 } else if partition_current_position.offset <= log_fetch_info.offset {

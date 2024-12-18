@@ -1,4 +1,5 @@
 use crate::{
+    log::LogType,
     protocol::{
         base::{NPString, PString, ProtocolType, I16, I32, I64},
         schema_base::{Schema, ValueSet},
@@ -35,7 +36,8 @@ const MEMBER_ID_KEY_NAME: &str = "member_id";
 
 impl ProtocolCodec<OffsetCommitRequest> for OffsetCommitRequest {
     fn encode(self, api_version: &ApiVersion, correlation_id: i32) -> BytesMut {
-        let schema = Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit).unwrap();
+        let schema =
+            Self::fetch_request_schema_for_api(api_version, &ApiKey::OffsetCommit).unwrap();
         let mut value_set = ValueSet::new(schema);
         self.encode_to_value_set(&mut value_set);
         let body_size = value_set.size();
@@ -115,7 +117,7 @@ impl OffsetCommitRequest {
                     };
 
                     acc.insert(
-                        TopicPartition::new(topic_name.clone(), partition_id),
+                        TopicPartition::new(topic_name.clone(), partition_id, LogType::Queue),
                         partition_data,
                     );
                 }
@@ -180,7 +182,7 @@ impl OffsetCommitResponse {
         for (topic_partition, partition_errors) in self.responses {
             // Create a sub ValueSet for each topic
             let mut topic_value_set = value_set.sub_valueset_of_ary_field(RESPONSES_KEY_NAME);
-            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_partition.topic.into());
+            topic_value_set.append_field_value(TOPIC_KEY_NAME, topic_partition.topic().into());
 
             // Build partition responses array
             let mut partition_responses = Vec::with_capacity(partition_errors.len());

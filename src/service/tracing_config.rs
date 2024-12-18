@@ -177,8 +177,8 @@ pub async fn setup_tracing(tracing_off: bool, log_mode: LogMode) -> OtelGuard {
                 .with_writer(writer);
 
             if !tracing_off {
-                let meter_provider = init_meter_provider();
-                let tracer = init_tracer();
+                let meter_provider: SdkMeterProvider = init_meter_provider();
+                let tracer: Tracer = init_tracer();
 
                 tracing_subscriber::registry()
                     .with(fmt_layer)

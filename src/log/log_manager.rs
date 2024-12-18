@@ -1,4 +1,5 @@
 use crate::log::{CheckPointFile, JournalLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME};
+
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -17,6 +18,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::queue_log::QueueLog;
 use super::splitter::SplitterTask;
+use super::LogType;
 
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
@@ -56,6 +58,7 @@ impl LogManager {
             global_config().log.journal_base_dir,
             SPLIT_POINT_FILE_NAME
         );
+
         LogManager {
             journal_logs: DashMap::new(),
             queue_logs: DashMap::new(),
@@ -117,8 +120,10 @@ impl LogManager {
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
         // JournalLog 要加载recovery_checkpoints和split_checkpoint，还有queue_log的next_offset_checkpoint
-        let recovery_checkpoints = self.journal_recovery_checkpoints.read_checkpoints().await?;
-        let split_checkpoints = self.split_checkpoint.read_checkpoints().await?;
+        let recovery_checkpoints = self
+            .journal_recovery_checkpoints
+            .read_checkpoints(LogType::Journal)?;
+        let split_checkpoints = self.split_checkpoint.read_checkpoints(LogType::Journal)?;
 
         let mut logs = vec![];
         let mut dir = fs::read_dir(&self.journal_log_path).map_err(|e| {
@@ -137,7 +142,8 @@ impl LogManager {
                 .file_type();
             if file_type.is_dir() {
                 debug!("load journal log for dir:{}", dir.path().to_string_lossy());
-                let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
+                let dir_name = dir.file_name().to_string_lossy().into_owned();
+                let tp = TopicPartition::from_str(&dir_name, LogType::Journal)?;
                 let split_offset = split_checkpoints.get(&tp).unwrap_or(&-1).to_owned();
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
                 let log = JournalLog::load_from(
@@ -146,8 +152,7 @@ impl LogManager {
                     split_offset,
                     dir.path(),
                     index_file_max_size,
-                )
-                .await?;
+                )?;
                 logs.push((tp, Arc::new(log)));
             } else if dir.file_name().to_string_lossy().ends_with("checkpoints") {
                 trace!("skip recovery file: {:?}", dir.path().to_string_lossy());
@@ -186,7 +191,9 @@ impl LogManager {
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
         // 加载检查点文件
-        let recovery_checkpoints = self.queue_recovery_checkpoints.read_checkpoints().await?;
+        let recovery_checkpoints = self
+            .queue_recovery_checkpoints
+            .read_checkpoints(LogType::Queue)?;
 
         let mut logs = vec![];
         let mut dir = fs::read_dir(&self.queue_log_path)
@@ -203,14 +210,14 @@ impl LogManager {
                 })?
                 .file_type();
             if file_type.is_dir() {
-                let tp = TopicPartition::from_string(dir.file_name().to_string_lossy())?;
+                let dir_name = dir.file_name().to_string_lossy().into_owned();
+                let tp = TopicPartition::from_str(&dir_name, LogType::Queue)?;
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
-                let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size).await?;
-
+                let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size)?;
                 trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
             } else {
-                warn!("invalid log dir:{:?}", dir.path().to_string_lossy());
+                warn!("invalid queue log dir:{:?}", dir.path().to_string_lossy());
             }
         }
         Ok(logs)
@@ -229,7 +236,7 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = JournalLog::new(topic_partition).await?;
+                let journal_log = JournalLog::new(topic_partition)?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
@@ -245,7 +252,7 @@ impl LogManager {
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             Entry::Vacant(vacant) => {
-                let log = Arc::new(QueueLog::new(topic_partition).await?);
+                let log = Arc::new(QueueLog::new(topic_partition)?);
                 vacant.insert(log.clone());
                 Ok(log)
             }
@@ -307,7 +314,7 @@ impl LogManager {
                 .map(|entry| {
                     let tp = entry.key();
                     let log = entry.value();
-                    (tp.clone(), log.recover_point.load())
+                    (tp.clone(), log.get_recover_point())
                 })
                 .collect();
             self.queue_recovery_checkpoints
@@ -357,15 +364,13 @@ impl LogManager {
         let interval = tokio::time::interval(Duration::from_secs(recovery_check_interval));
         let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
         tokio::spawn(async move {
-            {
-                let result = self.recovery_checkpoint_task(interval, shutdown).await;
-                match result {
-                    Ok(_) => {
-                        trace!("journal log recovery checkpoint task shutdown");
-                    }
-                    Err(error) => {
-                        error!("recovery checkpoint task error:{:?}", error);
-                    }
+            let result = self.recovery_checkpoint_task(interval, shutdown).await;
+            match result {
+                Ok(_) => {
+                    trace!("journal log recovery checkpoint task shutdown");
+                }
+                Err(error) => {
+                    error!("recovery checkpoint task error:{:?}", error);
                 }
             }
         });

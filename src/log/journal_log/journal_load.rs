@@ -1,80 +1,101 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
-
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
-use tokio::sync::{Mutex, RwLock};
-use tracing::{error, info, trace, warn};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
+use tracing::{info, trace};
 
 use super::JournalLog;
-use crate::log::log_segment::LogSegment;
 use crate::{
-    log::{CheckPointFile, IndexFile, NEXT_OFFSET_CHECKPOINT_FILE_NAME},
+    log::{
+        index_file::{ReadOnlyIndexFile, WritableIndexFile},
+        log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment},
+        CheckPointFile, LogType, SegmentFileType, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
+    },
     message::TopicPartition,
     AppError, AppResult,
 };
+
 impl JournalLog {
-    /// 从已有的数据加载 `JournalLog`。
+    /// Loads a journal log from disk.
     ///
-    /// # 参数
+    /// This method loads an existing journal log from the specified directory, including all segments
+    /// and checkpoint information.
     ///
-    /// * `topic_partition` - 主题分区。
-    /// * `recover_point` - 恢复点偏移量。
-    /// * `split_offset` - 分割偏移量。
-    /// * `dir` - 数据目录。
-    /// * `max_index_file_size` - 最大索引文件大小。
-    /// * `rt` - Tokio 运行时。
+    /// # Arguments
     ///
-    /// # 返回
+    /// * `topic_partition` - The topic partition this journal log belongs to
+    /// * `recover_point` - The recovery point offset to resume from
+    /// * `split_offset` - The offset where log splitting should occur
+    /// * `dir` - The directory path containing the log files
+    /// * `index_file_max_size` - Maximum size in bytes for index files
     ///
-    /// 返回加载的 `JournalLog` 实例。
-    pub async fn load_from(
+    /// # Returns
+    ///
+    /// Returns the loaded journal log wrapped in `AppResult`
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    /// use your_crate::{JournalLog, TopicPartition};
+    ///
+    /// let tp = TopicPartition::new("test", 0);
+    /// let log = JournalLog::load_from(
+    ///     &tp,
+    ///     0,  // recover_point
+    ///     0,  // split_offset
+    ///     "/path/to/logs",
+    ///     1024 * 1024  // 1MB index file size
+    /// )?;
+    /// ```
+    pub fn load_from(
         topic_partition: &TopicPartition,
         recover_point: i64,
         split_offset: i64,
         dir: impl AsRef<Path>,
         index_file_max_size: u32,
     ) -> AppResult<Self> {
-        let segments =
-            Self::load_segments(topic_partition, dir, index_file_max_size as usize).await?;
+        // load segments
+        let (segments, active_segment) =
+            Self::load_segments(topic_partition, &dir, index_file_max_size as usize)?;
 
-        let queue_next_offset_checkpoint_path = format!(
-            "{}/{}",
-            &topic_partition.journal_partition_dir(),
-            NEXT_OFFSET_CHECKPOINT_FILE_NAME
-        );
-        let queue_next_offset_checkpoints = CheckPointFile::new(queue_next_offset_checkpoint_path);
+        // load checkpoint file
+        let checkpoint_file = Self::load_checkpoint_file(topic_partition)?;
+        let queue_next_offset = checkpoint_file.read_checkpoints(LogType::Journal)?;
 
-        let queue_next_offset = queue_next_offset_checkpoints.read_checkpoints().await?;
         trace!(
             "load journal log queue_next_offset: {:?}",
             queue_next_offset
         );
 
+        // determine log start offset
         let log_start_offset = segments
             .first_key_value()
             .map(|(offset, _)| *offset)
+            .or_else(|| active_segment.as_ref().map(|s| s.base_offset()))
             .unwrap_or(0);
-        let next_offset = recover_point + 1;
 
-        let log = JournalLog {
-            segments: RwLock::new(segments),
-            queue_next_offset_info: DashMap::from_iter(queue_next_offset),
-            queue_next_offset_checkpoints,
-            _log_start_offset: AtomicCell::new(log_start_offset),
-            next_offset: AtomicCell::new(next_offset),
-            recover_point: AtomicCell::new(recover_point),
-            split_offset: AtomicCell::new(split_offset),
-            write_lock: Mutex::new(()),
-            topic_partition: topic_partition.clone(),
-            index_file_max_size,
-        };
-        log.open_active_segment().await?;
+        // if no active segment, create new log
+        if active_segment.is_none() {
+            return JournalLog::new(topic_partition);
+        }
+
+        // build log
+        let log = JournalLog::open(
+            segments,
+            active_segment.unwrap(),
+            DashMap::from_iter(queue_next_offset),
+            checkpoint_file,
+            log_start_offset,
+            recover_point + 1, // next_offset
+            recover_point,
+            split_offset,
+            topic_partition,
+        )?;
 
         info!(
-            "load journal log:{} next_offset:{},recover_point:{},split_offset:{}",
+            "loaded journal log:{} next_offset:{}, recover_point:{}, split_offset:{}",
             topic_partition.id(),
             log.next_offset.load(),
             log.recover_point.load(),
@@ -84,121 +105,18 @@ impl JournalLog {
         Ok(log)
     }
 
-    /// 加载指定目录下的所有日志段文件。
+    /// Checkpoints the next offset information for queue topic partitions.
     ///
-    /// # 参数
+    /// This method writes the current next offset information for all queue topic partitions
+    /// to the checkpoint file. This helps maintain durability and enables recovery after restarts.
     ///
-    /// * `topic_partition` - 主题分区。
-    /// * `dir` - 数据目录。
-    /// * `max_index_file_size` - 最大索引文件大小。
-    /// * `rt` - Tokio 运行时。
+    /// # Returns
     ///
-    /// # 返回
+    /// Returns `AppResult<()>` indicating success or failure of the checkpoint operation.
     ///
-    /// 返回加载的日志段映射。
-    async fn load_segments(
-        topic_partition: &TopicPartition,
-        dir: impl AsRef<Path>,
-        max_index_file_size: usize,
-    ) -> AppResult<BTreeMap<i64, LogSegment>> {
-        let mut index_files = BTreeMap::new();
-        let mut log_files = BTreeMap::new();
-
-        let mut read_dir = std::fs::read_dir(&dir).map_err(|e| {
-            AppError::DetailedIoError(format!(
-                "read dir: {} error: {} while loading journal log",
-                &dir.as_ref().to_string_lossy(),
-                e
-            ))
-        })?;
-        while let Some(file) = read_dir.next().transpose().map_err(|e| {
-            AppError::DetailedIoError(format!(
-                "read dir: {} error: {} while loading journal log",
-                dir.as_ref().to_string_lossy(),
-                e
-            ))
-        })? {
-            if file
-                .metadata()
-                .map_err(|e| {
-                    AppError::DetailedIoError(format!(
-                        "get file metadata: {} error: {} while loading journal log",
-                        file.path().to_string_lossy(),
-                        e
-                    ))
-                })?
-                .file_type()
-                .is_file()
-            {
-                let file_name = file.file_name().to_string_lossy().to_string();
-                let dot = file_name.rfind('.');
-                match dot {
-                    None => {
-                        warn!("无效的段文件名: {}", file_name);
-                        continue;
-                    }
-                    Some(dot) => {
-                        let file_prefix = &file_name[..dot];
-                        let file_suffix = &file_name[dot..];
-                        match file_suffix {
-                            ".timeindex" => {
-                                // journal log 不应有时间索引文件
-                                continue;
-                            }
-                            ".index" => {
-                                // journal log 不应有偏移索引文件
-                                let index_file =
-                                    IndexFile::new(&file.path(), max_index_file_size, true)
-                                        .await
-                                        .map_err(|e| {
-                                            AppError::DetailedIoError(format!(
-                                                "open index file: {} error: {}",
-                                                file.path().to_string_lossy(),
-                                                e
-                                            ))
-                                        })?;
-                                index_files.insert(file_prefix.parse::<i64>().unwrap(), index_file);
-                            }
-                            ".log" => {
-                                let base_offset = file_prefix.parse::<i64>();
-                                match base_offset {
-                                    Ok(base_offset) => {
-                                        log_files.insert(base_offset, 0);
-                                    }
-                                    Err(_) => {
-                                        warn!("无效的段文件名: {}", file_prefix);
-                                        continue;
-                                    }
-                                }
-                            }
-                            other => {
-                                warn!("无效的段文件名: {}", other);
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let mut segments = BTreeMap::new();
-        for (base_offset, _) in log_files {
-            let offset_index = index_files.remove(&base_offset);
-            if let Some(offset_index) = offset_index {
-                let segment =
-                    LogSegment::open(topic_partition.clone(), base_offset, offset_index, None);
-                segments.insert(base_offset, segment);
-            } else {
-                error!("can not find index file for segment:{}", base_offset);
-                return Err(AppError::DetailedIoError(format!(
-                    "can not find index file for segment:{}",
-                    base_offset
-                )));
-            }
-        }
-
-        Ok(segments)
-    }
-
+    /// # Errors
+    ///
+    /// Returns an error if writing the checkpoint fails, wrapped in `AppError::DetailedIoError`
     pub async fn checkpoint_next_offset(&self) -> AppResult<()> {
         let queue_next_offset_info = self
             .queue_next_offset_info
@@ -210,29 +128,180 @@ impl JournalLog {
             .await
             .map_err(|e| AppError::DetailedIoError(format!("write checkpoint error: {}", e)))
     }
-    /// 打开活跃的segment
-    pub async fn open_active_segment(&self) -> AppResult<()> {
-        let mut segments = self.segments.write().await;
-        if segments.is_empty() {
-            let dir = PathBuf::from(self.topic_partition.journal_partition_dir());
-            let segment =
-                LogSegment::new(&self.topic_partition, dir, 0, self.index_file_max_size).await?;
-            segments.insert(0, segment);
+
+    /// load checkpoint file
+    fn load_checkpoint_file(topic_partition: &TopicPartition) -> AppResult<CheckPointFile> {
+        let path = format!(
+            "{}/{}",
+            topic_partition.partition_dir(),
+            NEXT_OFFSET_CHECKPOINT_FILE_NAME
+        );
+        Ok(CheckPointFile::new(path))
+    }
+
+    /// load segments
+    fn load_segments(
+        topic_partition: &TopicPartition,
+        dir: impl AsRef<Path>,
+        max_index_file_size: usize,
+    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+        let (index_files, log_files) = Self::scan_segment_files(dir)?;
+
+        if log_files.is_empty() {
+            return Ok((BTreeMap::new(), None));
         }
-        let (base_offset, active_seg) = segments
-            .iter_mut()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
 
-        let file_name = PathBuf::from(self.topic_partition.journal_partition_dir())
-            .join(format!("{}.log", base_offset));
-        let index_file_name = PathBuf::from(self.topic_partition.journal_partition_dir())
-            .join(format!("{}.index", base_offset));
+        Self::build_segments(topic_partition, index_files, log_files, max_index_file_size)
+    }
 
-        active_seg
-            .become_active(file_name, index_file_name, self.index_file_max_size)
-            .await?;
+    /// scan directory to get segment files
+    fn scan_segment_files(dir: impl AsRef<Path>) -> AppResult<(BTreeSet<i64>, BTreeSet<i64>)> {
+        let mut index_files = BTreeSet::new();
+        let mut log_files = BTreeSet::new();
 
-        Ok(())
+        let read_dir = std::fs::read_dir(&dir).map_err(|e| {
+            AppError::DetailedIoError(format!(
+                "read dir: {} error: {} while loading journal log",
+                dir.as_ref().display(),
+                e
+            ))
+        })?;
+
+        for entry in read_dir.flatten() {
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if let Some((base_offset, file_type)) = Self::parse_segment_filename(&file_name) {
+                match file_type {
+                    SegmentFileType::Index => index_files.insert(base_offset),
+                    SegmentFileType::Log => log_files.insert(base_offset),
+                    SegmentFileType::TimeIndex => continue, // journal log don't use time index
+                    SegmentFileType::Unknown => continue,
+                };
+            }
+        }
+
+        Ok((index_files, log_files))
+    }
+
+    /// parse segment filename
+    fn parse_segment_filename(filename: &str) -> Option<(i64, SegmentFileType)> {
+        let (prefix, suffix) = filename.rsplit_once('.')?;
+        let base_offset = prefix.parse().ok()?;
+        let file_type = match suffix {
+            "index" => Some(SegmentFileType::Index),
+            "log" => Some(SegmentFileType::Log),
+            "timeindex" => Some(SegmentFileType::TimeIndex),
+            _ => None,
+        }?;
+        Some((base_offset, file_type))
+    }
+
+    /// build segments
+    fn build_segments(
+        topic_partition: &TopicPartition,
+        index_files: BTreeSet<i64>,
+        log_files: BTreeSet<i64>,
+        max_index_file_size: usize,
+    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+        let mut segments = BTreeMap::new();
+        let mut active_segment = None;
+
+        // only one log segment, as active segment
+        if log_files.len() == 1 {
+            let base_offset = *log_files.first().unwrap();
+            if index_files.contains(&base_offset) {
+                active_segment = Some(Self::create_active_segment(
+                    topic_partition,
+                    base_offset,
+                    max_index_file_size,
+                )?);
+            }
+            return Ok((segments, active_segment));
+        }
+
+        // multiple log segments, the latest as active segment
+        for base_offset in log_files.iter().rev() {
+            if !index_files.contains(base_offset) {
+                continue;
+            }
+
+            if active_segment.is_none() {
+                active_segment = Some(Self::create_active_segment(
+                    topic_partition,
+                    *base_offset,
+                    max_index_file_size,
+                )?);
+            } else {
+                segments.insert(
+                    *base_offset,
+                    Self::create_readonly_segment(topic_partition, *base_offset)?,
+                );
+            }
+        }
+
+        Ok((segments, active_segment))
+    }
+
+    /// create active segment
+    fn create_active_segment(
+        topic_partition: &TopicPartition,
+        base_offset: i64,
+        max_index_file_size: usize,
+    ) -> AppResult<ActiveLogSegment> {
+        let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
+        let index_file = WritableIndexFile::new(index_file_name, max_index_file_size)?;
+        ActiveLogSegment::open(topic_partition, base_offset, index_file, None)
+    }
+
+    /// create readonly segment
+    fn create_readonly_segment(
+        topic_partition: &TopicPartition,
+        base_offset: i64,
+    ) -> AppResult<ReadOnlyLogSegment> {
+        let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
+        let index_file = ReadOnlyIndexFile::new(index_file_name)?;
+        Ok(ReadOnlyLogSegment::open(
+            topic_partition,
+            base_offset,
+            index_file,
+            None,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::log::SegmentFileType;
+
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_parse_segment_filename() {
+        assert_eq!(
+            JournalLog::parse_segment_filename("100.index"),
+            Some((100, SegmentFileType::Index))
+        );
+        assert_eq!(
+            JournalLog::parse_segment_filename("100.log"),
+            Some((100, SegmentFileType::Log))
+        );
+        assert_eq!(JournalLog::parse_segment_filename("invalid"), None);
+    }
+
+    #[test]
+    fn test_load_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let topic_partition = TopicPartition::new("test", 0, LogType::Journal);
+
+        let result = JournalLog::load_segments(&topic_partition, temp_dir.path(), 1024);
+
+        assert!(result.is_ok());
+        let (segments, active_segment) = result.unwrap();
+        assert!(segments.is_empty());
+        assert!(active_segment.is_none());
     }
 }

@@ -42,6 +42,8 @@ pub struct LogConfig {
     pub splitter_wait_interval: u32,
     pub file_records_comm_channel_size: usize,
 
+    
+    pub log_base_dir: String,
     /// The base directory for the journal.
     pub journal_base_dir: String,
     /// The size of each journal segment.

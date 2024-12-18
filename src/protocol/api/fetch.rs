@@ -6,6 +6,7 @@ use std::{
 use once_cell::sync::Lazy;
 
 use crate::{
+    log::LogType,
     message::{MemoryRecords, TopicPartition},
     protocol::{
         base::{PString, ProtocolType, I16, I32, I64, I8},
@@ -95,7 +96,7 @@ impl FetchRequest {
         for (topic, partitions) in topics {
             for (partition, fetch_offset, log_start_offset, max_bytes) in partitions {
                 fetch_data.insert(
-                    TopicPartition::new(topic.clone(), partition),
+                    TopicPartition::new(topic.clone(), partition, LogType::Queue),
                     PartitionDataReq::new(fetch_offset, log_start_offset, max_bytes),
                 );
             }
@@ -119,7 +120,7 @@ impl FetchResponse {
             HashMap::new();
         for (topic_partition, partition_data) in self.responses.into_iter() {
             topic_responses
-                .entry(topic_partition.topic.clone())
+                .entry(topic_partition.topic().to_string())
                 .or_default()
                 .push((topic_partition, partition_data));
         }
@@ -140,7 +141,8 @@ impl FetchResponse {
                 let mut header_value_set =
                     partition_value_set.sub_valueset_of_schema_field("partition_header");
 
-                header_value_set.append_field_value("partition", topic_partition.partition.into());
+                header_value_set
+                    .append_field_value("partition", topic_partition.partition().into());
                 header_value_set.append_field_value("error_code", partition_data.error_code.into());
                 header_value_set
                     .append_field_value("high_watermark", partition_data.high_watermark.into());

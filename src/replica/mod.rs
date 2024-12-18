@@ -2,6 +2,8 @@ mod delayed_fetch;
 mod manager;
 mod read;
 
+pub use manager::AppendJournalLogReq;
+
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -14,8 +16,11 @@ use crate::message::LogFetchInfo;
 use crate::message::{JournalPartition, QueuePartition, TopicPartition};
 use crate::request::FetchRequest;
 use crate::utils::DelayedAsyncOperationPurgatory;
+use crate::utils::MultipleChannelWorkerPool;
+
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
+
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -59,6 +64,7 @@ impl QueueReplica {
 /// 通过log manager来管理存储层
 #[derive(Debug)]
 pub struct ReplicaManager {
+    journal_prepare_pool: MultipleChannelWorkerPool<AppendJournalLogReq>,
     all_journal_partitions: DashMap<TopicPartition, Arc<JournalPartition>>,
     all_queue_partitions: DashMap<TopicPartition, Arc<QueuePartition>>,
     queue_2_journal: DashMap<TopicPartition, TopicPartition>,

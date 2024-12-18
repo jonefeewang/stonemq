@@ -1,10 +1,9 @@
-use crate::log::file_records::FileRecords;
 use crate::log::log_segment::PositionInfo;
 use crate::log::{JournalLog, LogType};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};
 use bytes::{Buf, BytesMut};
-use std::borrow::Cow;
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::ErrorKind;
@@ -101,10 +100,7 @@ impl SplitterTask {
         target_offset: i64,
         shutdown: &mut Shutdown,
     ) -> AppResult<()> {
-        let position_info = self
-            .journal_log
-            .get_relative_position_info(target_offset)
-            .await?;
+        let position_info = self.journal_log.get_relative_position_info(target_offset)?;
 
         self.read_and_process_segment(target_offset, position_info, shutdown)
             .await
@@ -131,7 +127,7 @@ impl SplitterTask {
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
             .join(self.topic_partition.id());
         let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
-        let journal_seg_file = fs::File::open(&segment_path).await?;
+        let journal_seg_file = std::fs::File::open(&segment_path).await?;
 
         debug!(
             "开始读取一个segment{:?} ref:  {:?}, target offset: {}",
@@ -139,7 +135,7 @@ impl SplitterTask {
         );
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
-        let (mut journal_seg_file, current_position) = FileRecords::seek(
+        let (mut journal_seg_file, current_position) = crate::log::seek(
             journal_seg_file,
             target_offset,
             position_info,
@@ -214,7 +210,7 @@ impl SplitterTask {
 
     async fn read_batch(
         &self,
-        file: &mut File,
+        file: &mut std::fs::File,
     ) -> AppResult<(i64, TopicPartition, i64, i64, u32, MemoryRecords)> {
         let batch_size = file.read_u32().await?;
         let mut buf = BytesMut::zeroed(batch_size as usize);
@@ -228,7 +224,7 @@ impl SplitterTask {
             last_batch_queue_base_offset,
             records_count,
         ) = Self::read_topic_partition(&mut buf).await;
-        let topic_partition = TopicPartition::from_string(Cow::Owned(tp_str)).unwrap();
+        let topic_partition = TopicPartition::from_str(&tp_str, LogType::Queue)?;
 
         let memory_records = MemoryRecords::new(buf);
 
@@ -271,7 +267,7 @@ impl SplitterTask {
     }
 
     async fn is_active_segment(&self, base_offset: i64) -> AppResult<bool> {
-        let current_active_seg_offset = self.journal_log.current_active_seg_offset().await?;
+        let current_active_seg_offset = self.journal_log.current_active_seg_offset();
         Ok(base_offset == current_active_seg_offset)
     }
 

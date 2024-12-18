@@ -1,78 +1,108 @@
-use tracing::error;
+//! Read operations for journal logs.
+//!
+//! This module provides functionality for reading from journal logs,
+//! including position lookup and metadata access.
 
-use crate::{log::PositionInfo, message::TopicPartition, AppError, AppResult};
+use crate::{
+    log::{log_segment::LogSegmentCommon, PositionInfo},
+    message::TopicPartition,
+    AppResult,
+};
 
 use super::JournalLog;
 
 impl JournalLog {
-    /// 获取给定偏移量的位置信息。
+    /// Looks up the position information for a given offset.
     ///
-    /// # 参数
-    ///
-    /// * `offset` - 要获取位置信息的偏移量。
-    ///
-    /// # 返回
-    ///
-    /// 返回包含位置信息的 `AppResult<PositionInfo>`。
-    pub async fn get_relative_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
-        let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let segment = segments
-            .range(..=offset)
-            .next_back()
-            .map(|(_, segment)| segment)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("not found segment for offset: {}", offset),
-                )
-            })?;
-        segment.get_relative_position(offset).await
-    }
-
-    /// 获取当前活动段的偏移量。
-    ///
-    /// # 返回
-    ///
-    /// 返回包含活动段偏移量的 `AppResult<u64>`。
-    pub async fn current_active_seg_offset(&self) -> AppResult<i64> {
-        let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments
-            .values()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
-        Ok(active_seg.base_offset())
-    }
-
-    /// 获取活动段的信息。
-    ///
-    /// # 返回
-    ///
-    /// 返回包含段大小和偏移索引是否已满的 `AppResult<(u32, bool)>`。
-    pub async fn get_active_segment_info(&self) -> AppResult<(u32, bool)> {
-        let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments.values().next_back().ok_or_else(|| {
-            error!("未找到活动段，主题分区: {}", self.topic_partition.id());
-            AppError::IllegalStateError(format!(
-                "未找到活动段，主题分区: {}",
-                self.topic_partition.id()
-            ))
-        })?;
-        Ok((
-            active_seg.size().unwrap() as u32,
-            active_seg.offset_index_full().await?,
-        ))
-    }
-    /// Calculates the overhead for a journal log record.
+    /// This method searches through the segments to find the appropriate position
+    /// for the given offset. It first finds the correct segment by checking the
+    /// base offsets, then retrieves the position within that segment.
     ///
     /// # Arguments
     ///
-    /// * `topic_partition` - The topic partition.
+    /// * `offset` - The absolute offset to look up
     ///
     /// # Returns
     ///
-    /// Returns the calculated overhead as a u32.
+    /// Returns the position information if found, wrapped in `AppResult`
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use your_crate::{JournalLog, AppResult};
+    /// # fn example(journal: JournalLog) -> AppResult<()> {
+    /// let position = journal.get_relative_position_info(1234);
+    /// println!("Found position: offset={}, position={}", position.offset, position.position);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_relative_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
+        // Find the segment containing this offset by looking for the largest base offset
+        // that is less than or equal to the target offset
+        let segment_offset = self
+            .segments_order
+            .read()
+            .iter()
+            .rev()
+            .find(|&&seg_offset| seg_offset <= offset)
+            .copied() // Convert reference to value
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("no segment found for offset {}", offset),
+                )
+            })?;
+
+        // Check if the offset belongs to the active segment
+        if segment_offset == self.active_segment_id.load() {
+            self.active_segment.read().get_relative_position(offset)
+        } else {
+            // Look up in the inactive segments
+            self.segments
+                .get(&segment_offset)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("segment not found for offset {}", offset),
+                    )
+                })?
+                .get_relative_position(offset)
+        }
+    }
+
+    /// Returns the base offset of the current active segment.
+    ///
+    /// This method provides access to the base offset of the active segment,
+    /// which is useful for determining the range of offsets currently being written to.
+    ///
+    /// # Returns
+    ///
+    /// The base offset of the active segment as an `i64`
+    #[inline]
+    pub fn current_active_seg_offset(&self) -> i64 {
+        self.active_segment_id.load()
+    }
+
+    /// Calculates the overhead size for a journal log record.
+    ///
+    /// The overhead includes:
+    /// - 8 bytes for offset
+    /// - Variable size for topic partition string
+    /// - 8 bytes for first batch queue base offset
+    /// - 8 bytes for last batch queue base offset
+    /// - 4 bytes for records count
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition for which to calculate overhead
+    ///
+    /// # Returns
+    ///
+    /// The total overhead size in bytes as a `u32`
+    #[inline]
     pub fn calculate_journal_log_overhead(topic_partition: &TopicPartition) -> u32 {
-        //offset + tpstr size + tpstr + i64(first_batch_queue_base_offset)+i64(last_batch_queue_base_offset)+u32(records_count)
+        // offset + topic partition string size + topic partition string +
+        // first_batch_queue_base_offset + last_batch_queue_base_offset + records_count
         8 + topic_partition.protocol_size() + 8 + 8 + 4
     }
 }

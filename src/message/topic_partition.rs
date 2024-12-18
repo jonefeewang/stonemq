@@ -1,16 +1,17 @@
-use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use regex::Regex;
 use tracing::trace;
 
-use crate::log::{LogAppendInfo, PositionInfo};
+use crate::log::{LogAppendInfo, LogType, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
-use crate::replica::{JournalReplica, QueueReplica};
+use crate::replica::{AppendJournalLogReq, JournalReplica, QueueReplica};
+use crate::utils::MultipleChannelWorkerPool;
 use crate::{global_config, AppError, AppResult};
 
-use super::LogFetchInfo;
+use super::{LogFetchInfo, PARTITION_DIR_NAME_PATTERN};
 
 #[derive(Debug)]
 pub struct JournalPartition {
@@ -35,6 +36,7 @@ impl JournalPartition {
         &self,
         record: MemoryRecords,
         queue_topic_partition: TopicPartition,
+        journal_prepare_pool: &MultipleChannelWorkerPool<AppendJournalLogReq>,
     ) -> AppResult<LogAppendInfo> {
         let local_replica_id = global_config().general.id;
 
@@ -49,8 +51,25 @@ impl JournalPartition {
             }
             replica.unwrap().log.clone()
         };
+        let (reply_sender, reply_receiver) = tokio::sync::oneshot::channel();
 
-        log.append_records((queue_topic_partition, record)).await
+        let prepare_request = AppendJournalLogReq {
+            record,
+            queue_topic_partition,
+            reply_sender,
+            journal_log: log,
+        };
+
+        journal_prepare_pool
+            .send(prepare_request, self._topic_partition.partition as i8)
+            .await
+            .map_err(|e| {
+                AppError::ChannelSendError(format!("send prepare request error: {}", e))
+            })?;
+
+        reply_receiver
+            .await
+            .map_err(|e| AppError::ChannelRecvError(format!("receive reply error: {}", e)))?
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: JournalReplica) {
@@ -106,7 +125,7 @@ impl QueuePartition {
         self.assigned_replicas.insert(broker_id, Arc::new(replica));
     }
 
-    pub async fn get_leo_info(&self) -> AppResult<PositionInfo> {
+    pub fn get_leo_info(&self) -> AppResult<PositionInfo> {
         let local_replica_id = global_config().general.id;
         let replica = {
             let replica = self
@@ -122,14 +141,15 @@ impl QueuePartition {
             replica.clone()
         };
 
-        replica.log.get_leo_info().await
+        replica.log.get_leo_info()
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TopicPartition {
-    pub topic: String,
-    pub partition: i32,
+    topic: String,
+    partition: i32,
+    log_type: LogType,
 }
 
 impl Display for TopicPartition {
@@ -139,31 +159,89 @@ impl Display for TopicPartition {
 }
 
 impl TopicPartition {
-    pub fn new(topic: String, partition: i32) -> Self {
-        Self { topic, partition }
+    #[inline]
+    fn parse_topic_partition(tp_str: &str) -> Option<(String, i32)> {
+        let re = Regex::new(PARTITION_DIR_NAME_PATTERN).ok()?;
+
+        re.captures(tp_str).and_then(|captures| {
+            let topic = captures.get(1)?.as_str().to_string();
+            let partition = captures.get(2)?.as_str().parse().ok()?;
+            Some((topic, partition))
+        })
+    }
+    #[inline]
+    pub fn from_str(tp_str: &str, log_type: LogType) -> AppResult<Self> {
+        let (topic, partition) = Self::parse_topic_partition(tp_str).ok_or_else(|| {
+            AppError::InvalidValue(format!("invalid topic partition  name: {}", tp_str))
+        })?;
+
+        Ok(Self {
+            topic,
+            partition,
+            log_type,
+        })
+    }
+    pub fn new(topic: impl Into<String>, partition: i32, log_type: LogType) -> Self {
+        Self {
+            topic: topic.into(),
+            partition,
+            log_type,
+        }
     }
 
+    #[inline]
+    pub fn new_journal(topic: impl Into<String>, partition: i32) -> Self {
+        Self {
+            topic: topic.into(),
+            partition,
+            log_type: LogType::Journal,
+        }
+    }
+
+    #[inline]
+    pub fn new_queue(topic: impl Into<String>, partition: i32) -> Self {
+        Self {
+            topic: topic.into(),
+            partition,
+            log_type: LogType::Queue,
+        }
+    }
+
+    #[inline]
+    pub fn topic(&self) -> &str {
+        &self.topic
+    }
+
+    #[inline]
+    pub fn partition(&self) -> i32 {
+        self.partition
+    }
+
+    #[inline]
+    pub fn is_journal(&self) -> bool {
+        self.log_type == LogType::Journal
+    }
+
+    #[inline]
+    pub fn is_queue(&self) -> bool {
+        self.log_type == LogType::Queue
+    }
+
+    #[inline]
     pub fn id(&self) -> String {
         format!("{}-{}", self.topic, self.partition)
     }
 
-    pub fn from_string(str_name: Cow<str>) -> AppResult<Self> {
-        let (topic, partition) = str_name
-            .rsplit_once('-')
-            .ok_or_else(|| AppError::InvalidValue(format!("topic partition name:{}", str_name)))?;
+    #[inline]
+    pub fn partition_dir(&self) -> String {
+        if self.is_journal() {
+            format!("{}/{}", global_config().log.journal_base_dir, self.id())
+        } else {
+            format!("{}/{}", global_config().log.queue_base_dir, self.id())
+        }
+    }
 
-        let partition = partition
-            .parse()
-            .map_err(|_| AppError::InvalidValue(format!("topic partition id:{}", partition)))?;
-
-        Ok(Self::new(topic.to_string(), partition))
-    }
-    pub fn journal_partition_dir(&self) -> String {
-        format!("{}/{}", global_config().log.journal_base_dir, self)
-    }
-    pub fn queue_partition_dir(&self) -> String {
-        format!("{}/{}", global_config().log.queue_base_dir, self)
-    }
+    #[inline]
     pub fn protocol_size(&self) -> u32 {
         4 + self.id().as_bytes().len() as u32
     }

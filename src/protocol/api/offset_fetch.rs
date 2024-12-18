@@ -1,4 +1,5 @@
 use crate::{
+    log::LogType,
     protocol::{
         base::{NPString, PString, ProtocolType, I16, I32, I64},
         schema_base::{Schema, ValueSet},
@@ -98,7 +99,11 @@ impl FetchOffsetsRequest {
                     .get_field_value(PARTITION_KEY_NAME)
                     .into();
 
-                topic_partitions.push(TopicPartition::new(topic_name.clone(), partition_id));
+                topic_partitions.push(TopicPartition::new(
+                    topic_name.clone(),
+                    partition_id,
+                    LogType::Queue,
+                ));
             }
         }
 
@@ -149,9 +154,9 @@ impl FetchOffsetsResponse {
         let topic_offset_map = self.offsets.into_iter().fold(
             HashMap::<String, Vec<(i32, PartitionOffsetData)>>::new(),
             |mut acc, (topic_partition, partition_data)| {
-                acc.entry(topic_partition.topic)
+                acc.entry(topic_partition.topic().to_string())
                     .or_default()
-                    .push((topic_partition.partition, partition_data));
+                    .push((topic_partition.partition(), partition_data));
                 acc
             },
         );

@@ -1,17 +1,21 @@
 use super::DelayedFetch;
-use crate::log::LogManager;
+use crate::log::{JournalLog, LogManager, LogType};
 use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{JournalPartition, QueuePartition, TopicData, TopicPartition};
 use crate::request::{ErrorCode, KafkaError, PartitionResponse};
-use crate::utils::{DelayedAsyncOperationPurgatory, JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
-use crate::{global_config, AppError, AppResult, KvStore, Shutdown};
+use crate::utils::{
+    DelayedAsyncOperationPurgatory, MultipleChannelWorkerPool, WorkerPoolConfig,
+    JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST,
+};
+use crate::{global_config, AppError, AppResult, KvStore, MemoryRecords, Shutdown};
 use dashmap::DashMap;
-use std::borrow::Cow;
+
 use std::collections::{BTreeMap, HashSet};
+
 use std::sync::Arc;
 
-use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::{broadcast, oneshot};
 use tracing::{debug, error, info};
 
 use super::{JournalReplica, QueueReplica, ReplicaManager};
@@ -30,7 +34,14 @@ impl ReplicaManager {
             shutdown_complete_tx_clone,
         )
         .await;
+
+        let journal_prepare_pool = initialize_journal_partition_worker_pool(
+            notify_shutdown.clone(),
+            _shutdown_complete_tx.clone(),
+        );
+
         ReplicaManager {
+            journal_prepare_pool,
             log_manager,
             all_journal_partitions: DashMap::new(),
             all_queue_partitions: DashMap::new(),
@@ -48,7 +59,7 @@ impl ReplicaManager {
     ) -> BTreeMap<TopicPartition, PartitionResponse> {
         let error_response =
             |topic_partition: &TopicPartition, error_code: i16| PartitionResponse {
-                partition: topic_partition.partition,
+                partition: topic_partition.partition(),
                 error_code,
                 base_offset: 0,
                 log_append_time: DEFAULT_LOG_APPEND_TIME,
@@ -57,10 +68,8 @@ impl ReplicaManager {
         for topic_data in topics_data {
             let topic_name = &topic_data.topic_name;
             for partition in topic_data.partition_data {
-                let topic_partition = TopicPartition {
-                    topic: topic_name.clone(),
-                    partition: partition.partition,
-                };
+                let topic_partition =
+                    TopicPartition::new_journal(topic_name.clone(), partition.partition);
 
                 let journal_tp_clone = {
                     let journal_tp = self.queue_2_journal.get(&topic_partition);
@@ -92,7 +101,11 @@ impl ReplicaManager {
                     journal_partition.unwrap().clone()
                 };
                 let append_result = journal_partition
-                    .append_record_to_leader(partition.message_set, topic_partition.clone())
+                    .append_record_to_leader(
+                        partition.message_set,
+                        topic_partition.clone(),
+                        &self.journal_prepare_pool,
+                    )
                     .await;
                 if let Ok(LogAppendInfo { first_offset, .. }) = append_result {
                     tp_response.insert(
@@ -200,10 +213,8 @@ impl ReplicaManager {
             .enumerate()
             .for_each(|(index, entry)| {
                 let journal_partition = index % journal_log_count;
-                let journal_topic = TopicPartition {
-                    topic: "journal".to_string(),
-                    partition: journal_partition as i32,
-                };
+                let journal_topic =
+                    TopicPartition::new_journal("journal".to_string(), journal_partition as i32);
                 self.queue_2_journal.insert(entry.clone(), journal_topic);
             });
 
@@ -265,12 +276,12 @@ impl ReplicaManager {
             if tp_str.trim().is_empty() {
                 continue;
             }
-            let topic_partition = TopicPartition::from_string(Cow::Owned(tp_str.to_string()))?;
+            let topic_partition = TopicPartition::from_str(tp_str, LogType::Journal)?;
             // setup initial metadata cache
             self.journal_metadata_cache
-                .entry(topic_partition.topic.clone())
+                .entry(topic_partition.topic().to_string())
                 .or_default()
-                .insert(topic_partition.partition);
+                .insert(topic_partition.partition());
 
             // 获取对应的log，没有的话，创建一个
             let log = self
@@ -294,12 +305,12 @@ impl ReplicaManager {
             if tp_str.trim().is_empty() {
                 continue;
             }
-            let topic_partition = TopicPartition::from_string(Cow::Owned(tp_str.to_string()))?;
+            let topic_partition = TopicPartition::from_str(tp_str, LogType::Queue)?;
             // setup initial metadata cache
             self.queue_metadata_cache
-                .entry(topic_partition.topic.clone())
+                .entry(topic_partition.topic().to_string())
                 .or_default()
-                .insert(topic_partition.partition);
+                .insert(topic_partition.partition());
 
             let log = self
                 .log_manager
@@ -361,4 +372,38 @@ impl Drop for ReplicaManager {
     fn drop(&mut self) {
         debug!("replica manager dropped");
     }
+}
+
+#[derive(Debug)]
+pub struct AppendJournalLogReq {
+    pub record: MemoryRecords,
+    pub queue_topic_partition: TopicPartition,
+    pub reply_sender: oneshot::Sender<AppResult<LogAppendInfo>>,
+    pub journal_log: Arc<JournalLog>,
+}
+
+pub fn initialize_journal_partition_worker_pool(
+    notify_shutdown: broadcast::Sender<()>,
+    shutdown_complete_tx: Sender<()>,
+) -> MultipleChannelWorkerPool<AppendJournalLogReq> {
+    let config = WorkerPoolConfig::default();
+    let pool = MultipleChannelWorkerPool::new(
+        notify_shutdown.clone(),
+        shutdown_complete_tx.clone(),
+        move |request: AppendJournalLogReq| {
+            let AppendJournalLogReq {
+                record,
+                queue_topic_partition,
+                reply_sender,
+                journal_log,
+            } = request;
+            async move {
+                journal_log
+                    .append_records(record, queue_topic_partition, reply_sender)
+                    .await;
+            }
+        },
+        config,
+    );
+    pool
 }

@@ -1,26 +1,75 @@
+//! Queue log implementation for managing log segments and records.
+//!
+//! This module provides functionality for:
+//! - Managing multiple log segments
+//! - Appending records to active segments
+//! - Rolling segments when they reach capacity
+//! - Maintaining offset information
+
 mod queue_load;
 mod queue_read;
 mod queue_write;
 
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    hash::{Hash, Hasher},
+    path::Path,
+    sync::Arc,
+};
+
 use crossbeam::atomic::AtomicCell;
-use tokio::sync::RwLock;
+use dashmap::DashMap;
+use parking_lot::RwLock;
 use tracing::info;
 
-use crate::log::log_segment::LogSegment;
-use crate::message::TopicPartition;
-use crate::{global_config, AppError, AppResult};
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
-use std::path::Path;
+use crate::{
+    global_config,
+    log::log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment},
+    message::TopicPartition,
+    AppError, AppResult,
+};
 
+/// Constants for queue log operations
+const INIT_LOG_START_OFFSET: i64 = 0;
+const INIT_RECOVER_POINT: i64 = -1;
+const INIT_LAST_OFFSET: i64 = 0;
+
+/// Represents a queue log manager for a log partition.
+///
+/// Responsible for:
+/// - Managing log segments (both active and inactive)
+/// - Appending records
+/// - Rolling segments
+/// - Maintaining offset information
 #[derive(Debug)]
 pub struct QueueLog {
-    pub segments: RwLock<BTreeMap<i64, LogSegment>>,
-    pub topic_partition: TopicPartition,
-    pub log_start_offset: i64,
-    pub recover_point: AtomicCell<i64>,
-    pub last_offset: AtomicCell<i64>,
-    pub index_file_max_size: u32,
+    /// Map of segment base offsets to read-only segments
+    segments: DashMap<i64, Arc<ReadOnlyLogSegment>>,
+
+    /// Ordered set of segment base offsets
+    /// Write lock only needed when adding new segments
+    segments_order: RwLock<BTreeSet<i64>>,
+
+    /// Currently active segment for writing
+    active_segment: RwLock<ActiveLogSegment>,
+
+    /// Base offset of the active segment
+    active_segment_id: AtomicCell<i64>,
+
+    /// Topic partition this log belongs to
+    topic_partition: TopicPartition,
+
+    /// First valid offset in the log
+    log_start_offset: i64,
+
+    /// Last known valid offset (for recovery)
+    recover_point: AtomicCell<i64>,
+
+    /// Last offset in the log
+    last_offset: AtomicCell<i64>,
+
+    /// Maximum size of index files
+    index_file_max_size: usize,
 }
 
 impl Hash for QueueLog {
@@ -38,41 +87,78 @@ impl PartialEq for QueueLog {
 impl Eq for QueueLog {}
 
 impl QueueLog {
-    /// Creates a new QueueLog instance.
+    /// Creates a new empty queue log
     ///
     /// # Arguments
     ///
-    /// * `topic_partition` - The topic partition for this log.
-    /// * `segments` - A BTreeMap of existing log segments.
-    /// * `log_start_offset` - The starting offset for this log.
-    /// * `recovery_offset` - The recovery point offset.
+    /// * `topic_partition` - The topic partition this log belongs to
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the new `QueueLog` instance on success.
-    pub async fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
-        let dir = topic_partition.queue_partition_dir();
+    /// A new QueueLog instance or an error if creation fails
+    pub fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
+        let dir = topic_partition.partition_dir();
+        Self::ensure_dir_exists(&dir)?;
 
-        if !Path::new(&dir).exists() {
+        let index_file_max_size = global_config().log.queue_index_file_size;
+        let active_segment = ActiveLogSegment::new(topic_partition, 0, index_file_max_size)?;
+
+        Ok(Self {
+            topic_partition: topic_partition.clone(),
+            segments: DashMap::new(),
+            segments_order: RwLock::new(BTreeSet::new()),
+            active_segment: RwLock::new(active_segment),
+            active_segment_id: AtomicCell::new(0),
+            log_start_offset: INIT_LOG_START_OFFSET,
+            recover_point: AtomicCell::new(INIT_RECOVER_POINT),
+            last_offset: AtomicCell::new(INIT_LAST_OFFSET),
+            index_file_max_size,
+        })
+    }
+
+    /// Opens an existing queue log
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition
+    /// * `segments` - Existing read-only segments
+    /// * `active_segment` - The active segment for writing
+    /// * `log_start_offset` - First valid offset
+    /// * `recover_point` - Recovery point offset
+    /// * `last_offset` - Last offset in the log
+    pub fn open(
+        topic_partition: &TopicPartition,
+        segments: BTreeMap<i64, ReadOnlyLogSegment>,
+        active_segment: ActiveLogSegment,
+        log_start_offset: i64,
+        recover_point: i64,
+        last_offset: i64,
+    ) -> AppResult<Self> {
+        let index_file_max_size = global_config().log.queue_index_file_size as usize;
+        let segments_order = segments.keys().cloned().collect();
+        let active_segment_id = active_segment.base_offset();
+
+        Ok(Self {
+            topic_partition: topic_partition.clone(),
+            segments: DashMap::from_iter(segments.into_iter().map(|(k, v)| (k, Arc::new(v)))),
+            segments_order: RwLock::new(segments_order),
+            active_segment: RwLock::new(active_segment),
+            active_segment_id: AtomicCell::new(active_segment_id),
+            log_start_offset,
+            recover_point: AtomicCell::new(recover_point),
+            last_offset: AtomicCell::new(last_offset),
+            index_file_max_size,
+        })
+    }
+
+    /// Ensures the directory exists, creating it if necessary
+    fn ensure_dir_exists(dir: &str) -> AppResult<()> {
+        if !Path::new(dir).exists() {
             info!("log dir does not exists, create queue log dir:{}", dir);
-            std::fs::create_dir_all(&dir).map_err(|e| {
+            std::fs::create_dir_all(dir).map_err(|e| {
                 AppError::DetailedIoError(format!("create queue log dir: {} error: {}", dir, e))
             })?;
         }
-
-        let mut segments = BTreeMap::new();
-
-        let index_file_max_size = global_config().log.queue_index_file_size as u32;
-        let segment = LogSegment::new(topic_partition, &dir, 0, index_file_max_size).await?;
-        segments.insert(0, segment);
-
-        Ok(QueueLog {
-            topic_partition: topic_partition.clone(),
-            segments: RwLock::new(segments),
-            log_start_offset: 0,
-            recover_point: AtomicCell::new(-1),
-            last_offset: AtomicCell::new(0),
-            index_file_max_size,
-        })
+        Ok(())
     }
 }

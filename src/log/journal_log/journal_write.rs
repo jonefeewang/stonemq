@@ -1,93 +1,206 @@
-use std::path::PathBuf;
+//! Write operations for journal logs.
+//!
+//! This module provides functionality for appending records to journal logs,
+//! including metadata management and segment rolling.
 
+use std::sync::Arc;
+use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
     global_config,
-    log::{log_segment::LogSegment, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME},
+    log::{
+        file_writer::{FlushRequest, JournalLogWriteOp},
+        log_segment::{ActiveLogSegment, LogSegmentCommon},
+        LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME, FILE_WRITER,
+    },
     message::{MemoryRecords, RecordBatch, TopicPartition},
-    AppError, AppResult,
+    AppResult,
 };
 
 use super::JournalLog;
 
 impl JournalLog {
-    /// 追加记录到日志。
+    /// Appends records to the journal log.
     ///
-    /// # 参数
+    /// This method handles the complete process of appending records:
+    /// 1. Adds metadata to the records
+    /// 2. Creates a write operation
+    /// 3. Writes the records to the active segment
+    /// 4. Updates necessary offsets and indexes
     ///
-    /// * `records` - 包含主题分区和要追加的内存记录的元组。
+    /// # Arguments
     ///
-    /// # 返回
+    /// * `memory_records` - The records to append
+    /// * `queue_topic_partition` - The topic partition these records belong to
+    /// * `reply_sender` - Channel sender for sending the append result
     ///
-    /// 返回包含追加操作信息的 `AppResult<LogAppendInfo>`。
+    /// # Note
+    ///
+    /// This method is async and handles its own error reporting through the reply_sender.
     pub async fn append_records(
         &self,
-        records: (TopicPartition, MemoryRecords),
-    ) -> AppResult<LogAppendInfo> {
-        let (queue_topic_partition, mut memory_records) = records;
+        mut memory_records: MemoryRecords,
+        queue_topic_partition: TopicPartition,
+        reply_sender: oneshot::Sender<AppResult<LogAppendInfo>>,
+    ) {
+        // Add metadata and validate records
+        let log_append_info = match self
+            .process_append_request(&mut memory_records, &queue_topic_partition)
+            .await
+        {
+            Ok(info) => info,
+            Err(e) => {
+                reply_sender.send(Err(e)).unwrap();
+                return;
+            }
+        };
 
-        // 分解为record batch
-        let mut record_batches = vec![];
-        for batch in &mut memory_records {
-            record_batches.push(batch);
+        // Create and execute write operation
+        let journal_log_write_op = JournalLogWriteOp {
+            journal_offset: self.next_offset.load(),
+            topic_partition: self.topic_partition.clone(),
+            queue_topic_partition,
+            first_batch_queue_base_offset: log_append_info.first_offset,
+            last_batch_queue_base_offset: log_append_info.last_offset,
+            records_count: log_append_info.records_count,
+            records: memory_records,
+            segment_base_offset: self.active_segment_id.load(),
+        };
+
+        if let Err(e) = FILE_WRITER.append_journal(journal_log_write_op).await {
+            reply_sender.send(Err(e)).unwrap();
+            return;
         }
 
-        let _write_guard = self.write_lock.lock().await; // 获取写锁以进行原子追加操作
+        // Update offsets and send success response
+        self.next_offset.fetch_add(1);
+        reply_sender.send(Ok(log_append_info)).unwrap();
+    }
 
+    /// Process append request
+    /// Adds metadata to records and validates them.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_records` - Records to process
+    /// * `queue_topic_partition` - Associated topic partition
+    ///
+    /// # Returns
+    ///
+    /// Returns information about the append operation if successful
+    async fn process_append_request(
+        &self,
+        memory_records: &mut MemoryRecords,
+        queue_topic_partition: &TopicPartition,
+    ) -> AppResult<LogAppendInfo> {
+        // Extract record batches
+        let record_batches = memory_records.into_iter().collect::<Vec<_>>();
+
+        // Validate and assign offsets
         let log_append_info = self.validate_records_and_assign_queue_offset(
-            &queue_topic_partition,
+            queue_topic_partition,
             record_batches,
-            &mut memory_records,
+            memory_records,
         )?;
 
-        {
-            let dashmap_value = self
-                .queue_next_offset_info
-                .get(&queue_topic_partition)
-                .unwrap();
+        // Log debug information
+        if let Some(offset_info) = self.queue_next_offset_info.get(queue_topic_partition) {
             trace!(
-                "topic partition: {} append_records 结束offset: {},dashmap中的topic partition entry value: {:?}",
+                "topic_partition={} append_complete next_offset={} entry_value={:?}",
                 queue_topic_partition.id(),
                 self.next_offset.load(),
-                *dashmap_value
+                *offset_info
             );
         }
 
-        let (active_seg_size, active_segment_offset_index_full) =
-            self.get_active_segment_info().await?;
+        // Check if segment rolling is needed
+        let (active_seg_size, active_segment_offset_index_full) = {
+            let active_seg = self.active_segment.read();
+            (active_seg.size() as u32, active_seg.offset_index_full())
+        };
 
-        if self
-            .need_roll(
-                active_seg_size,
-                &memory_records,
-                active_segment_offset_index_full,
-            )
-            .await
-        {
-            self.roll_segment().await?;
+        if self.need_roll(
+            active_seg_size,
+            memory_records,
+            active_segment_offset_index_full,
+        ) {
+            self.roll_active_segment(memory_records).await?;
         }
 
-        self.append_to_active_segment(
-            queue_topic_partition.clone(),
-            log_append_info.first_offset,
-            log_append_info.last_offset,
-            log_append_info.records_count,
-            memory_records,
-        )
-        .await?;
-
-        // 追加一个批次，偏移量加1
-        self.next_offset.fetch_add(1);
-
-        // self.update_offsets(queue_topic_partition.clone(), log_append_info.records_count)
-        //     .await;
-
-        drop(_write_guard);
+        // Update active segment metadata
+        {
+            self.active_segment.write().update_metadata(
+                memory_records.size(),
+                log_append_info.first_offset,
+                LogType::Journal,
+            )?;
+        }
 
         Ok(log_append_info)
     }
 
+    /// Rolls the active segment to a new one.
+    ///
+    /// This method handles the process of creating a new segment and
+    /// transitioning the current active segment to a read-only state.
+    async fn roll_active_segment(&self, memory_records: &MemoryRecords) -> AppResult<()> {
+        let new_base_offset = self.next_offset.load();
+
+        // Create new segment
+        let new_seg = ActiveLogSegment::new(
+            &self.topic_partition,
+            new_base_offset,
+            global_config().log.journal_segment_size as usize,
+        )?;
+
+        // Swap active segment
+        let old_segment = {
+            let mut active_seg = self.active_segment.write();
+            std::mem::replace(&mut *active_seg, new_seg)
+        };
+
+        let old_base_offset = old_segment.base_offset();
+        let readonly_seg = old_segment.into_readonly()?;
+        self.segments
+            .insert(old_base_offset, Arc::new(readonly_seg));
+
+        // Flush old segment
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: old_base_offset,
+        };
+        FILE_WRITER.flush(request).await?;
+
+        // Update metadata
+        self.recover_point.store(self.next_offset.load() - 1);
+        {
+            let mut segments = self.segments_order.write();
+            segments.insert(new_base_offset);
+        }
+        self.active_segment_id.store(new_base_offset);
+
+        debug!(
+            "Rolled segment: size={}, config_size={}, index_full={}",
+            memory_records.size(),
+            global_config().log.journal_segment_size,
+            true
+        );
+
+        Ok(())
+    }
+
+    /// Validates records and assigns queue offsets.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_topic_partition` - Topic partition for the queue
+    /// * `record_batches` - Record batches to process
+    /// * `memory_records` - Memory records to update
+    ///
+    /// # Returns
+    ///
+    /// Returns append information if validation succeeds
     fn validate_records_and_assign_queue_offset(
         &self,
         queue_topic_partition: &TopicPartition,
@@ -98,14 +211,15 @@ impl JournalLog {
         let mut offset_of_max_timestamp = -1i64;
         let mut first_offset = -1i64;
         let mut last_offset = -1i64;
-        let mut records_count: u32 = 0;
+        let mut records_count = 0u32;
+
         let mut queue_next_offset = self
             .queue_next_offset_info
             .entry(queue_topic_partition.clone())
             .or_insert(0);
 
         trace!(
-            "validate_records_and_assign_offset 开始offset: {}, topic partition: {}",
+            "validate_records start: next_offset={}, topic_partition={}",
             *queue_next_offset,
             queue_topic_partition.id()
         );
@@ -113,35 +227,39 @@ impl JournalLog {
         if first_offset == -1 {
             first_offset = *queue_next_offset;
         }
+
+        // Process each batch
         for mut batch in record_batches {
-            let _ = &batch.validate_batch()?;
-            let records = batch.records();
-            for record in records {
-                // todo: validate records
+            batch.validate_batch()?;
+
+            // Process records in batch
+            for record in batch.records() {
                 records_count += 1;
                 *queue_next_offset += 1;
-                let record_time_stamp = batch.base_timestamp() + record.timestamp_delta;
-                if record_time_stamp > max_timestamp {
-                    max_timestamp = record_time_stamp;
+
+                let record_timestamp = batch.base_timestamp() + record.timestamp_delta;
+                if record_timestamp > max_timestamp {
+                    max_timestamp = record_timestamp;
                     offset_of_max_timestamp = *queue_next_offset;
                 }
             }
 
             batch.set_base_offset(*queue_next_offset - batch.last_offset_delta() as i64 - 1);
             last_offset = batch.base_offset();
-            // batch.set_first_timestamp(max_timestamp);
+
             trace!(
-                "batch xxx topic partition: {}, base_offset: {}, queue_next_offset: {}",
+                "batch: topic_partition={}, base_offset={}, next_offset={}",
                 queue_topic_partition.id(),
                 batch.base_offset(),
                 *queue_next_offset
             );
+
             batch.unsplit(memory_records);
         }
 
         trace!(
-            "validate_records_and_assign_offset 结束offset:{:?}",
-            *queue_next_offset,
+            "validate_records complete: next_offset={}",
+            *queue_next_offset
         );
 
         Ok(LogAppendInfo {
@@ -154,50 +272,37 @@ impl JournalLog {
         })
     }
 
-    /// 将活动段刷新到磁盘。
+    /// Flushes the active segment to disk.
     ///
-    /// # 参数
-    ///
-    /// * `active_segment` - 要刷新的活动 `LogSegment`。
-    ///
-    /// # 返回
-    ///
-    /// 返回 `AppResult<()>` 表示成功或失败。
+    /// This method ensures all data in the active segment is written to disk
+    /// and updates the recovery point.
     pub async fn flush(&self) -> AppResult<()> {
-        let segments = self.segments.read().await; // 获取读锁以进行并发读取
-        let active_seg = segments
-            .values()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
-        self.flush_segment(active_seg).await?;
-        Ok(())
-    }
+        self.active_segment.write().flush_index()?;
 
-    async fn flush_segment(&self, active_seg: &LogSegment) -> AppResult<()> {
-        active_seg.flush().await?;
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: self.active_segment_id.load(),
+        };
+        FILE_WRITER.flush(request).await?;
+
         self.recover_point.store(self.next_offset.load() - 1);
+
         debug!(
-            "topic partition: {} flush_segment 结束offset: {},recover_point: {}",
+            "Flushed segment: topic_partition={} offset={} recover_point={}",
             self.topic_partition.id(),
             self.next_offset.load(),
             self.recover_point.load()
         );
+
         Ok(())
     }
 
-    /// 判断是否需要滚动到新的日志段。
+    /// Checks if the active segment needs to be rolled.
     ///
-    /// # 参数
+    /// # Returns
     ///
-    /// * `topic_partition` - 主题分区。
-    /// * `active_seg_size` - 活动段的大小。
-    /// * `memory_records` - 要追加的内存记录。
-    /// * `active_segment_offset_index_full` - 活动段的偏移索引是否已满。
-    ///
-    /// # 返回
-    ///
-    /// 返回一个布尔值，指示是否需要滚动。
-    async fn need_roll(
+    /// Returns true if the segment should be rolled, false otherwise
+    fn need_roll(
         &self,
         active_seg_size: u32,
         memory_records: &MemoryRecords,
@@ -208,96 +313,16 @@ impl JournalLog {
             + memory_records.size() as u32
             + active_seg_size;
 
-        let condition =
+        let should_roll =
             total_size >= config.journal_segment_size as u32 || active_segment_offset_index_full;
-        if condition {
+
+        if should_roll {
             debug!(
-                "roll segment total_size: {},config size: {}, active_seg_index_full: {}",
+                "Rolling segment: total_size={}, config_size={}, index_full={}",
                 total_size, config.journal_segment_size, active_segment_offset_index_full
             );
         }
-        condition
-    }
 
-    /// 滚动到新的日志段。
-    ///
-    /// # 返回
-    ///
-    /// 返回 `AppResult<()>` 表示成功或失败。
-    async fn roll_segment(&self) -> AppResult<()> {
-        let mut segments = self.segments.write().await; // 获取写锁以进行原子滚动操作
-        let (_, active_seg) = segments
-            .iter_mut()
-            .next_back()
-            .ok_or_else(|| self.no_active_segment_error())?;
-
-        self.flush_segment(active_seg).await?;
-
-        let new_base_offset = self.next_offset.load();
-        let index_file_dir = PathBuf::from(self.topic_partition.journal_partition_dir());
-        let new_seg = LogSegment::new(
-            &self.topic_partition,
-            index_file_dir,
-            new_base_offset,
-            self.index_file_max_size,
-        )
-        .await?;
-
-        segments.insert(new_base_offset, new_seg);
-        debug!("journal log roll segment: {}", new_base_offset);
-        Ok(())
-    }
-
-    /// 将记录追加到活动段。
-    ///
-    /// # 参数
-    ///
-    /// * `topic_partition` - 主题分区。
-    /// * `memory_records` - 要追加的内存记录。
-    ///
-    /// # 返回
-    ///
-    /// 返回 `AppResult<()>` 表示成功或失败。
-    async fn append_to_active_segment(
-        &self,
-        queue_topic_partition: TopicPartition,
-        first_offset: i64,
-        last_offset: i64,
-        records_count: u32,
-        memory_records: MemoryRecords,
-    ) -> AppResult<()> {
-        let mut segments = self.segments.write().await; // 获取读锁以进行并发读取
-        let active_seg = segments.values_mut().next_back().ok_or_else(|| {
-            AppError::IllegalStateError(format!(
-                "active segment not found for topic partition: {}",
-                self.topic_partition.id()
-            ))
-        })?;
-        active_seg
-            .append_record(
-                LogType::Journal,
-                (
-                    self.next_offset.load(),
-                    queue_topic_partition,
-                    first_offset,
-                    last_offset,
-                    records_count,
-                    memory_records,
-                ),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// 生成未找到活动段的错误。
-    ///
-    /// # 返回
-    ///
-    /// 返回一个 `AppError` 表示未找到活动段。
-    pub fn no_active_segment_error(&self) -> AppError {
-        AppError::IllegalStateError(format!(
-            "no active segment, topic partition: {}",
-            self.topic_partition.id()
-        ))
+        should_roll
     }
 }

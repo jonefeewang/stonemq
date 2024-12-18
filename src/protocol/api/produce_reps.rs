@@ -121,7 +121,7 @@ impl ProduceResponse {
         let mut topic_responses_map: HashMap<String, Vec<PartitionResponse>> = HashMap::new();
         for (key, value) in self.responses.into_iter() {
             topic_responses_map
-                .entry(key.topic)
+                .entry(key.topic().to_string())
                 .or_default()
                 .push(value);
         }

@@ -1,9 +1,13 @@
 mod delayed_async_operation;
 mod mini_kv_db;
+mod multiple_channel_worker_pool;
+mod worker_pool;
 
 use crossbeam::atomic::AtomicCell;
 pub use mini_kv_db::KvStore;
 pub use mini_kv_db::{JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST};
+pub use multiple_channel_worker_pool::MultipleChannelWorkerPool;
+pub use multiple_channel_worker_pool::WorkerPoolConfig;
 
 use dashmap::DashMap;
 use std::future::Future;

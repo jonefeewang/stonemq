@@ -68,11 +68,11 @@ impl ReplicaManager {
         Ok(read_result)
     }
 
-    pub async fn get_leo_info(&self, tp: &TopicPartition) -> AppResult<PositionInfo> {
+    pub fn get_leo_info(&self, tp: &TopicPartition) -> AppResult<PositionInfo> {
         let queue_partition = self.all_queue_partitions.get(tp).unwrap();
         let queue_partition_clone = queue_partition.clone();
         drop(queue_partition);
-        let leo_info = queue_partition_clone.get_leo_info().await?;
+        let leo_info = queue_partition_clone.get_leo_info()?;
         Ok(leo_info)
     }
 }
