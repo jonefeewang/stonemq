@@ -229,7 +229,7 @@ impl QueueLog {
     async fn read_file_chunk(&self, mut file: File, size: usize) -> AppResult<BytesMut> {
         tokio::task::spawn_blocking(move || {
             let mut buffer = BytesMut::zeroed(size);
-            file.read(&mut buffer)?;
+            file.read_exact(&mut buffer)?;
             Ok(buffer)
         })
         .await

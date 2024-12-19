@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
-use stonemq::CheckPointFile;
 use stonemq::MemoryRecords;
 use stonemq::{AppError, AppResult};
+use stonemq::{CheckPointFile, LogType};
 
 #[derive(Parser)]
 #[command(version)]
@@ -250,7 +250,7 @@ async fn parse_checkpoint(file: &PathBuf) -> AppResult<()> {
     println!("解析检查点文件: {:?}", file);
 
     let checkpoint = CheckPointFile::new(file.to_str().unwrap());
-    let points = checkpoint.read_checkpoints().await?;
+    let points = checkpoint.read_checkpoints(LogType::Journal)?;
     println!("检查点文件解析结果: {:?}", points);
 
     Ok(())

@@ -6,22 +6,15 @@ use bytes::{Buf, BytesMut};
 
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::{self, File};
-use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
 use tracing::{debug, error, instrument, trace};
 
 use super::queue_log::QueueLog;
 
-/// Splitter的读取和消费的读取还不太一样
-/// 1.Splitter的读取是一个读取者，而且连续的读取，所以针对一个journal log 最好每个splitter任务自己维护一个ReadBuffer
-/// 而不需要通过FileRecord来读取，自己只要知道从哪个segment开始读取即可，然后读取到哪个位置，然后读取下一个segment
-/// 2.消费的读取是多个并发读取者，而且不连续的数据.可以维护一个BufReader pool，然后读取者从pool中获取一个BufReader
-/// .比如最热active segment, 可能有多个BufReader，而其他segment可能只有一个BufReader
 #[derive(Debug)]
 pub struct SplitterTask {
     journal_log: Arc<JournalLog>,
@@ -127,7 +120,7 @@ impl SplitterTask {
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
             .join(self.topic_partition.id());
         let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
-        let journal_seg_file = std::fs::File::open(&segment_path).await?;
+        let journal_seg_file = std::fs::File::open(&segment_path)?;
 
         debug!(
             "开始读取一个segment{:?} ref:  {:?}, target offset: {}",
@@ -135,7 +128,7 @@ impl SplitterTask {
         );
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
-        let (mut journal_seg_file, current_position) = crate::log::seek(
+        let (_, mut current_position) = crate::log::seek(
             journal_seg_file,
             target_offset,
             position_info,
@@ -150,7 +143,7 @@ impl SplitterTask {
                 return Ok(());
             }
             let ret = tokio::select! {
-                read_result = self.read_batch(&mut journal_seg_file) => read_result,
+                read_result = self.read_batch(&mut current_position) => read_result,
                 _ = shutdown.recv() => {
                     return Ok(());
                 }
@@ -210,12 +203,27 @@ impl SplitterTask {
 
     async fn read_batch(
         &self,
-        file: &mut std::fs::File,
+        position_info: &PositionInfo,
     ) -> AppResult<(i64, TopicPartition, i64, i64, u32, MemoryRecords)> {
-        let batch_size = file.read_u32().await?;
-        let mut buf = BytesMut::zeroed(batch_size as usize);
-        // 这里有可能会报读到EOF错误，然后返回
-        file.read_exact(&mut buf).await?;
+        let file_name = format!(
+            "{}/{}.log",
+            self.topic_partition.partition_dir(),
+            position_info.base_offset
+        );
+        let mut buf = tokio::task::spawn_blocking({
+            move || -> io::Result<BytesMut> {
+                let mut file = std::fs::File::open(file_name)?;
+                let mut buffer = [0u8; 4];
+                file.read_exact(&mut buffer)?;
+                let batch_size = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+                let mut buf = BytesMut::zeroed(batch_size as usize);
+                // 这里有可能会报读到EOF错误，然后返回
+                file.read_exact(&mut buf)?;
+                Ok(buf)
+            }
+        })
+        .await
+        .map_err(|e| AppError::DetailedIoError(format!("Failed to read file: {}", e)))??;
 
         let (
             journal_offset,

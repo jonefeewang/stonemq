@@ -9,6 +9,7 @@ mod service;
 mod utils;
 
 pub use log::CheckPointFile;
+pub use log::LogType;
 pub use message::MemoryRecords;
 pub use service::LogMode;
 pub use service::GLOBAL_CONFIG;

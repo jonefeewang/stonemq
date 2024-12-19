@@ -161,22 +161,18 @@ impl Display for TopicPartition {
 impl TopicPartition {
     #[inline]
     fn parse_topic_partition(tp_str: &str) -> Option<(String, i32)> {
-        let re = Regex::new(PARTITION_DIR_NAME_PATTERN).ok()?;
-
-        re.captures(tp_str).and_then(|captures| {
-            let topic = captures.get(1)?.as_str().to_string();
-            let partition = captures.get(2)?.as_str().parse().ok()?;
-            Some((topic, partition))
-        })
+        let last_hyphen_idx = tp_str.rfind('-')?;
+        let (topic, partition_str) = tp_str.split_at(last_hyphen_idx);
+        let partition = partition_str[1..].parse::<i32>().ok()?;
+        Some((topic.to_string(), partition))
     }
     #[inline]
     pub fn from_str(tp_str: &str, log_type: LogType) -> AppResult<Self> {
         let (topic, partition) = Self::parse_topic_partition(tp_str).ok_or_else(|| {
             AppError::InvalidValue(format!("invalid topic partition  name: {}", tp_str))
         })?;
-
         Ok(Self {
-            topic,
+            topic: topic.to_string(),
             partition,
             log_type,
         })
