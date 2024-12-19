@@ -128,7 +128,7 @@ impl SplitterTask {
         );
 
         // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
-        let (_, mut current_position) = crate::log::seek(
+        let (_, current_position) = crate::log::seek(
             journal_seg_file,
             target_offset,
             position_info,
@@ -143,7 +143,7 @@ impl SplitterTask {
                 return Ok(());
             }
             let ret = tokio::select! {
-                read_result = self.read_batch(&mut current_position) => read_result,
+                read_result = self.read_batch(& current_position) => read_result,
                 _ = shutdown.recv() => {
                     return Ok(());
                 }

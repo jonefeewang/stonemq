@@ -1,6 +1,6 @@
 mod file_info;
 mod file_request;
-mod file_writer;
+mod active_log_file_writer;
 
 use crate::message::TopicPartition;
 use async_channel::Sender;

@@ -67,9 +67,6 @@ pub struct QueueLog {
 
     /// Last offset in the log
     last_offset: AtomicCell<i64>,
-
-    /// Maximum size of index files
-    index_file_max_size: usize,
 }
 
 impl Hash for QueueLog {
@@ -112,7 +109,6 @@ impl QueueLog {
             log_start_offset: INIT_LOG_START_OFFSET,
             recover_point: AtomicCell::new(INIT_RECOVER_POINT),
             last_offset: AtomicCell::new(INIT_LAST_OFFSET),
-            index_file_max_size,
         })
     }
 
@@ -134,7 +130,6 @@ impl QueueLog {
         recover_point: i64,
         last_offset: i64,
     ) -> AppResult<Self> {
-        let index_file_max_size = global_config().log.queue_index_file_size as usize;
         let segments_order = segments.keys().cloned().collect();
         let active_segment_id = active_segment.base_offset();
 
@@ -147,7 +142,6 @@ impl QueueLog {
             log_start_offset,
             recover_point: AtomicCell::new(recover_point),
             last_offset: AtomicCell::new(last_offset),
-            index_file_max_size,
         })
     }
 

@@ -1,4 +1,4 @@
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -45,15 +45,11 @@ impl FileInfo {
         let path = self.path.clone();
 
         let written_size = tokio::task::spawn_blocking(move || -> io::Result<u64> {
-            let file = std::fs::OpenOptions::new()
+            let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)?;
-
-            let mut writer = BufWriter::with_capacity(64 * 1024, file);
-            writer.write_all(&buffer)?;
-            writer.flush()?;
-
+            file.write_all(&buffer)?;
             Ok(buffer.len() as u64)
         })
         .await??;
@@ -68,18 +64,15 @@ impl FileInfo {
         let path = self.path.clone();
 
         tokio::task::spawn_blocking(move || -> io::Result<()> {
-            let file = std::fs::OpenOptions::new()
+            let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)?;
-
-            let mut writer = BufWriter::with_capacity(64 * 1024, file);
-            writer.write_all(msg.as_ref())?;
-            writer.flush()?;
+            file.write_all(msg.as_ref())?;
 
             Ok(())
         })
-        .await?;
+        .await??;
 
         self.size.fetch_add(total_write as u64, Ordering::Release);
         Ok(())
@@ -91,12 +84,12 @@ impl FileInfo {
         tokio::task::spawn_blocking(move || -> io::Result<()> {
             let file = std::fs::OpenOptions::new()
                 .create(true)
-                .write(true)
+                .append(true)
                 .open(path)?;
             file.sync_all()?;
             Ok(())
         })
-        .await?;
+        .await??;
 
         Ok(self.size.load(Ordering::Acquire))
     }

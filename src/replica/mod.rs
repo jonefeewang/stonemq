@@ -28,33 +28,21 @@ use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct JournalReplica {
-    pub broker_id: i32,
-    pub topic_partition: TopicPartition,
     pub log: Arc<JournalLog>,
 }
 
 impl JournalReplica {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<JournalLog>) -> Self {
-        Self {
-            broker_id,
-            topic_partition,
-            log,
-        }
+    pub fn new(log: Arc<JournalLog>) -> Self {
+        Self { log }
     }
 }
 #[derive(Debug)]
 pub struct QueueReplica {
-    pub broker_id: i32,
-    pub topic_partition: TopicPartition,
     pub log: Arc<QueueLog>,
 }
 impl QueueReplica {
-    pub fn new(broker_id: i32, topic_partition: TopicPartition, log: Arc<QueueLog>) -> Self {
-        Self {
-            broker_id,
-            topic_partition,
-            log,
-        }
+    pub fn new(log: Arc<QueueLog>) -> Self {
+        Self { log }
     }
 }
 

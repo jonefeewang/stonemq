@@ -70,7 +70,6 @@ impl JournalLog {
             last_batch_queue_base_offset: log_append_info.last_offset,
             records_count: log_append_info.records_count,
             records: memory_records,
-            segment_base_offset: self.active_segment_id.load(),
         };
 
         if let Err(e) = ACTIVE_LOG_FILE_WRITER
@@ -158,7 +157,6 @@ impl JournalLog {
         // Flush old segment
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
-            segment_base_offset: self.active_segment_id.load(),
         };
         ACTIVE_LOG_FILE_WRITER.flush(request).await?;
         self.active_segment.write().flush_index()?;
@@ -287,7 +285,6 @@ impl JournalLog {
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
-            segment_base_offset: self.active_segment_id.load(),
         };
         ACTIVE_LOG_FILE_WRITER.flush(request).await?;
 

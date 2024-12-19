@@ -28,7 +28,7 @@ impl QueueLog {
         records: (i64, TopicPartition, i64, i64, u32, MemoryRecords),
     ) -> AppResult<LogAppendInfo> {
         let (
-            journal_offset,
+            _,
             topic_partition,
             first_batch_queue_base_offset,
             last_batch_queue_base_offset,
@@ -58,14 +58,7 @@ impl QueueLog {
         self.update_active_segment_metadata(&memory_records, log_append_info.first_offset)?;
 
         // execute write operation
-        self.execute_write_operation(
-            journal_offset,
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
-            memory_records,
-        )
-        .await?;
+        self.execute_write_operation(memory_records).await?;
 
         // update last offset
         self.update_last_offset(log_append_info.first_offset, records_count);
@@ -100,7 +93,6 @@ impl QueueLog {
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
-            segment_base_offset: self.active_segment_id.load(),
         };
         ACTIVE_LOG_FILE_WRITER.flush(request).await?;
         self.active_segment.write().flush_index()?;
@@ -162,22 +154,10 @@ impl QueueLog {
     }
 
     /// execute write operation
-    async fn execute_write_operation(
-        &self,
-        journal_offset: i64,
-        first_batch_queue_base_offset: i64,
-        last_batch_queue_base_offset: i64,
-        records_count: u32,
-        memory_records: MemoryRecords,
-    ) -> AppResult<()> {
+    async fn execute_write_operation(&self, memory_records: MemoryRecords) -> AppResult<()> {
         let queue_log_write_op = QueueFileWriteReq {
-            journal_offset,
             topic_partition: self.topic_partition.clone(),
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
             records: memory_records,
-            segment_base_offset: self.active_segment_id.load(),
         };
 
         ACTIVE_LOG_FILE_WRITER
@@ -205,7 +185,6 @@ impl QueueLog {
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
-            segment_base_offset: self.active_segment_id.load(),
         };
         ACTIVE_LOG_FILE_WRITER.flush(request).await?;
 

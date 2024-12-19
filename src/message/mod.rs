@@ -1,7 +1,6 @@
 mod batch_header;
 mod constants;
 mod memory_records;
-mod offset;
 mod record;
 mod record_batch;
 mod record_batch_test;
@@ -21,4 +20,3 @@ pub struct LogFetchInfo {
     pub log_end_offset: i64,
     pub position_info: PositionInfo,
 }
-const PARTITION_DIR_NAME_PATTERN: &str = r"^(?=.*[a-z].*)([^-]*)-(-?\d+)$";

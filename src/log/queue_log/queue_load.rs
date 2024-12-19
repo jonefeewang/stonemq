@@ -29,19 +29,22 @@ impl QueueLog {
         let (segments, active_segment) = Self::load_segments(topic_partition, index_file_max_size)?;
 
         if active_segment.is_none() {
-            return Ok(Self::new(topic_partition)?);
+            let log = Self::new(topic_partition)?;
+            return Ok(log);
         }
 
         let log_start_offset = Self::determine_start_offset(&segments, &active_segment);
 
-        Ok(QueueLog::open(
+        let log = QueueLog::open(
             topic_partition,
             segments,
             active_segment.unwrap(),
             log_start_offset,
             recover_point,
             recover_point,
-        )?)
+        )?;
+
+        Ok(log)
     }
 
     /// Determines the starting offset for the log
@@ -211,12 +214,7 @@ impl QueueLog {
         index_path: &str,
     ) -> AppResult<ReadOnlyLogSegment> {
         let index_file = ReadOnlyIndexFile::new(index_path)?;
-        Ok(ReadOnlyLogSegment::open(
-            topic_partition,
-            base_offset,
-            index_file,
-            None,
-        ))
+        Ok(ReadOnlyLogSegment::open(topic_partition, base_offset, index_file))
     }
 }
 
@@ -260,7 +258,6 @@ mod tests {
                 &TopicPartition::new("test", 0, crate::log::LogType::Queue),
                 50,
                 ReadOnlyIndexFile::new("dummy").unwrap(),
-                None,
             ),
         );
 

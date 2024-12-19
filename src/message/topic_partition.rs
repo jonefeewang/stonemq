@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use regex::Regex;
+
 use tracing::trace;
 
 use crate::log::{LogAppendInfo, LogType, PositionInfo};
@@ -11,7 +11,7 @@ use crate::replica::{AppendJournalLogReq, JournalReplica, QueueReplica};
 use crate::utils::MultipleChannelWorkerPool;
 use crate::{global_config, AppError, AppResult};
 
-use super::{LogFetchInfo, PARTITION_DIR_NAME_PATTERN};
+use super::LogFetchInfo;
 
 #[derive(Debug)]
 pub struct JournalPartition {

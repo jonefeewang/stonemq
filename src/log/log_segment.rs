@@ -7,7 +7,7 @@ use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use tracing::trace;
 
-use super::{ACTIVE_LOG_FILE_WRITER, LogType, INDEX_FILE_SUFFIX};
+use super::{LogType, ACTIVE_LOG_FILE_WRITER, INDEX_FILE_SUFFIX};
 
 /// 定义日志段的公共行为
 pub trait LogSegmentCommon {
@@ -41,7 +41,6 @@ pub trait LogSegmentCommon {
 pub struct ReadOnlyLogSegment {
     topic_partition: TopicPartition,
     base_offset: i64,
-    time_index: Option<ReadOnlyIndexFile>,
     offset_index: ReadOnlyIndexFile,
 }
 
@@ -49,7 +48,6 @@ pub struct ReadOnlyLogSegment {
 pub struct ActiveLogSegment {
     topic_partition: TopicPartition,
     base_offset: i64,
-    time_index: Option<WritableIndexFile>,
     offset_index: WritableIndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
 }
@@ -71,7 +69,15 @@ impl LogSegmentCommon for ReadOnlyLogSegment {
     }
 
     fn size(&self) -> u64 {
-        ACTIVE_LOG_FILE_WRITER.active_segment_size(&self.topic_partition)
+        let segment_path = PathBuf::from(self.topic_partition.partition_dir())
+            .join(format!("{}.log", self.base_offset));
+        match File::open(&segment_path) {
+            Ok(file) => match file.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(_) => 0,
+            },
+            Err(_) => 0,
+        }
     }
 }
 
@@ -94,25 +100,11 @@ impl ReadOnlyLogSegment {
         topic_partition: &TopicPartition,
         base_offset: i64,
         offset_index: ReadOnlyIndexFile,
-        time_index: Option<ReadOnlyIndexFile>,
     ) -> Self {
         Self {
             topic_partition: topic_partition.clone(),
             base_offset,
             offset_index,
-            time_index,
-        }
-    }
-
-    fn size(&self) -> u64 {
-        let segment_path = PathBuf::from(self.topic_partition.partition_dir())
-            .join(format!("{}.log", self.base_offset));
-        match File::open(&segment_path) {
-            Ok(file) => match file.metadata() {
-                Ok(metadata) => metadata.len(),
-                Err(_) => 0,
-            },
-            Err(_) => 0,
         }
     }
 }
@@ -140,12 +132,11 @@ impl ActiveLogSegment {
         _time_index: Option<WritableIndexFile>,
     ) -> AppResult<Self> {
         // open log file
-        ACTIVE_LOG_FILE_WRITER.open_file(&topic_partition, base_offset)?;
+        ACTIVE_LOG_FILE_WRITER.open_file(topic_partition, base_offset)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
             base_offset,
-            time_index: None,
             offset_index,
             bytes_since_last_index_entry: AtomicCell::new(0),
         })
@@ -178,13 +169,6 @@ impl ActiveLogSegment {
                 self.bytes_since_last_index_entry.load()
             );
 
-            if let Some(time_index) = &self.time_index {
-                time_index.add_entry(
-                    (first_offset - self.base_offset) as u32,
-                    segment_size as u32,
-                )?;
-            }
-
             self.bytes_since_last_index_entry.store(0);
         }
         self.bytes_since_last_index_entry.fetch_add(records_size);
@@ -199,26 +183,17 @@ impl ActiveLogSegment {
     /// 将活动段转换为只读段
     pub fn into_readonly(self) -> AppResult<ReadOnlyLogSegment> {
         let readonly_offset_index = self.offset_index.into_readonly()?;
-        let readonly_time_index = match self.time_index {
-            Some(time_index) => Some(time_index.into_readonly()?),
-            None => None,
-        };
 
         Ok(ReadOnlyLogSegment {
             topic_partition: self.topic_partition,
             base_offset: self.base_offset,
             offset_index: readonly_offset_index,
-            time_index: readonly_time_index,
         })
     }
 
     pub fn flush_index(&mut self) -> AppResult<()> {
         // flush offset index
         self.offset_index.flush()?;
-        if let Some(time_index) = &self.time_index {
-            // flush time index
-            time_index.flush()?;
-        }
         Ok(())
     }
 }

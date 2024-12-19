@@ -10,22 +10,15 @@ pub struct JournalFileWriteReq {
     pub last_batch_queue_base_offset: i64,
     pub records_count: u32,
     pub records: MemoryRecords,
-    pub segment_base_offset: i64,
 }
 
 pub struct QueueFileWriteReq {
-    pub journal_offset: i64,
     pub topic_partition: TopicPartition,
-    pub first_batch_queue_base_offset: i64,
-    pub last_batch_queue_base_offset: i64,
-    pub records_count: u32,
     pub records: MemoryRecords,
-    pub segment_base_offset: i64,
 }
 
 pub struct FlushRequest {
     pub topic_partition: TopicPartition,
-    pub segment_base_offset: i64,
 }
 
 pub enum LogWriteRequest {

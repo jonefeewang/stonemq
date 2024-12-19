@@ -288,7 +288,7 @@ impl ReplicaManager {
                 .log_manager
                 .get_or_create_journal_log(&topic_partition)
                 .await?;
-            let replica = JournalReplica::new(broker_id, topic_partition.clone(), log);
+            let replica = JournalReplica::new(log);
             let partition = JournalPartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));
@@ -316,7 +316,7 @@ impl ReplicaManager {
                 .log_manager
                 .get_or_create_queue_log(&topic_partition)
                 .await?;
-            let replica = QueueReplica::new(broker_id, topic_partition.clone(), log);
+            let replica = QueueReplica::new(log);
             let partition = QueuePartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
             partitions.push((topic_partition, partition));
@@ -387,7 +387,7 @@ pub fn initialize_journal_partition_worker_pool(
     shutdown_complete_tx: Sender<()>,
 ) -> MultipleChannelWorkerPool<AppendJournalLogReq> {
     let config = WorkerPoolConfig::default();
-    let pool = MultipleChannelWorkerPool::new(
+    MultipleChannelWorkerPool::new(
         notify_shutdown.clone(),
         shutdown_complete_tx.clone(),
         move |request: AppendJournalLogReq| {
@@ -404,6 +404,5 @@ pub fn initialize_journal_partition_worker_pool(
             }
         },
         config,
-    );
-    pool
+    )
 }

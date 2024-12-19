@@ -5,7 +5,7 @@ use std::{
 };
 use tracing::{info, trace};
 
-use super::JournalLog;
+use super::{JournalLog, JournalLogMetadata};
 use crate::{
     log::{
         index_file::{ReadOnlyIndexFile, WritableIndexFile},
@@ -81,17 +81,21 @@ impl JournalLog {
             return JournalLog::new(topic_partition);
         }
 
+        let metadata = JournalLogMetadata {
+            queue_next_offset_info: DashMap::from_iter(queue_next_offset),
+            queue_next_offset_checkpoints: checkpoint_file,
+            log_start_offset,
+            next_offset: recover_point + 1,
+            recover_point,
+            split_offset,
+        };
+
         // build log
         let log = JournalLog::open(
             segments,
             active_segment.unwrap(),
-            DashMap::from_iter(queue_next_offset),
-            checkpoint_file,
-            log_start_offset,
-            recover_point + 1, // next_offset
-            recover_point,
-            split_offset,
             topic_partition,
+            metadata,
         )?;
 
         info!(
@@ -263,12 +267,7 @@ impl JournalLog {
     ) -> AppResult<ReadOnlyLogSegment> {
         let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
         let index_file = ReadOnlyIndexFile::new(index_file_name)?;
-        Ok(ReadOnlyLogSegment::open(
-            topic_partition,
-            base_offset,
-            index_file,
-            None,
-        ))
+        Ok(ReadOnlyLogSegment::open(topic_partition, base_offset, index_file))
     }
 }
 

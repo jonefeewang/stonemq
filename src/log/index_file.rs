@@ -19,7 +19,6 @@ pub struct ReadOnlyIndexFile {
 pub struct WritableIndexFile {
     mmap: RwLock<MmapMut>,
     entries: AtomicCell<usize>,
-    file: File,
     max_entry_count: usize,
 }
 
@@ -36,11 +35,6 @@ impl ReadOnlyIndexFile {
 
     pub fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
         binary_search_index(&self.mmap[..], self.entries, target_offset)
-    }
-
-    #[cfg(test)]
-    pub fn entry_count(&self) -> usize {
-        self.entries
     }
 }
 
@@ -59,7 +53,6 @@ impl WritableIndexFile {
         Ok(Self {
             mmap: RwLock::new(mmap),
             entries: AtomicCell::new(0),
-            file,
             max_entry_count: max_size / INDEX_ENTRY_SIZE,
         })
     }
@@ -114,11 +107,6 @@ impl WritableIndexFile {
 
     pub fn is_full(&self) -> bool {
         self.entries.load() + 1 > self.max_entry_count
-    }
-
-    #[cfg(test)]
-    pub fn entry_count(&self) -> usize {
-        self.entries.load()
     }
 }
 

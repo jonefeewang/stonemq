@@ -25,6 +25,15 @@ use crate::{
     AppError, AppResult,
 };
 
+struct JournalLogMetadata {
+    queue_next_offset_info: DashMap<TopicPartition, i64>,
+    queue_next_offset_checkpoints: CheckPointFile,
+    log_start_offset: i64,
+    next_offset: i64,
+    recover_point: i64,
+    split_offset: i64,
+}
+
 use super::log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment};
 
 /// Represents a journal log manager for a log partition.
@@ -66,9 +75,6 @@ pub struct JournalLog {
 
     /// Topic partition information
     topic_partition: TopicPartition,
-
-    /// Maximum size for index files
-    index_file_max_size: u32,
 
     /// Checkpoint file for queue next offsets
     queue_next_offset_checkpoints: CheckPointFile,
@@ -128,7 +134,6 @@ impl JournalLog {
             recover_point: AtomicCell::new(Self::INIT_RECOVER_POINT),
             split_offset: AtomicCell::new(Self::INIT_SPLIT_OFFSET),
             topic_partition: topic_partition.clone(),
-            index_file_max_size: index_file_max_size as u32,
         })
     }
 
@@ -149,19 +154,12 @@ impl JournalLog {
     /// # Returns
     ///
     /// Returns the opened `JournalLog` instance or an error if opening fails
-    pub fn open(
+    fn open(
         segments: BTreeMap<i64, ReadOnlyLogSegment>,
         active_segment: ActiveLogSegment,
-        queue_next_offset_info: DashMap<TopicPartition, i64>,
-        queue_next_offset_checkpoints: CheckPointFile,
-        log_start_offset: i64,
-        next_offset: i64,
-        recover_point: i64,
-        split_offset: i64,
         topic_partition: &TopicPartition,
+        metadata: JournalLogMetadata,
     ) -> AppResult<Self> {
-        let index_file_max_size = global_config().log.journal_index_file_size;
-
         let segments_order = segments.keys().cloned().collect();
         let segments_map = segments
             .into_iter()
@@ -174,14 +172,13 @@ impl JournalLog {
             segments: segments_map,
             active_segment: RwLock::new(active_segment),
             active_segment_id: AtomicCell::new(active_segment_id),
-            queue_next_offset_info,
-            queue_next_offset_checkpoints,
-            _log_start_offset: AtomicCell::new(log_start_offset),
-            next_offset: AtomicCell::new(next_offset),
-            recover_point: AtomicCell::new(recover_point),
-            split_offset: AtomicCell::new(split_offset),
+            queue_next_offset_info: metadata.queue_next_offset_info,
+            queue_next_offset_checkpoints: metadata.queue_next_offset_checkpoints,
+            _log_start_offset: AtomicCell::new(metadata.log_start_offset),
+            next_offset: AtomicCell::new(metadata.next_offset),
+            recover_point: AtomicCell::new(metadata.recover_point),
+            split_offset: AtomicCell::new(metadata.split_offset),
             topic_partition: topic_partition.clone(),
-            index_file_max_size: index_file_max_size as u32,
         })
     }
 }
