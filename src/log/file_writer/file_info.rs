@@ -6,7 +6,7 @@ use bytes::Buf;
 
 use crate::log::JournalLog;
 
-use super::file_request::{JournalLogWriteOp, QueueLogWriteOp};
+use super::file_request::{JournalFileWriteReq, QueueFileWriteReq};
 
 #[derive(Debug)]
 pub struct FileInfo {
@@ -15,14 +15,14 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
-            path,
+            path: path.into(),
             size: AtomicU64::new(0),
         }
     }
 
-    pub async fn write_journal(&self, request: JournalLogWriteOp) -> io::Result<()> {
+    pub async fn write_journal(&self, request: JournalFileWriteReq) -> io::Result<()> {
         let msg = request.records.buffer.unwrap();
         let total_size = JournalLog::calculate_journal_log_overhead(&request.topic_partition)
             + msg.remaining() as u32;
@@ -62,7 +62,7 @@ impl FileInfo {
         Ok(())
     }
 
-    pub async fn write_queue(&self, request: QueueLogWriteOp) -> io::Result<()> {
+    pub async fn write_queue(&self, request: QueueFileWriteReq) -> io::Result<()> {
         let msg = request.records.buffer.unwrap();
         let total_write = msg.remaining();
         let path = self.path.clone();

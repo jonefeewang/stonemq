@@ -1,11 +1,13 @@
+use std::fs::File;
+use std::path::PathBuf;
+
 use crate::log::index_file::{ReadOnlyIndexFile, WritableIndexFile};
 use crate::message::TopicPartition;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use tracing::trace;
 
-use super::FILE_WRITER;
-use super::{LogType, INDEX_FILE_SUFFIX};
+use super::{ACTIVE_LOG_FILE_WRITER, LogType, INDEX_FILE_SUFFIX};
 
 /// 定义日志段的公共行为
 pub trait LogSegmentCommon {
@@ -69,7 +71,7 @@ impl LogSegmentCommon for ReadOnlyLogSegment {
     }
 
     fn size(&self) -> u64 {
-        FILE_WRITER.get_log_size(&self.topic_partition)
+        ACTIVE_LOG_FILE_WRITER.active_segment_size(&self.topic_partition)
     }
 }
 
@@ -83,7 +85,7 @@ impl LogSegmentCommon for ActiveLogSegment {
     }
 
     fn size(&self) -> u64 {
-        FILE_WRITER.get_log_size(&self.topic_partition)
+        ACTIVE_LOG_FILE_WRITER.active_segment_size(&self.topic_partition)
     }
 }
 
@@ -103,7 +105,15 @@ impl ReadOnlyLogSegment {
     }
 
     fn size(&self) -> u64 {
-        FILE_WRITER.get_log_size(&self.topic_partition)
+        let segment_path = PathBuf::from(self.topic_partition.partition_dir())
+            .join(format!("{}.log", self.base_offset));
+        match File::open(&segment_path) {
+            Ok(file) => match file.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(_) => 0,
+            },
+            Err(_) => 0,
+        }
     }
 }
 
@@ -130,7 +140,7 @@ impl ActiveLogSegment {
         _time_index: Option<WritableIndexFile>,
     ) -> AppResult<Self> {
         // open log file
-        FILE_WRITER.open_file(&topic_partition, base_offset)?;
+        ACTIVE_LOG_FILE_WRITER.open_file(&topic_partition, base_offset)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
@@ -141,13 +151,13 @@ impl ActiveLogSegment {
         })
     }
 
-    pub fn update_metadata(
+    pub fn update_index(
         &self,
         records_size: usize,
         first_offset: i64,
         log_type: LogType,
     ) -> AppResult<()> {
-        let segment_size = FILE_WRITER.get_log_size(&self.topic_partition);
+        let segment_size = self.size();
         let relative_offset = first_offset - self.base_offset;
 
         let index_interval = match log_type {
@@ -203,8 +213,10 @@ impl ActiveLogSegment {
     }
 
     pub fn flush_index(&mut self) -> AppResult<()> {
+        // flush offset index
         self.offset_index.flush()?;
         if let Some(time_index) = &self.time_index {
+            // flush time index
             time_index.flush()?;
         }
         Ok(())

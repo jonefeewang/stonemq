@@ -2,7 +2,7 @@ use tokio::sync::oneshot;
 
 use crate::{message::TopicPartition, AppResult, MemoryRecords};
 
-pub struct JournalLogWriteOp {
+pub struct JournalFileWriteReq {
     pub journal_offset: i64,
     pub topic_partition: TopicPartition,
     pub queue_topic_partition: TopicPartition,
@@ -13,7 +13,7 @@ pub struct JournalLogWriteOp {
     pub segment_base_offset: i64,
 }
 
-pub struct QueueLogWriteOp {
+pub struct QueueFileWriteReq {
     pub journal_offset: i64,
     pub topic_partition: TopicPartition,
     pub first_batch_queue_base_offset: i64,
@@ -30,11 +30,11 @@ pub struct FlushRequest {
 
 pub enum LogWriteRequest {
     AppendJournal {
-        request: JournalLogWriteOp,
+        request: JournalFileWriteReq,
         reply: oneshot::Sender<AppResult<()>>,
     },
     AppendQueue {
-        request: QueueLogWriteOp,
+        request: QueueFileWriteReq,
         reply: oneshot::Sender<AppResult<()>>,
     },
     Flush {

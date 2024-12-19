@@ -7,15 +7,14 @@ use async_channel::Sender;
 use dashmap::DashMap;
 use file_info::FileInfo;
 pub use file_request::FlushRequest;
-pub use file_request::JournalLogWriteOp;
-pub use file_request::QueueLogWriteOp;
+pub use file_request::JournalFileWriteReq;
 pub use file_request::LogWriteRequest;
+pub use file_request::QueueFileWriteReq;
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Debug)]
-pub struct FileWriter {
+pub struct ActiveLogFileWriter {
     writers: Arc<DashMap<TopicPartition, FileInfo>>,
-    base_dir: PathBuf,
     request_tx: Sender<LogWriteRequest>,
 }

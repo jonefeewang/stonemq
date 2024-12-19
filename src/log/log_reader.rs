@@ -4,6 +4,25 @@ use std::{
 };
 
 use super::{LogType, PositionInfo};
+
+/// Seeks to find the position of target offset in the log file
+///
+/// # Arguments
+///
+/// * `file` - The log file handle
+/// * `target_offset` - The target offset to seek to
+/// * `ref_pos` - Reference position info containing base offset, current offset and file position
+/// * `log_type` - Type of log, can be Journal or Queue
+///
+/// # Returns
+///
+/// Returns an IO result containing a tuple of file handle and new position info:
+/// * `Ok((File, PositionInfo))` - Successfully found target position
+/// * `Err(io::Error)` - Error occurred during seek operation
+///
+/// # Errors
+///
+/// Returns error when target offset does not exist or file operations fail
 pub async fn seek(
     mut file: File,
     target_offset: i64,

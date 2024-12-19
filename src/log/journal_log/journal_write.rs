@@ -10,9 +10,9 @@ use tracing::{debug, trace};
 use crate::{
     global_config,
     log::{
-        file_writer::{FlushRequest, JournalLogWriteOp},
+        file_writer::{FlushRequest, JournalFileWriteReq},
         log_segment::{ActiveLogSegment, LogSegmentCommon},
-        LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME, FILE_WRITER,
+        LogAppendInfo, LogType, ACTIVE_LOG_FILE_WRITER, DEFAULT_LOG_APPEND_TIME,
     },
     message::{MemoryRecords, RecordBatch, TopicPartition},
     AppResult,
@@ -38,6 +38,11 @@ impl JournalLog {
     /// # Note
     ///
     /// This method is async and handles its own error reporting through the reply_sender.
+    ///
+    /// In async Rust, it is not possible to hold a `MutexGuard` across an `.await`. Therefore,
+    /// the asynchronous operations of the `LogFileWriter` in the active segment are elevated here,
+    /// separating the locking operation from the asynchronous operation. This ensures that the
+    /// synchronous lock is released before executing the asynchronous operation!
     pub async fn append_records(
         &self,
         mut memory_records: MemoryRecords,
@@ -57,7 +62,7 @@ impl JournalLog {
         };
 
         // Create and execute write operation
-        let journal_log_write_op = JournalLogWriteOp {
+        let journal_log_write_op = JournalFileWriteReq {
             journal_offset: self.next_offset.load(),
             topic_partition: self.topic_partition.clone(),
             queue_topic_partition,
@@ -68,7 +73,10 @@ impl JournalLog {
             segment_base_offset: self.active_segment_id.load(),
         };
 
-        if let Err(e) = FILE_WRITER.append_journal(journal_log_write_op).await {
+        if let Err(e) = ACTIVE_LOG_FILE_WRITER
+            .append_journal(journal_log_write_op)
+            .await
+        {
             reply_sender.send(Err(e)).unwrap();
             return;
         }
@@ -130,7 +138,7 @@ impl JournalLog {
 
         // Update active segment metadata
         {
-            self.active_segment.write().update_metadata(
+            self.active_segment.write().update_index(
                 memory_records.size(),
                 log_append_info.first_offset,
                 LogType::Journal,
@@ -147,6 +155,16 @@ impl JournalLog {
     async fn roll_active_segment(&self, memory_records: &MemoryRecords) -> AppResult<()> {
         let new_base_offset = self.next_offset.load();
 
+        // Flush old segment
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: self.active_segment_id.load(),
+        };
+        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
+        self.active_segment.write().flush_index()?;
+        self.recover_point.store(self.next_offset.load() - 1);
+        let old_base_offset = self.active_segment_id.load();
+
         // Create new segment
         let new_seg = ActiveLogSegment::new(
             &self.topic_partition,
@@ -154,31 +172,19 @@ impl JournalLog {
             global_config().log.journal_segment_size as usize,
         )?;
 
-        // Swap active segment
-        let old_segment = {
-            let mut active_seg = self.active_segment.write();
-            std::mem::replace(&mut *active_seg, new_seg)
-        };
-
-        let old_base_offset = old_segment.base_offset();
-        let readonly_seg = old_segment.into_readonly()?;
-        self.segments
-            .insert(old_base_offset, Arc::new(readonly_seg));
-
-        // Flush old segment
-        let request = FlushRequest {
-            topic_partition: self.topic_partition.clone(),
-            segment_base_offset: old_base_offset,
-        };
-        FILE_WRITER.flush(request).await?;
-
-        // Update metadata
-        self.recover_point.store(self.next_offset.load() - 1);
         {
-            let mut segments = self.segments_order.write();
-            segments.insert(new_base_offset);
+            // Swap active segment
+            let mut active_seg = self.active_segment.write();
+            let old_segment = std::mem::replace(&mut *active_seg, new_seg);
+            self.active_segment_id.store(new_base_offset);
+
+            // add old segment to segments
+            let readonly_seg = old_segment.into_readonly()?;
+            let mut segments_order = self.segments_order.write();
+            segments_order.insert(old_base_offset);
+            self.segments
+                .insert(old_base_offset, Arc::new(readonly_seg));
         }
-        self.active_segment_id.store(new_base_offset);
 
         debug!(
             "Rolled segment: size={}, config_size={}, index_full={}",
@@ -283,7 +289,7 @@ impl JournalLog {
             topic_partition: self.topic_partition.clone(),
             segment_base_offset: self.active_segment_id.load(),
         };
-        FILE_WRITER.flush(request).await?;
+        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
 
         self.recover_point.store(self.next_offset.load() - 1);
 

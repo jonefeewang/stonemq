@@ -24,10 +24,8 @@ pub use log_reader::seek;
 pub use log_segment::PositionInfo;
 pub use queue_log::QueueLog;
 
-use file_writer::FileWriter;
+use file_writer::ActiveLogFileWriter;
 use once_cell::sync::Lazy;
-
-use crate::global_config;
 
 /// Represents a position in the log with no valid information
 pub const NO_POSITION_INFO: PositionInfo = PositionInfo {
@@ -63,8 +61,7 @@ pub enum SegmentFileType {
 }
 
 /// Global file writer instance
-static FILE_WRITER: Lazy<FileWriter> =
-    Lazy::new(|| FileWriter::new(&global_config().log.log_base_dir));
+static ACTIVE_LOG_FILE_WRITER: Lazy<ActiveLogFileWriter> = Lazy::new(ActiveLogFileWriter::new);
 
 /// Information about a log append operation
 #[derive(Debug, Clone)]

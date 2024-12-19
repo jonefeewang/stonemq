@@ -3,26 +3,23 @@ use crate::{AppError, AppResult};
 use async_channel::{self, Receiver};
 use dashmap::DashMap;
 use std::io;
-use std::path::PathBuf;
-
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::error;
 
-use super::file_request::{FlushRequest, JournalLogWriteOp, QueueLogWriteOp};
-use super::{FileInfo, FileWriter, LogWriteRequest};
-impl FileWriter {
-    pub fn new(base_dir: impl Into<PathBuf>) -> Self {
+use super::file_request::{FlushRequest, JournalFileWriteReq, QueueFileWriteReq};
+use super::{ActiveLogFileWriter, FileInfo, LogWriteRequest};
+impl ActiveLogFileWriter {
+    pub fn new() -> Self {
         let (tx, rx) = async_channel::bounded(1024);
         let writer = Self {
             writers: Arc::new(DashMap::new()),
-            base_dir: base_dir.into(),
             request_tx: tx,
         };
         writer.spawn_workers(rx);
         writer
     }
-    pub async fn append_journal(&self, request: JournalLogWriteOp) -> AppResult<()> {
+    pub async fn append_journal(&self, request: JournalFileWriteReq) -> AppResult<()> {
         let (tx, rx) = oneshot::channel();
         self.request_tx
             .send(LogWriteRequest::AppendJournal { request, reply: tx })
@@ -33,7 +30,7 @@ impl FileWriter {
         Ok(())
     }
 
-    pub async fn append_queue(&self, request: QueueLogWriteOp) -> AppResult<()> {
+    pub async fn append_queue(&self, request: QueueFileWriteReq) -> AppResult<()> {
         let (tx, rx) = oneshot::channel();
         self.request_tx
             .send(LogWriteRequest::AppendQueue { request, reply: tx })
@@ -56,7 +53,7 @@ impl FileWriter {
         Ok(size)
     }
 
-    pub fn get_log_size(&self, topic_partition: &TopicPartition) -> u64 {
+    pub fn active_segment_size(&self, topic_partition: &TopicPartition) -> u64 {
         self.writers.get(topic_partition).unwrap().get_size()
     }
 
@@ -114,7 +111,7 @@ impl FileWriter {
     }
 
     pub fn open_file(&self, topic_partition: &TopicPartition, base_offset: i64) -> io::Result<()> {
-        let file_path = self.base_dir.join(format!("{}.log", base_offset));
+        let file_path = format!("{}/{}.log", topic_partition.partition_dir(), base_offset);
         let file_info = FileInfo::new(file_path);
         self.writers.insert(topic_partition.clone(), file_info);
         Ok(())

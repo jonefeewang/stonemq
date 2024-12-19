@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::log::file_writer::{FlushRequest, QueueLogWriteOp};
+use crate::log::file_writer::{FlushRequest, QueueFileWriteReq};
 use crate::log::log_segment::{ActiveLogSegment, LogSegmentCommon};
-use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME, FILE_WRITER};
+use crate::log::{LogAppendInfo, LogType, ACTIVE_LOG_FILE_WRITER, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
 use tracing::trace;
@@ -97,54 +97,38 @@ impl QueueLog {
     /// roll new segment
     async fn roll_new_segment(&self) -> AppResult<()> {
         let new_base_offset = self.last_offset.load() + 1;
+
+        let request = FlushRequest {
+            topic_partition: self.topic_partition.clone(),
+            segment_base_offset: self.active_segment_id.load(),
+        };
+        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
+        self.active_segment.write().flush_index()?;
+        self.recover_point.store(self.last_offset.load());
+        let old_base_offset = self.active_segment_id.load();
+
+        // Create new segment
         let new_seg = ActiveLogSegment::new(
             &self.topic_partition,
             new_base_offset,
-            self.index_file_max_size,
+            global_config().log.queue_segment_size as usize,
         )?;
 
-        // swap active segment
-        let old_segment = self.swap_active_segment(new_seg)?;
-
-        // handle old segment
-        let old_base_offset = old_segment.base_offset();
-        let readonly_seg = old_segment.into_readonly()?;
-        self.segments
-            .insert(old_base_offset, Arc::new(readonly_seg));
-
-        // flush old segment
-        self.flush_old_segment(old_base_offset).await?;
-
-        // update metadata
-        self.update_segment_metadata(new_base_offset);
-
-        Ok(())
-    }
-
-    /// swap active segment
-    fn swap_active_segment(&self, new_seg: ActiveLogSegment) -> AppResult<ActiveLogSegment> {
-        let mut active_seg = self.active_segment.write();
-        Ok(std::mem::replace(&mut *active_seg, new_seg))
-    }
-
-    /// flush old segment
-    async fn flush_old_segment(&self, old_base_offset: i64) -> AppResult<()> {
-        let request = FlushRequest {
-            topic_partition: self.topic_partition.clone(),
-            segment_base_offset: old_base_offset,
-        };
-        FILE_WRITER.flush(request).await?;
-        Ok(())
-    }
-
-    /// update segment metadata
-    fn update_segment_metadata(&self, new_base_offset: i64) {
-        self.recover_point.store(self.last_offset.load());
         {
-            let mut segments = self.segments_order.write();
-            segments.insert(new_base_offset);
+            // Swap active segment
+            let mut active_seg = self.active_segment.write();
+            let old_segment = std::mem::replace(&mut *active_seg, new_seg);
+            self.active_segment_id.store(new_base_offset);
+
+            // add old segment to segments
+            let readonly_seg = old_segment.into_readonly()?;
+            let mut segments_order = self.segments_order.write();
+            segments_order.insert(old_base_offset);
+            self.segments
+                .insert(old_base_offset, Arc::new(readonly_seg));
         }
-        self.active_segment_id.store(new_base_offset);
+
+        Ok(())
     }
 
     /// create log append info
@@ -170,7 +154,7 @@ impl QueueLog {
         memory_records: &MemoryRecords,
         first_offset: i64,
     ) -> AppResult<()> {
-        self.active_segment.write().update_metadata(
+        self.active_segment.write().update_index(
             memory_records.size(),
             first_offset,
             LogType::Journal,
@@ -186,7 +170,7 @@ impl QueueLog {
         records_count: u32,
         memory_records: MemoryRecords,
     ) -> AppResult<()> {
-        let queue_log_write_op = QueueLogWriteOp {
+        let queue_log_write_op = QueueFileWriteReq {
             journal_offset,
             topic_partition: self.topic_partition.clone(),
             first_batch_queue_base_offset,
@@ -196,7 +180,9 @@ impl QueueLog {
             segment_base_offset: self.active_segment_id.load(),
         };
 
-        FILE_WRITER.append_queue(queue_log_write_op).await
+        ACTIVE_LOG_FILE_WRITER
+            .append_queue(queue_log_write_op)
+            .await
     }
 
     /// update last offset
@@ -221,7 +207,7 @@ impl QueueLog {
             topic_partition: self.topic_partition.clone(),
             segment_base_offset: self.active_segment_id.load(),
         };
-        FILE_WRITER.flush(request).await?;
+        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
 
         self.recover_point.store(self.last_offset.load());
         Ok(())
