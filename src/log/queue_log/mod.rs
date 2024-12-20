@@ -24,7 +24,7 @@ use tracing::info;
 
 use crate::{
     global_config,
-    log::log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment},
+    log::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
     message::TopicPartition,
     AppError, AppResult,
 };
@@ -44,14 +44,14 @@ const INIT_LAST_OFFSET: i64 = 0;
 #[derive(Debug)]
 pub struct QueueLog {
     /// Map of segment base offsets to read-only segments
-    segments: DashMap<i64, Arc<ReadOnlyLogSegment>>,
+    segments: DashMap<i64, Arc<ReadOnlySegmentIndex>>,
 
     /// Ordered set of segment base offsets
     /// Write lock only needed when adding new segments
     segments_order: RwLock<BTreeSet<i64>>,
 
     /// Currently active segment for writing
-    active_segment: RwLock<ActiveLogSegment>,
+    active_segment: RwLock<ActiveSegmentIndex>,
 
     /// Base offset of the active segment
     active_segment_id: AtomicCell<i64>,
@@ -98,7 +98,7 @@ impl QueueLog {
         Self::ensure_dir_exists(&dir)?;
 
         let index_file_max_size = global_config().log.queue_index_file_size;
-        let active_segment = ActiveLogSegment::new(topic_partition, 0, index_file_max_size)?;
+        let active_segment = ActiveSegmentIndex::new(topic_partition, 0, index_file_max_size)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
@@ -124,8 +124,8 @@ impl QueueLog {
     /// * `last_offset` - Last offset in the log
     pub fn open(
         topic_partition: &TopicPartition,
-        segments: BTreeMap<i64, ReadOnlyLogSegment>,
-        active_segment: ActiveLogSegment,
+        segments: BTreeMap<i64, ReadOnlySegmentIndex>,
+        active_segment: ActiveSegmentIndex,
         log_start_offset: i64,
         recover_point: i64,
         last_offset: i64,

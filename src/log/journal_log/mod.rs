@@ -34,7 +34,10 @@ struct JournalLogMetadata {
     split_offset: i64,
 }
 
-use super::log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment};
+use super::{
+    segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
+    segment_log::ActiveSegmentLog,
+};
 
 /// Represents a journal log manager for a log partition.
 ///
@@ -50,10 +53,13 @@ pub struct JournalLog {
     segments_order: RwLock<BTreeSet<i64>>,
 
     /// Map of base offsets to read-only segments
-    segments: DashMap<i64, Arc<ReadOnlyLogSegment>>,
+    segment_index: DashMap<i64, Arc<ReadOnlySegmentIndex>>,
 
     /// Currently active segment
-    active_segment: RwLock<ActiveLogSegment>,
+    active_segment_index: RwLock<ActiveSegmentIndex>,
+
+    /// Currently active segment log
+    active_segment_log: ActiveSegmentLog,
 
     /// Base offset of current active segment
     active_segment_id: AtomicCell<i64>,
@@ -112,17 +118,20 @@ impl JournalLog {
         })?;
 
         let index_file_max_size = global_config().log.journal_index_file_size;
-        let segment = ActiveLogSegment::new(
+        let segment = ActiveSegmentIndex::new(
             topic_partition,
             Self::INIT_LOG_START_OFFSET,
             index_file_max_size as usize,
         )?;
 
+        let active_segment_log = ActiveSegmentLog::new(0, topic_partition);
+
         Ok(Self {
             segments_order: RwLock::new(BTreeSet::new()),
-            segments: DashMap::new(),
-            active_segment: RwLock::new(segment),
+            segment_index: DashMap::new(),
+            active_segment_index: RwLock::new(segment),
             active_segment_id: AtomicCell::new(0),
+            active_segment_log,
             queue_next_offset_info: DashMap::new(),
             queue_next_offset_checkpoints: CheckPointFile::new(format!(
                 "{}/{}",
@@ -155,8 +164,8 @@ impl JournalLog {
     ///
     /// Returns the opened `JournalLog` instance or an error if opening fails
     fn open(
-        segments: BTreeMap<i64, ReadOnlyLogSegment>,
-        active_segment: ActiveLogSegment,
+        segments: BTreeMap<i64, ReadOnlySegmentIndex>,
+        active_segment: ActiveSegmentIndex,
         topic_partition: &TopicPartition,
         metadata: JournalLogMetadata,
     ) -> AppResult<Self> {
@@ -165,13 +174,16 @@ impl JournalLog {
             .into_iter()
             .map(|(k, v)| (k, Arc::new(v)))
             .collect();
-        let active_segment_id = active_segment.base_offset();
+        let active_segment_base_offset = active_segment.base_offset();
+
+        let active_segment_log = ActiveSegmentLog::new(active_segment_base_offset, topic_partition);
 
         Ok(Self {
             segments_order: RwLock::new(segments_order),
-            segments: segments_map,
-            active_segment: RwLock::new(active_segment),
-            active_segment_id: AtomicCell::new(active_segment_id),
+            segment_index: segments_map,
+            active_segment_index: RwLock::new(active_segment),
+            active_segment_id: AtomicCell::new(active_segment_base_offset),
+            active_segment_log,
             queue_next_offset_info: metadata.queue_next_offset_info,
             queue_next_offset_checkpoints: metadata.queue_next_offset_checkpoints,
             _log_start_offset: AtomicCell::new(metadata.log_start_offset),

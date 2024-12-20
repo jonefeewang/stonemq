@@ -1,6 +1,5 @@
 use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use parking_lot::RwLock;
 use std::{fs::File, path::Path};
 
 use crate::{AppError, AppResult};
@@ -17,7 +16,7 @@ pub struct ReadOnlyIndexFile {
 /// 可读写的索引文件，用于活动的索引文件
 #[derive(Debug)]
 pub struct WritableIndexFile {
-    mmap: RwLock<MmapMut>,
+    mmap: MmapMut,
     entries: AtomicCell<usize>,
     max_entry_count: usize,
 }
@@ -51,14 +50,13 @@ impl WritableIndexFile {
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 
         Ok(Self {
-            mmap: RwLock::new(mmap),
+            mmap,
             entries: AtomicCell::new(0),
             max_entry_count: max_size / INDEX_ENTRY_SIZE,
         })
     }
 
-    pub fn add_entry(&self, relative_offset: u32, position: u32) -> AppResult<()> {
-        let mut mmap = self.mmap.write();
+    pub fn add_entry(&mut self, relative_offset: u32, position: u32) -> AppResult<()> {
         let entries = self.entries.load();
 
         if entries + 1 > self.max_entry_count {
@@ -66,21 +64,19 @@ impl WritableIndexFile {
         }
 
         let offset = entries * INDEX_ENTRY_SIZE;
-        mmap[offset..offset + 4].copy_from_slice(&relative_offset.to_be_bytes());
-        mmap[offset + 4..offset + 8].copy_from_slice(&position.to_be_bytes());
+        self.mmap[offset..offset + 4].copy_from_slice(&relative_offset.to_be_bytes());
+        self.mmap[offset + 4..offset + 8].copy_from_slice(&position.to_be_bytes());
         self.entries.fetch_add(1);
         Ok(())
     }
 
     pub fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
-        let mmap = self.mmap.read();
         let entries = self.entries.load();
-        binary_search_index(&mmap[..], entries, target_offset)
+        binary_search_index(&self.mmap[..], entries, target_offset)
     }
 
     pub fn flush(&self) -> AppResult<()> {
         self.mmap
-            .read()
             .flush()
             .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))
     }
@@ -90,14 +86,11 @@ impl WritableIndexFile {
         // 获取当前条目数
         let entries = self.entries.load();
 
-        // 获取 MmapMut 的所有权
-        let mmap = self.mmap.into_inner();
-
         // 刷新数据
-        mmap.flush()?;
+        self.mmap.flush()?;
 
         // 直接转换为只读映射
-        let readonly_mmap = mmap.make_read_only()?;
+        let readonly_mmap = self.mmap.make_read_only()?;
 
         Ok(ReadOnlyIndexFile {
             mmap: readonly_mmap,

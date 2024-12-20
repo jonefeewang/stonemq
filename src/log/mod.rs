@@ -7,25 +7,23 @@
 //! - Log reading and writing operations
 
 mod checkpoint;
-mod file_writer;
 mod index_file;
 mod journal_log;
+mod log_file_writer;
 mod log_manager;
 mod log_reader;
-mod log_segment;
 mod queue_log;
+mod segment_index;
 mod splitter;
 
 // Re-exports
 pub use checkpoint::CheckPointFile;
 pub use journal_log::JournalLog;
+pub use log_file_writer::ActiveLogFileWriter;
 pub use log_manager::LogManager;
 pub use log_reader::seek;
-pub use log_segment::PositionInfo;
 pub use queue_log::QueueLog;
-
-use file_writer::ActiveLogFileWriter;
-use once_cell::sync::Lazy;
+pub use segment_index::PositionInfo;
 
 /// Represents a position in the log with no valid information
 pub const NO_POSITION_INFO: PositionInfo = PositionInfo {
@@ -42,6 +40,7 @@ const RECOVERY_POINT_FILE_NAME: &str = ".recovery_checkpoints";
 const SPLIT_POINT_FILE_NAME: &str = ".split_checkpoints";
 const NEXT_OFFSET_CHECKPOINT_FILE_NAME: &str = ".next_offset_checkpoints";
 const INDEX_FILE_SUFFIX: &str = "index";
+const LOG_FILE_SUFFIX: &str = "log";
 
 /// Types of logs supported by the system
 #[derive(Debug, Clone, Copy, PartialEq, Ord, PartialOrd, Eq, Hash)]
@@ -59,9 +58,6 @@ pub enum SegmentFileType {
     TimeIndex,
     Unknown,
 }
-
-/// Global file writer instance
-static ACTIVE_LOG_FILE_WRITER: Lazy<ActiveLogFileWriter> = Lazy::new(ActiveLogFileWriter::new);
 
 /// Information about a log append operation
 #[derive(Debug, Clone)]

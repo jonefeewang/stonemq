@@ -11,6 +11,12 @@ use tracing::{debug, error, trace, warn};
 
 use crate::Shutdown;
 
+/// Handler trait for processing tasks
+pub trait PoolHandler<T>: Clone + Send + 'static + Sync {
+    /// Handle the task
+    fn handle(&self, task: T) -> impl Future<Output = ()> + Send;
+}
+
 /// Worker Pool Config Parameters
 #[derive(Debug, Clone)]
 pub struct WorkerPoolConfig {
@@ -42,6 +48,7 @@ pub struct MultipleChannelWorkerPool<T> {
     notify_shutdown: broadcast::Sender<()>,
     _shutdown_complete_tx: mpsc::Sender<()>,
     channels: Arc<HashMap<i8, TaskChannel<T>>>,
+    config: WorkerPoolConfig,
 }
 /// represent a task channel
 #[derive(Debug)]
@@ -58,22 +65,20 @@ struct Worker {
 }
 
 impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
-    pub fn new<F, Fut>(
+    pub fn new<H: PoolHandler<T>>(
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: mpsc::Sender<()>,
-        handler: F,
+        handler: H,
         config: WorkerPoolConfig,
-    ) -> Self
-    where
-        F: Fn(T) -> Fut + Send + Sync + 'static + Clone,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        let channels = Self::spawn_channels_with_monitor(config, notify_shutdown.clone(), handler);
+    ) -> Self {
+        let channels =
+            Self::spawn_channels_with_monitor(config.clone(), notify_shutdown.clone(), handler);
 
         Self {
             notify_shutdown,
             _shutdown_complete_tx: shutdown_complete_tx,
             channels,
+            config,
         }
     }
     /// Send request to specified channel
@@ -89,21 +94,20 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
             .send(request)
             .await
     }
+    pub fn get_pool_config(&self) -> &WorkerPoolConfig {
+        &self.config
+    }
 
     /// Get channel count
     pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
 
-    fn spawn_channels_with_monitor<F, Fut>(
+    fn spawn_channels_with_monitor<H: PoolHandler<T>>(
         config: WorkerPoolConfig,
         notify_shutdown: broadcast::Sender<()>,
-        handler: F,
-    ) -> Arc<HashMap<i8, TaskChannel<T>>>
-    where
-        F: Fn(T) -> Fut + Send + Sync + 'static + Clone,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
+        handler: H,
+    ) -> Arc<HashMap<i8, TaskChannel<T>>> {
         let mut workers = Vec::with_capacity(config.num_channels as usize);
         let mut channels = HashMap::with_capacity(config.num_channels as usize);
 
@@ -135,16 +139,12 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         channels
     }
 
-    fn spawn_worker<F, Fut>(
+    fn spawn_worker<H: PoolHandler<T>>(
         id: i8,
-        handler: F,
+        handler: H,
         notify_shutdown: broadcast::Sender<()>,
         receiver: async_channel::Receiver<T>,
-    ) -> Worker
-    where
-        F: Fn(T) -> Fut + Send + 'static + Clone,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
+    ) -> Worker {
         let mut shutdown = Shutdown::new(notify_shutdown.subscribe());
 
         let handle = tokio::spawn(async move {
@@ -153,7 +153,7 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
             loop {
                 tokio::select! {
                     Ok(request) = receiver.recv() => {
-                        handler(request).await;
+                        handler.handle(request).await;
                     }
                     _ = shutdown.recv() => {
                         debug!("Worker {id} shutting down");
@@ -166,16 +166,13 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         Worker { id, handle }
     }
 
-    fn spawn_monitor<F, Fut>(
+    fn spawn_monitor<H: PoolHandler<T>>(
         mut workers: Vec<Worker>,
         channels: Arc<HashMap<i8, TaskChannel<T>>>,
         notify_shutdown: broadcast::Sender<()>,
-        handler: F,
+        handler: H,
         config: WorkerPoolConfig,
-    ) where
-        F: Fn(T) -> Fut + Send + 'static + Clone,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
+    ) {
         tokio::spawn(async move {
             let mut interval = time::interval(config.monitor_interval);
             let mut shutdown = Shutdown::new(notify_shutdown.subscribe());
@@ -244,28 +241,98 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
 fn get_type_name<R>(_: &R) -> &'static str {
     type_name::<R>()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::time::Duration;
+
+    #[derive(Clone)]
+    struct TestHandler {
+        counter: Arc<AtomicI32>,
+    }
+
+    impl PoolHandler<i32> for TestHandler {
+        fn handle(&self, task: i32) -> impl Future<Output = ()> + Send {
+            let counter = self.counter.clone();
+            async move {
+                counter.fetch_add(task, Ordering::SeqCst);
+            }
+        }
+    }
 
     #[tokio::test]
-    async fn test_custom_config() {
+    async fn test_worker_pool() {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, _) = mpsc::channel(1);
-        let config = WorkerPoolConfig::default();
+
+        let handler = TestHandler {
+            counter: Arc::new(AtomicI32::new(0)),
+        };
+
+        let config = WorkerPoolConfig {
+            channel_capacity: 10,
+            num_channels: 2,
+            monitor_interval: Duration::from_millis(100),
+            worker_check_timeout: Duration::from_millis(50),
+        };
 
         let pool = MultipleChannelWorkerPool::new(
             notify_shutdown,
             shutdown_complete_tx,
-            |msg: String| async move {
-                println!("Handling message: {}", msg);
-            },
+            handler.clone(),
             config,
         );
 
-        // Send message to different channels
-        pool.send("test message 1".to_string(), 0).await.unwrap();
-        pool.send("test message 2".to_string(), 1).await.unwrap();
+        // 发送任务到不同的通道
+        pool.send(1, 0).await.unwrap();
+        pool.send(2, 1).await.unwrap();
+
+        // 等待任务处理完成
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert_eq!(handler.counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_worker_panic_recovery() {
+        let (notify_shutdown, _) = broadcast::channel(1);
+        let (shutdown_complete_tx, _) = mpsc::channel(1);
+
+        #[derive(Clone)]
+        struct PanicHandler;
+
+        impl PoolHandler<bool> for PanicHandler {
+            fn handle(&self, should_panic: bool) -> impl Future<Output = ()> + Send {
+                async move {
+                    if should_panic {
+                        panic!("Test panic");
+                    }
+                }
+            }
+        }
+
+        let config = WorkerPoolConfig {
+            channel_capacity: 10,
+            num_channels: 1,
+            monitor_interval: Duration::from_millis(100),
+            worker_check_timeout: Duration::from_millis(50),
+        };
+
+        let pool = MultipleChannelWorkerPool::new(
+            notify_shutdown,
+            shutdown_complete_tx,
+            PanicHandler,
+            config,
+        );
+
+        // 触发 worker panic
+        pool.send(true, 0).await.unwrap();
+
+        // 等待 worker 重启
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // 验证重启后的 worker 可以正常工作
+        pool.send(false, 0).await.unwrap();
     }
 }

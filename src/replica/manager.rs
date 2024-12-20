@@ -35,13 +35,7 @@ impl ReplicaManager {
         )
         .await;
 
-        let journal_prepare_pool = initialize_journal_partition_worker_pool(
-            notify_shutdown.clone(),
-            _shutdown_complete_tx.clone(),
-        );
-
         ReplicaManager {
-            journal_prepare_pool,
             log_manager,
             all_journal_partitions: DashMap::new(),
             all_queue_partitions: DashMap::new(),
@@ -141,7 +135,7 @@ impl ReplicaManager {
     /// without a cluster concept, retrieve all topic partition information from the kv database here,
     /// simulating how it would be obtained from the leader and ISR request sent by the controller.
     ///
-    pub async fn startup(&mut self) -> AppResult<()> {
+    pub fn startup(&mut self) -> AppResult<()> {
         info!("ReplicaManager starting up...");
         // load all partitions from kv db
         let kv_store_file_path = &global_config().log.kv_store_path;
@@ -156,7 +150,7 @@ impl ReplicaManager {
                 "kv config journal_topics_list".to_string(),
             ))?;
         let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
-        let mut partitions = self.create_journal_partitions(broker_id, tp_strs).await?;
+        let mut partitions = self.create_journal_partitions(broker_id, tp_strs)?;
         self.all_journal_partitions.extend(
             partitions
                 .drain(..)
@@ -178,7 +172,7 @@ impl ReplicaManager {
                 "kv config queue_topics_list".to_string(),
             ))?;
         let tp_strs: Vec<&str> = queue_tps.split(',').collect();
-        let mut partitions = self.create_queue_partitions(broker_id, tp_strs).await?;
+        let mut partitions = self.create_queue_partitions(broker_id, tp_strs)?;
         self.all_queue_partitions.extend(
             partitions
                 .drain(..)
@@ -266,7 +260,7 @@ impl ReplicaManager {
         Ok(())
     }
 
-    async fn create_journal_partitions(
+    fn create_journal_partitions(
         &mut self,
         broker_id: i32,
         tp_strs: Vec<&str>,
@@ -286,8 +280,7 @@ impl ReplicaManager {
             // 获取对应的log，没有的话，创建一个
             let log = self
                 .log_manager
-                .get_or_create_journal_log(&topic_partition)
-                .await?;
+                .get_or_create_journal_log(&topic_partition)?;
             let replica = JournalReplica::new(log);
             let partition = JournalPartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
@@ -295,7 +288,7 @@ impl ReplicaManager {
         }
         Ok(partitions)
     }
-    async fn create_queue_partitions(
+    fn create_queue_partitions(
         &self,
         broker_id: i32,
         tp_strs: Vec<&str>,
@@ -312,10 +305,7 @@ impl ReplicaManager {
                 .or_default()
                 .insert(topic_partition.partition());
 
-            let log = self
-                .log_manager
-                .get_or_create_queue_log(&topic_partition)
-                .await?;
+            let log = self.log_manager.get_or_create_queue_log(&topic_partition)?;
             let replica = QueueReplica::new(log);
             let partition = QueuePartition::new(topic_partition.clone());
             partition.create_replica(broker_id, replica);
@@ -380,29 +370,4 @@ pub struct AppendJournalLogReq {
     pub queue_topic_partition: TopicPartition,
     pub reply_sender: oneshot::Sender<AppResult<LogAppendInfo>>,
     pub journal_log: Arc<JournalLog>,
-}
-
-pub fn initialize_journal_partition_worker_pool(
-    notify_shutdown: broadcast::Sender<()>,
-    shutdown_complete_tx: Sender<()>,
-) -> MultipleChannelWorkerPool<AppendJournalLogReq> {
-    let config = WorkerPoolConfig::default();
-    MultipleChannelWorkerPool::new(
-        notify_shutdown.clone(),
-        shutdown_complete_tx.clone(),
-        move |request: AppendJournalLogReq| {
-            let AppendJournalLogReq {
-                record,
-                queue_topic_partition,
-                reply_sender,
-                journal_log,
-            } = request;
-            async move {
-                journal_log
-                    .append_records(record, queue_topic_partition, reply_sender)
-                    .await;
-            }
-        },
-        config,
-    )
 }

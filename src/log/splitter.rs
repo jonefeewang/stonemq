@@ -1,4 +1,4 @@
-use crate::log::log_segment::PositionInfo;
+use crate::log::segment_index::PositionInfo;
 use crate::log::{JournalLog, LogType};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};

@@ -4,7 +4,7 @@
 //! including position lookup and metadata access.
 
 use crate::{
-    log::{log_segment::LogSegmentCommon, PositionInfo},
+    log::{segment_index::SegmentIndexCommon, PositionInfo},
     message::TopicPartition,
     AppResult,
 };
@@ -55,10 +55,12 @@ impl JournalLog {
 
         // Check if the offset belongs to the active segment
         if segment_offset == self.active_segment_id.load() {
-            self.active_segment.read().get_relative_position(offset)
+            self.active_segment_index
+                .read()
+                .get_relative_position(offset)
         } else {
             // Look up in the inactive segments
-            self.segments
+            self.segment_index
                 .get(&segment_offset)
                 .ok_or_else(|| {
                     std::io::Error::new(

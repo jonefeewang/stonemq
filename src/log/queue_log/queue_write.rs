@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::log::file_writer::{FlushRequest, QueueFileWriteReq};
-use crate::log::log_segment::{ActiveLogSegment, LogSegmentCommon};
+use crate::log::log_file_writer::{FlushRequest, QueueFileWriteReq};
+use crate::log::segment_index::{ActiveSegmentIndex, SegmentIndexCommon};
 use crate::log::{LogAppendInfo, LogType, ACTIVE_LOG_FILE_WRITER, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
@@ -100,7 +100,7 @@ impl QueueLog {
         let old_base_offset = self.active_segment_id.load();
 
         // Create new segment
-        let new_seg = ActiveLogSegment::new(
+        let new_seg = ActiveSegmentIndex::new(
             &self.topic_partition,
             new_base_offset,
             global_config().log.queue_segment_size as usize,

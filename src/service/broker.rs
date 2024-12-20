@@ -1,5 +1,5 @@
 use crate::group_consume::GroupCoordinator;
-use crate::log::LogManager;
+use crate::log::{ActiveLogFileWriter, LogManager};
 use crate::replica::ReplicaManager;
 use crate::service::Server;
 use crate::AppError::{self, IllegalStateError};
@@ -37,6 +37,9 @@ impl Broker {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
+        // 初始化全局 writer
+        ActiveLogFileWriter::global_init(notify_shutdown.clone(), shutdown_complete_tx.clone());
+
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
         let log_manager = log_manager.startup().await?;
@@ -48,7 +51,7 @@ impl Broker {
             shutdown_complete_tx.clone(),
         )
         .await;
-        replica_manager.startup().await?;
+        replica_manager.startup()?;
         let replica_manager = Arc::new(replica_manager);
 
         Self::run_tcp_server(

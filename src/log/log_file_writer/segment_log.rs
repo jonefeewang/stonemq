@@ -4,18 +4,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Buf;
 
-use crate::log::JournalLog;
+use crate::log::{JournalLog, LOG_FILE_SUFFIX};
+use crate::message::TopicPartition;
 
-use super::file_request::{JournalFileWriteReq, QueueFileWriteReq};
+use super::log_request::{JournalFileWriteReq, QueueFileWriteReq};
 
 #[derive(Debug)]
-pub struct FileInfo {
+pub struct SegmentLog {
     path: PathBuf,
     size: AtomicU64,
 }
 
-impl FileInfo {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+impl SegmentLog {
+    pub fn new(base_offset: i64, topic_partition: &TopicPartition) -> Self {
+        let path = format!(
+            "{}/{}.{}",
+            &topic_partition.partition_dir(),
+            base_offset,
+            LOG_FILE_SUFFIX
+        );
         Self {
             path: path.into(),
             size: AtomicU64::new(0),

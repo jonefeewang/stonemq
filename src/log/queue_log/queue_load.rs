@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::log::SegmentFileType;
 use crate::{
     log::index_file::{ReadOnlyIndexFile, WritableIndexFile},
-    log::log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment},
+    log::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
     message::TopicPartition,
     AppError, AppResult,
 };
@@ -49,8 +49,8 @@ impl QueueLog {
 
     /// Determines the starting offset for the log
     fn determine_start_offset(
-        segments: &BTreeMap<i64, ReadOnlyLogSegment>,
-        active_segment: &Option<ActiveLogSegment>,
+        segments: &BTreeMap<i64, ReadOnlySegmentIndex>,
+        active_segment: &Option<ActiveSegmentIndex>,
     ) -> i64 {
         if segments.is_empty() {
             active_segment
@@ -66,7 +66,10 @@ impl QueueLog {
     fn load_segments(
         topic_partition: &TopicPartition,
         index_file_max_size: u32,
-    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+    ) -> AppResult<(
+        BTreeMap<i64, ReadOnlySegmentIndex>,
+        Option<ActiveSegmentIndex>,
+    )> {
         let dir = topic_partition.partition_dir();
         info!("Loading queue log segments from {}", dir);
 
@@ -167,7 +170,10 @@ impl QueueLog {
         index_files: BTreeSet<i64>,
         log_files: BTreeSet<i64>,
         index_file_max_size: u32,
-    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+    ) -> AppResult<(
+        BTreeMap<i64, ReadOnlySegmentIndex>,
+        Option<ActiveSegmentIndex>,
+    )> {
         let mut segments = BTreeMap::new();
         let mut active_segment = None;
 
@@ -202,9 +208,9 @@ impl QueueLog {
         base_offset: i64,
         index_path: &str,
         index_file_max_size: u32,
-    ) -> AppResult<ActiveLogSegment> {
+    ) -> AppResult<ActiveSegmentIndex> {
         let index_file = WritableIndexFile::new(index_path, index_file_max_size as usize)?;
-        ActiveLogSegment::open(topic_partition, base_offset, index_file, None)
+        ActiveSegmentIndex::open(topic_partition, base_offset, index_file, None)
     }
 
     /// Creates a readonly segment
@@ -212,9 +218,13 @@ impl QueueLog {
         topic_partition: &TopicPartition,
         base_offset: i64,
         index_path: &str,
-    ) -> AppResult<ReadOnlyLogSegment> {
+    ) -> AppResult<ReadOnlySegmentIndex> {
         let index_file = ReadOnlyIndexFile::new(index_path)?;
-        Ok(ReadOnlyLogSegment::open(topic_partition, base_offset, index_file))
+        Ok(ReadOnlySegmentIndex::open(
+            topic_partition,
+            base_offset,
+            index_file,
+        ))
     }
 }
 
@@ -239,7 +249,7 @@ mod tests {
     fn test_determine_start_offset() {
         let mut segments = BTreeMap::new();
         let active_segment = Some(
-            ActiveLogSegment::new(
+            ActiveSegmentIndex::new(
                 &TopicPartition::new("test", 0, crate::log::LogType::Queue),
                 100,
                 1024,
@@ -254,7 +264,7 @@ mod tests {
 
         segments.insert(
             50,
-            ReadOnlyLogSegment::open(
+            ReadOnlySegmentIndex::open(
                 &TopicPartition::new("test", 0, crate::log::LogType::Queue),
                 50,
                 ReadOnlyIndexFile::new("dummy").unwrap(),

@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use tracing::{debug, trace};
 
 use crate::{
-    log::{log_segment::LogSegmentCommon, seek, LogType, PositionInfo, NO_POSITION_INFO},
+    log::{segment_index::SegmentIndexCommon, seek, LogType, PositionInfo, NO_POSITION_INFO},
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
     AppError, AppResult,
 };

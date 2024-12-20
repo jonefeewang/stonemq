@@ -80,9 +80,9 @@ impl LogManager {
         let log_config = &global_config().log;
         let journal_index_file_size = log_config.journal_index_file_size as u32;
         let queue_index_file_size = log_config.queue_index_file_size as u32;
-        let journal_logs = self.load_journal_logs(journal_index_file_size).await?;
+        let journal_logs = self.load_journal_logs(journal_index_file_size)?;
         self.journal_logs.extend(journal_logs);
-        let queue_logs = self.load_queue_logs(queue_index_file_size).await?;
+        let queue_logs = self.load_queue_logs(queue_index_file_size)?;
         self.queue_logs.extend(queue_logs);
 
         // startup background tasks
@@ -92,7 +92,7 @@ impl LogManager {
         Ok(log_manager)
     }
 
-    pub async fn load_journal_logs(
+    pub fn load_journal_logs(
         &self,
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
@@ -106,7 +106,7 @@ impl LogManager {
             )));
         }
 
-        let logs = self.do_load_journal_log(index_file_max_size).await?;
+        let logs = self.do_load_journal_log(index_file_max_size)?;
         info!(
             "load {} logs from dir:{} finished",
             logs.len(),
@@ -115,7 +115,7 @@ impl LogManager {
         Ok(logs)
     }
 
-    async fn do_load_journal_log(
+    fn do_load_journal_log(
         &self,
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<JournalLog>)>> {
@@ -163,7 +163,7 @@ impl LogManager {
         Ok(logs)
     }
 
-    pub async fn load_queue_logs(
+    pub fn load_queue_logs(
         &self,
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
@@ -177,7 +177,7 @@ impl LogManager {
             )));
         }
 
-        let logs = self.do_load_queue_logs(index_file_max_size).await?;
+        let logs = self.do_load_queue_logs(index_file_max_size)?;
         info!(
             "load {} logs from dir:{} finished",
             logs.len(),
@@ -186,7 +186,7 @@ impl LogManager {
         Ok(logs)
     }
 
-    async fn do_load_queue_logs(
+    fn do_load_queue_logs(
         &self,
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
@@ -223,7 +223,7 @@ impl LogManager {
         Ok(logs)
     }
 
-    pub async fn get_or_create_journal_log(
+    pub fn get_or_create_journal_log(
         &self,
         topic_partition: &TopicPartition,
     ) -> AppResult<Arc<JournalLog>> {
@@ -243,7 +243,7 @@ impl LogManager {
             }
         }
     }
-    pub async fn get_or_create_queue_log(
+    pub fn get_or_create_queue_log(
         &self,
         topic_partition: &TopicPartition,
     ) -> AppResult<Arc<QueueLog>> {

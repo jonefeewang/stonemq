@@ -9,7 +9,7 @@ use super::{JournalLog, JournalLogMetadata};
 use crate::{
     log::{
         index_file::{ReadOnlyIndexFile, WritableIndexFile},
-        log_segment::{ActiveLogSegment, LogSegmentCommon, ReadOnlyLogSegment},
+        segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
         CheckPointFile, LogType, SegmentFileType, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
     },
     message::TopicPartition,
@@ -91,12 +91,7 @@ impl JournalLog {
         };
 
         // build log
-        let log = JournalLog::open(
-            segments,
-            active_segment.unwrap(),
-            topic_partition,
-            metadata,
-        )?;
+        let log = JournalLog::open(segments, active_segment.unwrap(), topic_partition, metadata)?;
 
         info!(
             "loaded journal log:{} next_offset:{}, recover_point:{}, split_offset:{}",
@@ -148,7 +143,10 @@ impl JournalLog {
         topic_partition: &TopicPartition,
         dir: impl AsRef<Path>,
         max_index_file_size: usize,
-    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+    ) -> AppResult<(
+        BTreeMap<i64, ReadOnlySegmentIndex>,
+        Option<ActiveSegmentIndex>,
+    )> {
         let (index_files, log_files) = Self::scan_segment_files(dir)?;
 
         if log_files.is_empty() {
@@ -209,7 +207,10 @@ impl JournalLog {
         index_files: BTreeSet<i64>,
         log_files: BTreeSet<i64>,
         max_index_file_size: usize,
-    ) -> AppResult<(BTreeMap<i64, ReadOnlyLogSegment>, Option<ActiveLogSegment>)> {
+    ) -> AppResult<(
+        BTreeMap<i64, ReadOnlySegmentIndex>,
+        Option<ActiveSegmentIndex>,
+    )> {
         let mut segments = BTreeMap::new();
         let mut active_segment = None;
 
@@ -254,20 +255,24 @@ impl JournalLog {
         topic_partition: &TopicPartition,
         base_offset: i64,
         max_index_file_size: usize,
-    ) -> AppResult<ActiveLogSegment> {
+    ) -> AppResult<ActiveSegmentIndex> {
         let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
         let index_file = WritableIndexFile::new(index_file_name, max_index_file_size)?;
-        ActiveLogSegment::open(topic_partition, base_offset, index_file, None)
+        ActiveSegmentIndex::open(topic_partition, base_offset, index_file, None)
     }
 
     /// create readonly segment
     fn create_readonly_segment(
         topic_partition: &TopicPartition,
         base_offset: i64,
-    ) -> AppResult<ReadOnlyLogSegment> {
+    ) -> AppResult<ReadOnlySegmentIndex> {
         let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
         let index_file = ReadOnlyIndexFile::new(index_file_name)?;
-        Ok(ReadOnlyLogSegment::open(topic_partition, base_offset, index_file))
+        Ok(ReadOnlySegmentIndex::open(
+            topic_partition,
+            base_offset,
+            index_file,
+        ))
     }
 }
 

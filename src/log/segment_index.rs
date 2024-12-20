@@ -10,7 +10,7 @@ use tracing::trace;
 use super::{LogType, ACTIVE_LOG_FILE_WRITER, INDEX_FILE_SUFFIX};
 
 /// 定义日志段的公共行为
-pub trait LogSegmentCommon {
+pub trait SegmentIndexCommon {
     fn base_offset(&self) -> i64;
     fn lookup_index(&self, relative_offset: u32) -> Option<(u32, u32)>;
     fn size(&self) -> u64;
@@ -38,14 +38,14 @@ pub trait LogSegmentCommon {
 }
 
 #[derive(Debug)]
-pub struct ReadOnlyLogSegment {
+pub struct ReadOnlySegmentIndex {
     topic_partition: TopicPartition,
     base_offset: i64,
     offset_index: ReadOnlyIndexFile,
 }
 
 #[derive(Debug)]
-pub struct ActiveLogSegment {
+pub struct ActiveSegmentIndex {
     topic_partition: TopicPartition,
     base_offset: i64,
     offset_index: WritableIndexFile,
@@ -59,7 +59,7 @@ pub struct PositionInfo {
     pub position: i64,
 }
 
-impl LogSegmentCommon for ReadOnlyLogSegment {
+impl SegmentIndexCommon for ReadOnlySegmentIndex {
     fn base_offset(&self) -> i64 {
         self.base_offset
     }
@@ -81,7 +81,7 @@ impl LogSegmentCommon for ReadOnlyLogSegment {
     }
 }
 
-impl LogSegmentCommon for ActiveLogSegment {
+impl SegmentIndexCommon for ActiveSegmentIndex {
     fn base_offset(&self) -> i64 {
         self.base_offset
     }
@@ -95,7 +95,7 @@ impl LogSegmentCommon for ActiveLogSegment {
     }
 }
 
-impl ReadOnlyLogSegment {
+impl ReadOnlySegmentIndex {
     pub fn open(
         topic_partition: &TopicPartition,
         base_offset: i64,
@@ -109,7 +109,7 @@ impl ReadOnlyLogSegment {
     }
 }
 
-impl ActiveLogSegment {
+impl ActiveSegmentIndex {
     pub fn new(
         topic_partition: &TopicPartition,
         base_offset: i64,
@@ -143,7 +143,7 @@ impl ActiveLogSegment {
     }
 
     pub fn update_index(
-        &self,
+        &mut self,
         records_size: usize,
         first_offset: i64,
         log_type: LogType,
@@ -181,10 +181,10 @@ impl ActiveLogSegment {
     }
 
     /// 将活动段转换为只读段
-    pub fn into_readonly(self) -> AppResult<ReadOnlyLogSegment> {
+    pub fn into_readonly(self) -> AppResult<ReadOnlySegmentIndex> {
         let readonly_offset_index = self.offset_index.into_readonly()?;
 
-        Ok(ReadOnlyLogSegment {
+        Ok(ReadOnlySegmentIndex {
             topic_partition: self.topic_partition,
             base_offset: self.base_offset,
             offset_index: readonly_offset_index,
