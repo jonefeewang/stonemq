@@ -10,16 +10,18 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
 
 use super::log_request::{FlushRequest, JournalFileWriteReq, QueueFileWriteReq};
-use super::{ActiveLogFileWriter, FileWriteRequest, SegmentLog};
+use super::{ActiveLogFileWriter, FileWriteRequest, SegmentLog, WriteConfig};
 
 impl ActiveLogFileWriter {
     pub fn new(
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
-        config: Option<WorkerPoolConfig>,
+        worker_pool_config: Option<WorkerPoolConfig>,
+        write_config: Option<WriteConfig>,
     ) -> Self {
         let writers = Arc::new(DashMap::new());
-        let config = config.unwrap_or_default();
+        let config = worker_pool_config.unwrap_or_default();
+        let write_config = write_config.unwrap_or_default();
 
         let handler = FileWriteHandler {
             writers: Arc::clone(&writers),
@@ -30,13 +32,14 @@ impl ActiveLogFileWriter {
         Self {
             writers,
             worker_pool,
+            write_config,
         }
     }
 
     /// Open a new log file for the new base offset of the topic partition.
     /// Add the new segment to the mapping, allowing the previous segment to be automatically dropped.
     pub fn open_file(&self, topic_partition: &TopicPartition, base_offset: i64) -> io::Result<()> {
-        let segment_log = SegmentLog::new(base_offset, topic_partition);
+        let segment_log = SegmentLog::new(base_offset, topic_partition, &self.write_config);
         self.writers.insert(topic_partition.clone(), segment_log);
         Ok(())
     }
@@ -101,19 +104,19 @@ impl PoolHandler<FileWriteRequest> for FileWriteHandler {
     async fn handle(&self, request: FileWriteRequest) {
         match request {
             FileWriteRequest::AppendJournal { request, reply } => {
-                if let Some(writer) = self.writers.get(&request.topic_partition) {
+                if let Some(mut writer) = self.writers.get_mut(&request.topic_partition) {
                     let result = writer.write_journal(request).await;
                     let _ = reply.send(result.map_err(Into::into));
                 }
             }
             FileWriteRequest::AppendQueue { request, reply } => {
-                if let Some(writer) = self.writers.get(&request.topic_partition) {
+                if let Some(mut writer) = self.writers.get_mut(&request.topic_partition) {
                     let result = writer.write_queue(request).await;
                     let _ = reply.send(result.map_err(Into::into));
                 }
             }
             FileWriteRequest::Flush { request, reply } => {
-                if let Some(writer) = self.writers.get(&request.topic_partition) {
+                if let Some(mut writer) = self.writers.get_mut(&request.topic_partition) {
                     let result = writer.flush().await;
                     let _ = reply.send(result.map_err(Into::into));
                 }

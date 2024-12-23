@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::log::log_file_writer::{FlushRequest, QueueFileWriteReq};
+use crate::log::log_file_writer::{global_active_log_file_writer, FlushRequest, QueueFileWriteReq};
 use crate::log::segment_index::{ActiveSegmentIndex, SegmentIndexCommon};
-use crate::log::{LogAppendInfo, LogType, ACTIVE_LOG_FILE_WRITER, DEFAULT_LOG_APPEND_TIME};
+use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
 use tracing::trace;
@@ -94,7 +94,7 @@ impl QueueLog {
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
+        global_active_log_file_writer().flush(request).await?;
         self.active_segment.write().flush_index()?;
         self.recover_point.store(self.last_offset.load());
         let old_base_offset = self.active_segment_id.load();
@@ -160,7 +160,7 @@ impl QueueLog {
             records: memory_records,
         };
 
-        ACTIVE_LOG_FILE_WRITER
+        global_active_log_file_writer()
             .append_queue(queue_log_write_op)
             .await
     }
@@ -186,7 +186,7 @@ impl QueueLog {
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        ACTIVE_LOG_FILE_WRITER.flush(request).await?;
+        global_active_log_file_writer().flush(request).await?;
 
         self.recover_point.store(self.last_offset.load());
         Ok(())

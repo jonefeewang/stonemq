@@ -98,7 +98,7 @@ impl ReplicaManager {
                     .append_record_to_leader(
                         partition.message_set,
                         topic_partition.clone(),
-                        &self.journal_prepare_pool,
+                        &global_active_log_file_writer().journal_prepare_pool,
                     )
                     .await;
                 if let Ok(LogAppendInfo { first_offset, .. }) = append_result {

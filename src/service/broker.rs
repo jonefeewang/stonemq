@@ -38,7 +38,7 @@ impl Broker {
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
         // 初始化全局 writer
-        ActiveLogFileWriter::global_init(notify_shutdown.clone(), shutdown_complete_tx.clone());
+        ActiveLogFileWriter::global_init(notify_shutdown.clone(), shutdown_complete_tx.clone(), None, None);
 
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());

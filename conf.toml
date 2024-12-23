@@ -54,3 +54,21 @@ kv_store_path = "test_data/kv_store/kv.db"
 group_min_session_timeout = 6_000
 group_max_session_timeout = 300_000
 group_initial_rebalance_delay = 3000
+
+
+[log_file_writer]
+
+# default channel capacity 1024
+channel_capacity = 1024
+# default num channels 4
+num_channels = 4
+# default monitor interval 5000ms
+monitor_interval = 5000
+# default worker check timeout 200ms
+worker_check_timeout = 200
+
+
+# default buffer capacity 1M
+buffer_capacity = 1_048_576
+# default flush interval 500ms
+flush_interval = 500

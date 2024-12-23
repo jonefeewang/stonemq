@@ -54,7 +54,7 @@ impl JournalLog {
             })?;
 
         // Check if the offset belongs to the active segment
-        if segment_offset == self.active_segment_id.load() {
+        if segment_offset == self.active_segment_base_offset.load() {
             self.active_segment_index
                 .read()
                 .get_relative_position(offset)
@@ -82,7 +82,7 @@ impl JournalLog {
     /// The base offset of the active segment as an `i64`
     #[inline]
     pub fn current_active_seg_offset(&self) -> i64 {
-        self.active_segment_id.load()
+        self.active_segment_base_offset.load()
     }
 
     /// Calculates the overhead size for a journal log record.

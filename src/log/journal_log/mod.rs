@@ -25,6 +25,8 @@ use crate::{
     AppError, AppResult,
 };
 
+use super::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon};
+
 struct JournalLogMetadata {
     queue_next_offset_info: DashMap<TopicPartition, i64>,
     queue_next_offset_checkpoints: CheckPointFile,
@@ -33,11 +35,6 @@ struct JournalLogMetadata {
     recover_point: i64,
     split_offset: i64,
 }
-
-use super::{
-    segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
-    segment_log::ActiveSegmentLog,
-};
 
 /// Represents a journal log manager for a log partition.
 ///
@@ -58,11 +55,8 @@ pub struct JournalLog {
     /// Currently active segment
     active_segment_index: RwLock<ActiveSegmentIndex>,
 
-    /// Currently active segment log
-    active_segment_log: ActiveSegmentLog,
-
     /// Base offset of current active segment
-    active_segment_id: AtomicCell<i64>,
+    active_segment_base_offset: AtomicCell<i64>,
 
     /// Next offset information for queues
     queue_next_offset_info: DashMap<TopicPartition, i64>,
@@ -124,14 +118,11 @@ impl JournalLog {
             index_file_max_size as usize,
         )?;
 
-        let active_segment_log = ActiveSegmentLog::new(0, topic_partition);
-
         Ok(Self {
             segments_order: RwLock::new(BTreeSet::new()),
             segment_index: DashMap::new(),
             active_segment_index: RwLock::new(segment),
-            active_segment_id: AtomicCell::new(0),
-            active_segment_log,
+            active_segment_base_offset: AtomicCell::new(0),
             queue_next_offset_info: DashMap::new(),
             queue_next_offset_checkpoints: CheckPointFile::new(format!(
                 "{}/{}",
@@ -174,16 +165,14 @@ impl JournalLog {
             .into_iter()
             .map(|(k, v)| (k, Arc::new(v)))
             .collect();
-        let active_segment_base_offset = active_segment.base_offset();
 
-        let active_segment_log = ActiveSegmentLog::new(active_segment_base_offset, topic_partition);
+        let active_segment_base_offset = active_segment.base_offset();
 
         Ok(Self {
             segments_order: RwLock::new(segments_order),
             segment_index: segments_map,
             active_segment_index: RwLock::new(active_segment),
-            active_segment_id: AtomicCell::new(active_segment_base_offset),
-            active_segment_log,
+            active_segment_base_offset: AtomicCell::new(active_segment_base_offset),
             queue_next_offset_info: metadata.queue_next_offset_info,
             queue_next_offset_checkpoints: metadata.queue_next_offset_checkpoints,
             _log_start_offset: AtomicCell::new(metadata.log_start_offset),

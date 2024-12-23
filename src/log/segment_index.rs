@@ -7,7 +7,8 @@ use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use tracing::trace;
 
-use super::{LogType, ACTIVE_LOG_FILE_WRITER, INDEX_FILE_SUFFIX};
+use super::log_file_writer::global_active_log_file_writer;
+use super::{LogType, INDEX_FILE_SUFFIX};
 
 /// 定义日志段的公共行为
 pub trait SegmentIndexCommon {
@@ -91,7 +92,7 @@ impl SegmentIndexCommon for ActiveSegmentIndex {
     }
 
     fn size(&self) -> u64 {
-        ACTIVE_LOG_FILE_WRITER.active_segment_size(&self.topic_partition)
+        global_active_log_file_writer().active_segment_size(&self.topic_partition)
     }
 }
 
@@ -132,7 +133,7 @@ impl ActiveSegmentIndex {
         _time_index: Option<WritableIndexFile>,
     ) -> AppResult<Self> {
         // open log file
-        ACTIVE_LOG_FILE_WRITER.open_file(topic_partition, base_offset)?;
+        global_active_log_file_writer().open_file(topic_partition, base_offset)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),

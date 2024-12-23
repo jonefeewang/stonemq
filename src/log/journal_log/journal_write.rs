@@ -10,9 +10,9 @@ use tracing::{debug, trace};
 use crate::{
     global_config,
     log::{
+        log_file_writer::{global_active_log_file_writer, FlushRequest, JournalFileWriteReq},
         segment_index::{ActiveSegmentIndex, SegmentIndexCommon},
-        segment_log::{ActiveSegmentLog, FlushRequest, JournalFileWriteReq},
-        LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME, LOG_FILE_SUFFIX,
+        LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME,
     },
     message::{MemoryRecords, RecordBatch, TopicPartition},
     AppError, AppResult,
@@ -72,10 +72,8 @@ impl JournalLog {
             records: memory_records,
         };
 
-        if let Err(e) = self
-            .active_segment_log
-            .write()
-            .write_journal(journal_log_write_op)
+        if let Err(e) = global_active_log_file_writer()
+            .append_journal(journal_log_write_op)
             .await
         {
             reply_sender
@@ -159,10 +157,14 @@ impl JournalLog {
         let new_base_offset = self.next_offset.load();
 
         // Flush old segment
-        self.active_segment_log.flush().await?;
+        global_active_log_file_writer()
+            .flush(FlushRequest {
+                topic_partition: self.topic_partition.clone(),
+            })
+            .await?;
         self.active_segment_index.write().flush_index()?;
         self.recover_point.store(self.next_offset.load() - 1);
-        let old_base_offset = self.active_segment_id.load();
+        let old_base_offset = self.active_segment_base_offset.load();
 
         // Create new segment
         let new_seg = ActiveSegmentIndex::new(
@@ -171,17 +173,11 @@ impl JournalLog {
             global_config().log.journal_segment_size as usize,
         )?;
 
-        let new_active_segment_log = ActiveSegmentLog::new(new_base_offset, &self.topic_partition);
-
         {
             // Swap active segment index
             let mut active_seg_index = self.active_segment_index.write();
             let old_segment_index = std::mem::replace(&mut *active_seg_index, new_seg);
-            self.active_segment_id.store(new_base_offset);
-
-            // swap active segment log
-            self.active_segment_log = new_active_segment_log;
-
+            self.active_segment_base_offset.store(new_base_offset);
             // add old segment to segments
             let readonly_seg = old_segment_index.into_readonly()?;
             let mut segments_order = self.segments_order.write();
@@ -292,7 +288,7 @@ impl JournalLog {
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        self.active_segment_log.write().flush().await?;
+        global_active_log_file_writer().flush(request).await?;
 
         self.recover_point.store(self.next_offset.load() - 1);
 
