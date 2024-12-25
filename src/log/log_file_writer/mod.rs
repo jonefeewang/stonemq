@@ -63,7 +63,7 @@ pub fn global_active_log_file_writer() -> &'static Arc<ActiveLogFileWriter> {
 }
 
 #[derive(Debug, Clone)]
-struct WriteConfig {
+pub struct WriteConfig {
     pub buffer_capacity: usize,   // 例如：1MB
     pub flush_interval: Duration, // 例如：100ms
 }

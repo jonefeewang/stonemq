@@ -1,26 +1,25 @@
-use super::DelayedFetch;
-use crate::log::{JournalLog, LogManager, LogType};
+use super::{global_journal_partition_appender, DelayedFetch};
 use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
+use crate::log::{LogManager, LogType};
 use crate::message::{JournalPartition, QueuePartition, TopicData, TopicPartition};
 use crate::request::{ErrorCode, KafkaError, PartitionResponse};
-use crate::utils::{
-    DelayedAsyncOperationPurgatory, MultipleChannelWorkerPool, WorkerPoolConfig,
-    JOURNAL_TOPICS_LIST, QUEUE_TOPICS_LIST,
-};
-use crate::{global_config, AppError, AppResult, KvStore, MemoryRecords, Shutdown};
+use crate::utils::DelayedAsyncOperationPurgatory;
+use crate::{global_config, AppError, AppResult, Shutdown};
 use dashmap::DashMap;
+use rocksdb::DB;
 
 use std::collections::{BTreeMap, HashSet};
 
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{broadcast, oneshot};
 use tracing::{debug, error, info};
 
 use super::{JournalReplica, QueueReplica, ReplicaManager};
 
 impl ReplicaManager {
+    const KEY_QUEUE_TOPICS: &str = "queue_topics";
     pub async fn new(
         log_manager: Arc<LogManager>,
         notify_shutdown: broadcast::Sender<()>,
@@ -80,27 +79,10 @@ impl ReplicaManager {
                     journal_tp.unwrap().clone()
                 };
 
-                let journal_partition = {
-                    let journal_partition = self.all_journal_partitions.get(&journal_tp_clone);
-                    if journal_partition.is_none() {
-                        tp_response.insert(
-                            topic_partition.clone(),
-                            error_response(
-                                &topic_partition,
-                                ErrorCode::UnknownTopicOrPartition as i16,
-                            ),
-                        );
-                        continue;
-                    }
-                    journal_partition.unwrap().clone()
-                };
-                let append_result = journal_partition
-                    .append_record_to_leader(
-                        partition.message_set,
-                        topic_partition.clone(),
-                        &global_active_log_file_writer().journal_prepare_pool,
-                    )
+                let append_result = global_journal_partition_appender()
+                    .append_journal(&topic_partition, &journal_tp_clone, partition.message_set)
                     .await;
+
                 if let Ok(LogAppendInfo { first_offset, .. }) = append_result {
                     tp_response.insert(
                         topic_partition.clone(),
@@ -137,20 +119,10 @@ impl ReplicaManager {
     ///
     pub fn startup(&mut self) -> AppResult<()> {
         info!("ReplicaManager starting up...");
-        // load all partitions from kv db
-        let kv_store_file_path = &global_config().log.kv_store_path;
+
         let broker_id = global_config().general.id;
-        let kv_store = KvStore::open(kv_store_file_path)?;
-        // load journal partitions
-        // In cluster mode, this list should be obtained from the controller
-        // Here, a simulated journal topic list includes: journal-0, journal-1
-        let journal_tps = kv_store
-            .get(JOURNAL_TOPICS_LIST)
-            .ok_or(AppError::InvalidValue(
-                "kv config journal_topics_list".to_string(),
-            ))?;
-        let tp_strs: Vec<&str> = journal_tps.split(',').map(|token| token.trim()).collect();
-        let mut partitions = self.create_journal_partitions(broker_id, tp_strs)?;
+        let journal_tps = self.get_journal_topics();
+        let mut partitions = self.create_journal_partitions(broker_id, &journal_tps)?;
         self.all_journal_partitions.extend(
             partitions
                 .drain(..)
@@ -164,15 +136,17 @@ impl ReplicaManager {
                 .collect::<Vec<String>>()
         );
 
+        // register journal partitions to the appender
+        self.all_journal_partitions.iter().for_each(|entry| {
+            global_journal_partition_appender()
+                .register_partition(entry.key().clone(), entry.value().clone());
+        });
+
         // load queue partitions
         // Here, simulate 10 queue partitions (with 5 queue partitions allocated to each journal).
-        let queue_tps = kv_store
-            .get(QUEUE_TOPICS_LIST)
-            .ok_or(AppError::InvalidValue(
-                "kv config queue_topics_list".to_string(),
-            ))?;
-        let tp_strs: Vec<&str> = queue_tps.split(',').collect();
-        let mut partitions = self.create_queue_partitions(broker_id, tp_strs)?;
+        let queue_tps = self.get_queue_topics();
+
+        let mut partitions = self.create_queue_partitions(broker_id, &queue_tps)?;
         self.all_queue_partitions.extend(
             partitions
                 .drain(..)
@@ -186,14 +160,9 @@ impl ReplicaManager {
                 .collect::<Vec<String>>()
         );
 
-        // 确定journal和queue的对应关系
-        // 获取实际的 JournalLog 数量
-        let journal_log_count = self.all_journal_partitions.len();
-
-        if journal_log_count == 0 {
-            return Err(AppError::IllegalStateError("没有可用的 JournalLog".into()));
-        }
-
+        // establish the relationship between journal and queue
+        // get the actual JournalLog count
+        let journal_count = global_config().log.journal_count;
         let mut sorted_queue_partitions = self
             .all_queue_partitions
             .iter()
@@ -201,12 +170,11 @@ impl ReplicaManager {
             .collect::<Vec<_>>();
         sorted_queue_partitions.sort_by_key(|entry| entry.id());
 
-        // 使用迭代器索引来实现轮询
         sorted_queue_partitions
             .iter()
             .enumerate()
             .for_each(|(index, entry)| {
-                let journal_partition = index % journal_log_count;
+                let journal_partition = index % journal_count as usize;
                 let journal_topic =
                     TopicPartition::new_journal("journal".to_string(), journal_partition as i32);
                 self.queue_2_journal.insert(entry.clone(), journal_topic);
@@ -226,7 +194,7 @@ impl ReplicaManager {
                 .collect::<Vec<String>>()
         );
 
-        // 启动journal log splitter
+        // start journal log splitter
         // Create a BTreeMap to store the reverse mapping
         let mut journal_to_queues: BTreeMap<TopicPartition, HashSet<TopicPartition>> =
             BTreeMap::new();
@@ -242,7 +210,7 @@ impl ReplicaManager {
                 .insert(queue_tp);
         }
 
-        // 启动journal log splitter
+        // start journal log splitter
         for (journal_tp, queue_tps) in journal_to_queues {
             let shutdown = Shutdown::new(self.notify_shutdown.subscribe());
             let shutdown_complete_tx = self._shutdown_complete_tx.clone();
@@ -263,7 +231,7 @@ impl ReplicaManager {
     fn create_journal_partitions(
         &mut self,
         broker_id: i32,
-        tp_strs: Vec<&str>,
+        tp_strs: &Vec<String>,
     ) -> Result<Vec<(TopicPartition, JournalPartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
@@ -277,7 +245,7 @@ impl ReplicaManager {
                 .or_default()
                 .insert(topic_partition.partition());
 
-            // 获取对应的log，没有的话，创建一个
+            // get the corresponding log, if not, create one
             let log = self
                 .log_manager
                 .get_or_create_journal_log(&topic_partition)?;
@@ -291,7 +259,7 @@ impl ReplicaManager {
     fn create_queue_partitions(
         &self,
         broker_id: i32,
-        tp_strs: Vec<&str>,
+        tp_strs: &Vec<String>,
     ) -> Result<Vec<(TopicPartition, QueuePartition)>, AppError> {
         let mut partitions = Vec::with_capacity(tp_strs.len());
         for tp_str in tp_strs {
@@ -314,14 +282,14 @@ impl ReplicaManager {
         Ok(partitions)
     }
     ///
-    /// 返回(主题名称, 主题分区列表, 协议错误)
+    /// return (topic name, topic partitions, protocol error)
     pub fn get_queue_metadata(
         &self,
         topics: Option<Vec<&str>>,
     ) -> Vec<(String, Option<Vec<i32>>, Option<AppError>)> {
         match topics {
             None => {
-                // 返回所有主题
+                // return all topics
                 self.queue_metadata_cache
                     .iter()
                     .map(|entry| {
@@ -334,7 +302,7 @@ impl ReplicaManager {
                     .collect()
             }
             Some(topics) => {
-                // 返回客户端要求的主题
+                // return the topics requested by the client
                 topics
                     .iter()
                     .map(|topic| {
@@ -356,18 +324,30 @@ impl ReplicaManager {
             }
         }
     }
+    fn get_journal_topics(&self) -> Vec<String> {
+        let journal_count = global_config().log.journal_count;
+        let mut topics = Vec::with_capacity(journal_count as usize);
+        for i in 0..journal_count {
+            topics.push(format!("journal-{}", i));
+        }
+        topics
+    }
+
+    fn get_queue_topics(&self) -> Vec<String> {
+        let path = &global_config().general.local_db_path;
+        let db = DB::open_default(path).unwrap();
+        let topics = db.get(Self::KEY_QUEUE_TOPICS).unwrap().unwrap();
+        let topics: Vec<String> = String::from_utf8(topics)
+            .unwrap()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+        topics
+    }
 }
 
 impl Drop for ReplicaManager {
     fn drop(&mut self) {
         debug!("replica manager dropped");
     }
-}
-
-#[derive(Debug)]
-pub struct AppendJournalLogReq {
-    pub record: MemoryRecords,
-    pub queue_topic_partition: TopicPartition,
-    pub reply_sender: oneshot::Sender<AppResult<LogAppendInfo>>,
-    pub journal_log: Arc<JournalLog>,
 }

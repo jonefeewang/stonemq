@@ -1,6 +1,6 @@
 use crate::group_consume::GroupCoordinator;
 use crate::log::{ActiveLogFileWriter, LogManager};
-use crate::replica::ReplicaManager;
+use crate::replica::{PartitionAppender, ReplicaManager};
 use crate::service::Server;
 use crate::AppError::{self, IllegalStateError};
 use crate::{global_config, AppResult};
@@ -37,8 +37,15 @@ impl Broker {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
-        // 初始化全局 writer
-        ActiveLogFileWriter::global_init(notify_shutdown.clone(), shutdown_complete_tx.clone(), None, None);
+        // init global log writer
+        ActiveLogFileWriter::global_init(
+            notify_shutdown.clone(),
+            shutdown_complete_tx.clone(),
+            None,
+            None,
+        );
+        // init global journal partition appender
+        PartitionAppender::global_init(notify_shutdown.clone(), shutdown_complete_tx.clone(), None);
 
         // startup log manager
         let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());

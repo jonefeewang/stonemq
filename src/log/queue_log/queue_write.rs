@@ -132,10 +132,10 @@ impl QueueLog {
     ) -> LogAppendInfo {
         LogAppendInfo {
             first_offset: first_batch_queue_base_offset,
-            last_offset: last_batch_queue_base_offset,
+            _last_offset: last_batch_queue_base_offset,
             _max_timestamp: -1,
             _offset_of_max_timestamp: -1,
-            records_count,
+            _records_count: records_count,
             _log_append_time: DEFAULT_LOG_APPEND_TIME,
         }
     }

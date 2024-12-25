@@ -16,8 +16,8 @@ max_connection = 65536
 max_package_size = 10_048_576
 
 [log]
-
 ###### general config
+journal_topic_count = 2
 recovery_checkpoint_interval = 1000
 file_records_comm_channel_size = 1000
 ## default 8192(8kb)
@@ -44,7 +44,6 @@ queue_base_dir = "/tmp/queue"
 queue_index_file_size = 10_485_760
 # default index interval 4096 bytes
 queue_index_interval_bytes = 4096
-
 ###### kv config
 kv_store_path = "test_data/kv_store/kv.db"
 
@@ -57,7 +56,6 @@ group_initial_rebalance_delay = 3000
 
 
 [log_file_writer]
-
 # default channel capacity 1024
 channel_capacity = 1024
 # default num channels 4

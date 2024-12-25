@@ -65,13 +65,13 @@ pub struct LogAppendInfo {
     /// First offset in the append batch
     pub first_offset: i64,
     /// Last offset in the append batch
-    pub last_offset: i64,
+    pub _last_offset: i64,
     /// Maximum timestamp in the batch
     pub _max_timestamp: i64,
     /// Offset of the record with maximum timestamp
     pub _offset_of_max_timestamp: i64,
     /// Number of records in the batch
-    pub records_count: u32,
+    pub _records_count: u32,
     /// Timestamp when the append occurred
     pub _log_append_time: i64,
 }

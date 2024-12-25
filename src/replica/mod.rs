@@ -1,12 +1,9 @@
 mod delayed_fetch;
-mod manager;
+mod replica_manager;
+mod partation_appender;
 mod read;
 
-pub use manager::AppendJournalLogReq;
-
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Arc;
+pub use partation_appender::PartitionAppender;
 
 use crate::log::JournalLog;
 use crate::log::LogManager;
@@ -16,10 +13,12 @@ use crate::message::LogFetchInfo;
 use crate::message::{JournalPartition, QueuePartition, TopicPartition};
 use crate::request::FetchRequest;
 use crate::utils::DelayedAsyncOperationPurgatory;
-
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
-
+use once_cell::sync::OnceCell;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -69,4 +68,10 @@ pub struct DelayedFetch {
     pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
     pub tx: Arc<Mutex<Option<FetchResultSender>>>,
     is_completed: AtomicCell<bool>,
+}
+
+pub static JOURNAL_PARTITION_APPENDER: OnceCell<Arc<PartitionAppender>> = OnceCell::new();
+
+pub fn global_journal_partition_appender() -> &'static Arc<PartitionAppender> {
+    JOURNAL_PARTITION_APPENDER.get().unwrap()
 }

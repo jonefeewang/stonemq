@@ -47,7 +47,7 @@ fn run() -> AppResult<()> {
         .worker_threads(worker_num)
         .enable_all()
         .build()?;
-    let _otel_guard = rt.block_on(setup_tracing(true, LogMode::Perf));
+    let _otel_guard = rt.block_on(setup_tracing(true, LogMode::Dev));
 
     // setup config
     let config_path = commandline.conf.as_ref().map_or_else(

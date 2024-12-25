@@ -7,8 +7,7 @@ use tracing::trace;
 
 use crate::log::{LogAppendInfo, LogType, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
-use crate::replica::{AppendJournalLogReq, JournalReplica, QueueReplica};
-use crate::utils::MultipleChannelWorkerPool;
+use crate::replica::{JournalReplica, QueueReplica};
 use crate::{global_config, AppError, AppResult};
 
 use super::LogFetchInfo;
@@ -35,8 +34,7 @@ impl JournalPartition {
     pub async fn append_record_to_leader(
         &self,
         record: MemoryRecords,
-        queue_topic_partition: TopicPartition,
-        journal_prepare_pool: &MultipleChannelWorkerPool<AppendJournalLogReq>,
+        queue_topic_partition: &TopicPartition,
     ) -> AppResult<LogAppendInfo> {
         let local_replica_id = global_config().general.id;
 
@@ -51,25 +49,8 @@ impl JournalPartition {
             }
             replica.unwrap().log.clone()
         };
-        let (reply_sender, reply_receiver) = tokio::sync::oneshot::channel();
 
-        let prepare_request = AppendJournalLogReq {
-            record,
-            queue_topic_partition,
-            reply_sender,
-            journal_log: log,
-        };
-
-        journal_prepare_pool
-            .send(prepare_request, self._topic_partition.partition as i8)
-            .await
-            .map_err(|e| {
-                AppError::ChannelSendError(format!("send prepare request error: {}", e))
-            })?;
-
-        reply_receiver
-            .await
-            .map_err(|e| AppError::ChannelRecvError(format!("receive reply error: {}", e)))?
+        log.append_records(record, queue_topic_partition).await
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: JournalReplica) {

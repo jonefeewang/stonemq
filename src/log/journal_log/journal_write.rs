@@ -4,7 +4,6 @@
 //! including metadata management and segment rolling.
 
 use std::sync::Arc;
-use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
@@ -46,29 +45,25 @@ impl JournalLog {
     pub async fn append_records(
         &self,
         mut memory_records: MemoryRecords,
-        queue_topic_partition: TopicPartition,
-        reply_sender: oneshot::Sender<AppResult<LogAppendInfo>>,
-    ) {
+        queue_topic_partition: &TopicPartition,
+    ) -> AppResult<LogAppendInfo> {
         // Add metadata and validate records
         let log_append_info = match self
-            .process_append_request(&mut memory_records, &queue_topic_partition)
+            .process_append_request(&mut memory_records, queue_topic_partition)
             .await
         {
             Ok(info) => info,
-            Err(e) => {
-                reply_sender.send(Err(e)).unwrap();
-                return;
-            }
+            Err(e) => return Err(e),
         };
 
         // Create and execute write operation
         let journal_log_write_op = JournalFileWriteReq {
             journal_offset: self.next_offset.load(),
             topic_partition: self.topic_partition.clone(),
-            queue_topic_partition,
+            queue_topic_partition: queue_topic_partition.clone(),
             first_batch_queue_base_offset: log_append_info.first_offset,
-            last_batch_queue_base_offset: log_append_info.last_offset,
-            records_count: log_append_info.records_count,
+            last_batch_queue_base_offset: log_append_info._last_offset,
+            records_count: log_append_info._records_count,
             records: memory_records,
         };
 
@@ -76,15 +71,12 @@ impl JournalLog {
             .append_journal(journal_log_write_op)
             .await
         {
-            reply_sender
-                .send(Err(AppError::DetailedIoError(e.to_string())))
-                .unwrap();
-            return;
+            return Err(AppError::DetailedIoError(e.to_string()));
         }
 
         // Update offsets and send success response
         self.next_offset.fetch_add(1);
-        reply_sender.send(Ok(log_append_info)).unwrap();
+        Ok(log_append_info)
     }
 
     /// Process append request
@@ -270,10 +262,10 @@ impl JournalLog {
 
         Ok(LogAppendInfo {
             first_offset,
-            last_offset,
+            _last_offset: last_offset,
             _max_timestamp: max_timestamp,
             _offset_of_max_timestamp: offset_of_max_timestamp,
-            records_count,
+            _records_count: records_count,
             _log_append_time: DEFAULT_LOG_APPEND_TIME,
         })
     }

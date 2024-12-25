@@ -35,14 +35,13 @@ pub struct GroupConsumeConfig {
 /// Represents the configuration for a log.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LogConfig {
-    
+    pub journal_count: u32,
     /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
     pub splitter_read_buffer_size: u32,
     pub splitter_wait_interval: u32,
     pub file_records_comm_channel_size: usize,
 
-    
     pub log_base_dir: String,
     /// The base directory for the journal.
     pub journal_base_dir: String,

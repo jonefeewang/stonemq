@@ -97,7 +97,7 @@ impl GroupMetadataManager {
         for partition in partitions.unwrap_or_default() {
             let key = Self::offset_db_key(group_id, &partition);
             let value = db.get(key);
-            let partition_id = partition.partition() as i32;
+            let partition_id = partition.partition();
             if let Ok(Some(value)) = value {
                 // 如果offset存在，则返回offset
                 let partition_offset_data = PartitionOffsetCommitData::deserialize(&value);

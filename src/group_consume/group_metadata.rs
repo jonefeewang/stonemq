@@ -11,7 +11,7 @@ use super::GroupMetadata;
 use super::GroupState;
 use super::MemberMetadata;
 impl GroupMetadata {
-    /// 创建新的组元数据
+    /// create new group metadata
     pub fn new(group_id: impl Into<String>) -> Self {
         Self {
             id: group_id.into(),
@@ -25,7 +25,7 @@ impl GroupMetadata {
         }
     }
 
-    /// 添加新成员
+    /// add new member
     pub fn add_member(&mut self, member: MemberMetadata) {
         if self.members.is_empty() {
             self.protocol_type = Some(member.protocol_type.clone());
@@ -37,7 +37,7 @@ impl GroupMetadata {
         self.members.insert(member.id.clone(), member);
     }
 
-    /// 移除成员
+    /// remove member
     pub fn remove_member(&mut self, member_id: &str) -> Option<MemberMetadata> {
         let removed_member = self.members.remove(member_id);
         if member_id == self.leader_id.as_deref().unwrap() {
@@ -46,17 +46,17 @@ impl GroupMetadata {
         removed_member
     }
 
-    /// 检查组是否包含指定成员  
+    /// check if the group contains the specified member
     pub fn has_member(&self, member_id: &str) -> bool {
         self.members.contains_key(member_id)
     }
 
-    /// 获取所有成员的可变引用
+    /// get all members' mutable references
     pub fn members(&mut self) -> Vec<&mut MemberMetadata> {
         self.members.values_mut().collect()
     }
 
-    /// 获取组的最大重新平衡超时时间
+    /// get the maximum rebalance timeout for the group
     pub fn max_rebalance_timeout(&self) -> i32 {
         self.members
             .values()
@@ -65,7 +65,7 @@ impl GroupMetadata {
             .unwrap_or(0)
     }
 
-    /// 获取当前成员的匹配组选定协议的元数据
+    /// get the metadata of the current member that matches the group's selected protocol
     pub fn current_member_metadata(&self) -> BTreeMap<String, Bytes> {
         self.members
             .iter()
@@ -78,7 +78,7 @@ impl GroupMetadata {
             .collect()
     }
 
-    /// 为组选择一个协议
+    /// select a protocol for the group
     pub fn select_protocol(&self) -> Result<String, KafkaError> {
         let candidates = self.candidate_protocols();
         if candidates.is_empty() {
@@ -103,7 +103,7 @@ impl GroupMetadata {
             .ok_or_else(|| KafkaError::InconsistentGroupProtocol("No protocol selected".into()))
     }
 
-    /// 获取所有成员共同支持的协议列表
+    /// get the protocols supported by all members
     fn candidate_protocols(&self) -> HashSet<String> {
         self.members
             .values()
@@ -115,12 +115,12 @@ impl GroupMetadata {
             .unwrap_or_default()
     }
 
-    /// 检查组是否支持给定的协议列表
+    /// check if the group supports the given protocol list
     pub fn is_support_protocols(&self, protocols: &HashSet<String>) -> bool {
         self.members.is_empty() || self.candidate_protocols().intersection(protocols).count() > 0
     }
 
-    /// 获取未重新加入的成员列表
+    /// get the members that have not yet rejoined
     pub fn not_yet_rejoined_members(&self) -> Vec<String> {
         self.members
             .values()
@@ -129,7 +129,7 @@ impl GroupMetadata {
             .collect()
     }
 
-    /// 取消所有成员的分配
+    /// cancel all members' assignment
     pub fn cancel_all_member_assignment(&mut self) {
         self.members.values_mut().for_each(|member| {
             member.assignment = None;

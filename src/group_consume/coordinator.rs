@@ -903,7 +903,7 @@ impl GroupCoordinator {
                 HashMap::new();
             for tp in topic_partitions {
                 let topic_partitions = topic_responses.entry(tp.clone()).or_default();
-                topic_partitions.push((tp.partition() as i32, error.clone()));
+                topic_partitions.push((tp.partition(), error.clone()));
             }
             topic_responses
         };
