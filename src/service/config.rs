@@ -85,6 +85,11 @@ pub struct PartitionAppenderPool {
     pub monitor_interval: u64,
     pub worker_check_timeout: u64,
 }
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct ActiveSegmentWriter {
+    pub buffer_capacity: usize,
+    pub flush_interval: u64,
+}
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
@@ -92,6 +97,7 @@ pub struct BrokerConfig {
     pub network: NetworkConfig,
     pub log: LogConfig,
     pub group_consume: GroupConsumeConfig,
+    pub active_segment_writer: ActiveSegmentWriter,
     pub active_segment_writer_pool: ActiveSegmentWriterPool,
     pub request_handler_pool: RequestHandlerPool,
     pub partition_appender_pool: PartitionAppenderPool,

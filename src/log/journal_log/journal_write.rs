@@ -75,6 +75,12 @@ impl JournalLog {
             return Err(AppError::DetailedIoError(e.to_string()));
         }
 
+        debug!(
+            " append journal log success with journal offset {} of topic_partition {}",
+            self.next_offset.load(),
+            self.topic_partition.id()
+        );
+
         // Update offsets and send success response
         self.next_offset.fetch_add(1);
         Ok(log_append_info)

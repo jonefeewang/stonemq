@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use bytes::Buf;
+use tracing::debug;
 
 use crate::log::{JournalLog, LOG_FILE_SUFFIX};
 use crate::message::TopicPartition;
@@ -150,9 +151,10 @@ impl WriteBuffer {
     pub fn try_write(&mut self, data: &[u8]) -> bool {
         if self.should_flush(data.len()) {
             self.last_flush = Instant::now();
-            self.buffer.as_mut().unwrap().extend_from_slice(data);
+            debug!("flush buffer");
             true
         } else {
+            debug!("try write buffer");
             self.buffer.as_mut().unwrap().extend_from_slice(data);
             false
         }

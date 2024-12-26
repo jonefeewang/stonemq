@@ -65,6 +65,8 @@ num_channels = 2
 monitor_interval = 100_000
 # default worker check timeout 200ms
 worker_check_timeout = 200
+
+[active_segment_writer]
 # default buffer capacity 1M
 buffer_capacity = 1_048_576
 # default flush interval 500ms

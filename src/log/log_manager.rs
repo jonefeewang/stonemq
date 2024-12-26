@@ -74,8 +74,10 @@ impl LogManager {
             ),
         };
         let write_config = WriteConfig {
-            buffer_capacity: 1024 * 1024, // 1MB
-            flush_interval: Duration::from_millis(500),
+            buffer_capacity: global_config().active_segment_writer.buffer_capacity,
+            flush_interval: Duration::from_millis(
+                global_config().active_segment_writer.flush_interval,
+            ),
         };
         let active_segment_writer = Arc::new(ActiveSegmentWriter::new(
             notify_shutdown.clone(),
