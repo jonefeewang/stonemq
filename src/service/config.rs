@@ -35,14 +35,14 @@ pub struct GroupConsumeConfig {
 /// Represents the configuration for a log.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LogConfig {
-    pub journal_count: u32,
+    pub journal_topic_count: u32,
+    pub queue_topic_count: u32,
     /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
     pub splitter_read_buffer_size: u32,
     pub splitter_wait_interval: u32,
     pub file_records_comm_channel_size: usize,
 
-    pub log_base_dir: String,
     /// The base directory for the journal.
     pub journal_base_dir: String,
     /// The size of each journal segment.
@@ -65,11 +65,36 @@ pub struct LogConfig {
     pub kv_store_path: String,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct ActiveSegmentWriterPool {
+    pub channel_capacity: usize,
+    pub num_channels: i8,
+    pub monitor_interval: u64,
+    pub worker_check_timeout: u64,
+}
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct RequestHandlerPool {
+    pub channel_capacity: usize,
+    pub num_channels: i8,
+    pub monitor_interval: u64,
+    pub worker_check_timeout: u64,
+}
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct PartitionAppenderPool {
+    pub channel_capacity: usize,
+    pub num_channels: i8,
+    pub monitor_interval: u64,
+    pub worker_check_timeout: u64,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct BrokerConfig {
     pub general: GeneralConfig,
     pub network: NetworkConfig,
     pub log: LogConfig,
     pub group_consume: GroupConsumeConfig,
+    pub active_segment_writer_pool: ActiveSegmentWriterPool,
+    pub request_handler_pool: RequestHandlerPool,
+    pub partition_appender_pool: PartitionAppenderPool,
 }
 
 impl BrokerConfig {

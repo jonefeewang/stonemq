@@ -1,4 +1,5 @@
 use crate::log::{CheckPointFile, JournalLog, RECOVERY_POINT_FILE_NAME, SPLIT_POINT_FILE_NAME};
+use crate::utils::WorkerPoolConfig;
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -16,9 +17,10 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, trace, warn};
 
+use super::log_file_writer::WriteConfig;
 use super::queue_log::QueueLog;
 use super::splitter::SplitterTask;
-use super::LogType;
+use super::{ActiveSegmentWriter, LogType};
 
 ///
 /// 这里使用DashMap来保障并发安全，但是安全仅限于对map entry的增加或删除。对于log的读写操作，则需要tokio RwLock
@@ -38,6 +40,7 @@ pub struct LogManager {
     _shutdown_complete_tx: Sender<()>,
     journal_log_path: String,
     queue_log_path: String,
+    active_segment_writer: Arc<ActiveSegmentWriter>,
 }
 
 impl LogManager {
@@ -58,6 +61,27 @@ impl LogManager {
             global_config().log.journal_base_dir,
             SPLIT_POINT_FILE_NAME
         );
+        let worker_pool_config = WorkerPoolConfig {
+            channel_capacity: global_config().active_segment_writer_pool.channel_capacity,
+            num_channels: global_config().active_segment_writer_pool.num_channels,
+            monitor_interval: Duration::from_millis(
+                global_config().active_segment_writer_pool.monitor_interval,
+            ),
+            worker_check_timeout: Duration::from_millis(
+                global_config()
+                    .active_segment_writer_pool
+                    .worker_check_timeout,
+            ),
+        };
+        let write_config = WriteConfig {
+            buffer_capacity: 1024 * 1024, // 1MB
+            flush_interval: Duration::from_millis(500),
+        };
+        let active_segment_writer = Arc::new(ActiveSegmentWriter::new(
+            notify_shutdown.clone(),
+            Some(worker_pool_config),
+            Some(write_config),
+        ));
 
         LogManager {
             journal_logs: DashMap::new(),
@@ -69,6 +93,7 @@ impl LogManager {
             _shutdown_complete_tx: shutdown_complete_tx,
             journal_log_path: global_config().log.journal_base_dir.clone(),
             queue_log_path: global_config().log.queue_base_dir.clone(),
+            active_segment_writer,
         }
     }
 
@@ -152,6 +177,7 @@ impl LogManager {
                     split_offset,
                     dir.path(),
                     index_file_max_size,
+                    self.active_segment_writer.clone(),
                 )?;
                 logs.push((tp, Arc::new(log)));
             } else if dir.file_name().to_string_lossy().ends_with("checkpoints") {
@@ -213,7 +239,12 @@ impl LogManager {
                 let dir_name = dir.file_name().to_string_lossy().into_owned();
                 let tp = TopicPartition::from_str(&dir_name, LogType::Queue)?;
                 let recovery_offset = recovery_checkpoints.get(&tp).unwrap_or(&0).to_owned();
-                let log = QueueLog::load_from(&tp, recovery_offset, index_file_max_size)?;
+                let log = QueueLog::load_from(
+                    &tp,
+                    recovery_offset,
+                    index_file_max_size,
+                    self.active_segment_writer.clone(),
+                )?;
                 trace!("found log:{:}", &tp.id());
                 logs.push((tp, Arc::new(log)));
             } else {
@@ -236,7 +267,7 @@ impl LogManager {
                     topic_partition.id()
                 );
 
-                let journal_log = JournalLog::new(topic_partition)?;
+                let journal_log = JournalLog::new(topic_partition, self.active_segment_writer.clone())?;
                 let log = Arc::new(journal_log);
                 vacant.insert(log.clone());
                 Ok(log)
@@ -252,7 +283,10 @@ impl LogManager {
         match log {
             Entry::Occupied(occupied) => Ok(occupied.get().clone()),
             Entry::Vacant(vacant) => {
-                let log = Arc::new(QueueLog::new(topic_partition)?);
+                let log = Arc::new(QueueLog::new(
+                    topic_partition,
+                    self.active_segment_writer.clone(),
+                )?);
                 vacant.insert(log.clone());
                 Ok(log)
             }

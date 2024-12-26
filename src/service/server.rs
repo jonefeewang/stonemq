@@ -9,7 +9,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tokio::time::{self, Duration};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::group_consume::GroupCoordinator;
 use crate::network::{Connection, RequestFrame};
@@ -18,9 +18,9 @@ use crate::request::{ApiRequest, RequestContext, RequestProcessor};
 use crate::AppError;
 use crate::AppResult;
 
-use super::Shutdown;
+use super::config::RequestHandlerPool;
+use super::{global_config, Shutdown};
 
-// 用于生成唯一的连接ID
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug)]
@@ -37,26 +37,29 @@ fn get_type_name<T>(_: &T) -> &'static str {
 fn start_request_handler(
     replica_manager: Arc<ReplicaManager>,
     group_coordinator: Arc<GroupCoordinator>,
-    num_workers: usize,
+    request_handler_config: &RequestHandlerPool,
     notify_shutdown: broadcast::Sender<()>,
 ) -> async_channel::Sender<RequestTask> {
-    let (request_tx, request_rx) = async_channel::bounded(1024);
+    let (request_tx, request_rx) = async_channel::bounded(request_handler_config.channel_capacity);
+    let num_channels = request_handler_config.num_channels as usize;
+    let mut workers = HashMap::with_capacity(num_channels);
+    let monitor_interval = request_handler_config.monitor_interval;
+    let worker_check_timeout = request_handler_config.worker_check_timeout;
     tokio::spawn(async move {
-        let mut workers = HashMap::with_capacity(num_workers);
-
         // CAUTION: There is a potential risk here: handling client-initiated requests might lead to intentional or unintentional panics,
         // causing widespread processor exits. Although recovery mechanisms can be implemented,
         // such incidents may still result in fluctuations in request processing.
-        for i in 0..num_workers {
+        for i in 0..num_channels {
             let rx: async_channel::Receiver<RequestTask> = request_rx.clone();
             let replica_manager = replica_manager.clone();
             let group_coordinator = group_coordinator.clone();
             let handle = tokio::spawn(async move {
+                debug!("request handler worker {} started", i);
                 while let Ok(request) = rx.recv().await {
                     process_request(request, replica_manager.clone(), group_coordinator.clone())
                         .await;
                 }
-                debug!("request handler exit");
+                debug!("request handler worker {} exited", i);
             });
             workers.insert(i, handle);
         }
@@ -69,17 +72,17 @@ fn start_request_handler(
                     debug!("request handler monitor received shutdown signal");
                     break;
                 }
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                _ = tokio::time::sleep(Duration::from_secs(monitor_interval)) => {}
             }
             // iterate over tasks and check status
             for id in 0..workers.len() {
                 if let Some(handle) = workers.remove(&id) {
                     // extract JoinHandle and check its running status
-                    match time::timeout(Duration::from_millis(200), handle).await {
+                    match time::timeout(Duration::from_millis(worker_check_timeout), handle).await {
                         Ok(join_result) => {
                             match join_result {
                                 Ok(_) => {
-                                    // ignore, task is completed
+                                    info!("request handler monitor found worker {} is exited normally", id);
                                 }
                                 Err(join_error) => {
                                     if join_error.is_panic() {
@@ -291,11 +294,22 @@ impl Server {
     /// Each connection is assigned a unique connection ID and handled by a separate ConnectionHandler.
     /// Any errors encountered during connection handling are logged.
     ///
-    /// Graceful shutdown sequence:  
-    /// 1. The run loop terminates upon receiving the shutdown signal from the upper layer.  
-    /// 2. The connection handler shuts down, but only after all requests on the connection have been fully processed and the responses sent.  
-    /// 3. Once all connection handlers have exited, the receiver in the request handler receives the shutdown signal and exits by returning an error.  
-    /// 4. The main process waits for the connection handler to drop, during which its `shutdown_complete_tx` field is also automatically dropped, before gracefully exiting.
+    // Graceful shutdown sequence:
+    // 1. The `run loop` is canceled upon receiving the shutdown signal from the upper layer.
+    // 2. The `connection handler` continues execution until it receives the shutdown signal. At that point, it stops reading new requests.
+    //    Before this, all requests on the connection are fully processed, and responses are sent.
+    // 3. Once all `connection handlers` exit, the `sender` they hold is fully dropped. This triggers the `receiver` in the `request handler`
+    //     to receive the shutdown signal, causing it to return an error and exit the while loop.
+    // 4. The `monitor` in the `request handler` will automatically exit upon receiving the shutdown signal.
+    // 5. The `main function` waits for the `connection handler` to drop. Once its `shutdown_complete_tx` field is also dropped, the program exits gracefully.
+    // 6. The `splitter task`, as a downstream service, must actively and gracefully exit.
+    // 7. The `checkpoint task` in the `log manager`, as a downstream service, must also actively and gracefully exit.
+    // 8. The `partition appender` and `active log segments writer`, as upstream services, must wait to be closed later by the runtime.
+    // todo:
+    // 1. Since the `checkpoint` may perform checks before the `splitter` appends logs, the `log manager` must remove any dirty data appended
+    //    after the checkpoint during startup.
+    // 2. The `DelayedAsyncOperation`, as an upstream service, must be closed by the runtime and cannot be closed actively. Since it holds components
+    //    like the `replica manager` and `coordinator`, these components must not hold the `shutdown_complete_tx` sender; otherwise, it will block the program's shutdown.
     ///
     /// # Returns
     /// Under normal operations, continuously accept new connections.  
@@ -304,10 +318,12 @@ impl Server {
     /// Returns `AppResult<()>` indicating the success or failure of running the server.
     #[tracing::instrument]
     pub async fn run(&self) -> AppResult<()> {
+        let request_handler_config = &global_config().request_handler_pool;
+
         let request_sender = start_request_handler(
             self.replica_manager.clone(),
             self.group_coordinator.clone(),
-            num_cpus::get(),
+            request_handler_config,
             self.notify_shutdown.clone(),
         );
 

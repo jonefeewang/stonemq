@@ -19,7 +19,7 @@ mod splitter;
 // Re-exports
 pub use checkpoint::CheckPointFile;
 pub use journal_log::JournalLog;
-pub use log_file_writer::ActiveLogFileWriter;
+pub use log_file_writer::ActiveSegmentWriter;
 pub use log_manager::LogManager;
 pub use log_reader::seek;
 pub use queue_log::QueueLog;

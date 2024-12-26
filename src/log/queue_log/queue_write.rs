@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::log::log_file_writer::{global_active_log_file_writer, FlushRequest, QueueFileWriteReq};
-use crate::log::segment_index::{ActiveSegmentIndex, SegmentIndexCommon};
+use crate::log::log_file_writer::{FlushRequest, QueueFileWriteReq};
+use crate::log::segment_index::ActiveSegmentIndex;
 use crate::log::{LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppResult};
@@ -73,15 +73,14 @@ impl QueueLog {
 
     /// check if need roll new segment
     async fn should_roll_segment(&self, memory_records: &MemoryRecords) -> AppResult<bool> {
-        let (active_segment_size, active_segment_offset_index_full) = {
-            let active_segment = self.active_segment.read();
-            let active_segment_size = active_segment.size();
-            let active_segment_offset_index_full = active_segment.offset_index_full();
-            (active_segment_size, active_segment_offset_index_full)
-        };
+        let active_seg_size = self
+            .active_segment_writer
+            .active_segment_size(&self.topic_partition);
+
+        let active_segment_offset_index_full = self.active_segment_index.read().offset_index_full();
 
         Ok(self.need_roll(
-            active_segment_size,
+            active_seg_size,
             memory_records,
             active_segment_offset_index_full,
         ))
@@ -94,8 +93,8 @@ impl QueueLog {
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        global_active_log_file_writer().flush(request).await?;
-        self.active_segment.write().flush_index()?;
+        self.active_segment_writer.flush(request).await?;
+        self.active_segment_index.write().flush_index()?;
         self.recover_point.store(self.last_offset.load());
         let old_base_offset = self.active_segment_id.load();
 
@@ -105,10 +104,13 @@ impl QueueLog {
             new_base_offset,
             global_config().log.queue_segment_size as usize,
         )?;
+        // open new segment
+        self.active_segment_writer
+            .open_file(&self.topic_partition, new_base_offset)?;
 
         {
             // Swap active segment
-            let mut active_seg = self.active_segment.write();
+            let mut active_seg = self.active_segment_index.write();
             let old_segment = std::mem::replace(&mut *active_seg, new_seg);
             self.active_segment_id.store(new_base_offset);
 
@@ -146,10 +148,14 @@ impl QueueLog {
         memory_records: &MemoryRecords,
         first_offset: i64,
     ) -> AppResult<()> {
-        self.active_segment.write().update_index(
+        let active_seg_size = self
+            .active_segment_writer
+            .active_segment_size(&self.topic_partition);
+        self.active_segment_index.write().update_index(
             memory_records.size(),
             first_offset,
-            LogType::Journal,
+            LogType::Queue,
+            active_seg_size,
         )
     }
 
@@ -160,7 +166,7 @@ impl QueueLog {
             records: memory_records,
         };
 
-        global_active_log_file_writer()
+        self.active_segment_writer
             .append_queue(queue_log_write_op)
             .await
     }
@@ -181,12 +187,12 @@ impl QueueLog {
     ///
     /// Returns `AppResult<()>` indicating success or failure.
     pub async fn flush(&self) -> AppResult<()> {
-        self.active_segment.write().flush_index()?;
+        self.active_segment_index.write().flush_index()?;
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        global_active_log_file_writer().flush(request).await?;
+        self.active_segment_writer.flush(request).await?;
 
         self.recover_point.store(self.last_offset.load());
         Ok(())

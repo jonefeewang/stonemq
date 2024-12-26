@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use tracing::{debug, trace};
 
 use crate::{
-    log::{segment_index::SegmentIndexCommon, seek, LogType, PositionInfo, NO_POSITION_INFO},
+    log::{seek, segment_index::SegmentIndexCommon, LogType, PositionInfo, NO_POSITION_INFO},
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
     AppError, AppResult,
 };
@@ -29,10 +29,14 @@ impl QueueLog {
 
     /// get LEO(Log End Offset) info
     pub fn get_leo_info(&self) -> AppResult<PositionInfo> {
+        let active_seg_size = self
+            .active_segment_writer
+            .active_segment_size(&self.topic_partition);
+
         Ok(PositionInfo {
             base_offset: self.active_segment_id.load(),
             offset: self.last_offset.load(),
-            position: self.active_segment.read().size() as i64,
+            position: active_seg_size as i64,
         })
     }
 
@@ -58,7 +62,9 @@ impl QueueLog {
     /// get segment position info
     fn get_segment_position(&self, segment_offset: i64, offset: i64) -> AppResult<PositionInfo> {
         if segment_offset == self.active_segment_id.load() {
-            self.active_segment.read().get_relative_position(offset)
+            self.active_segment_index
+                .read()
+                .get_relative_position(offset)
         } else {
             self.segments
                 .get(&segment_offset)
@@ -169,9 +175,10 @@ impl QueueLog {
             .copied()
             .map(|offset| {
                 if offset == self.active_segment_id.load() {
-                    self.active_segment.read().size() as usize
+                    self.active_segment_writer
+                        .active_segment_size(&self.topic_partition) as usize
                 } else {
-                    self.segments.get(&offset).unwrap().size() as usize
+                    self.readonly_segment_size(offset)
                 }
             })
             .unwrap()
@@ -244,5 +251,18 @@ impl QueueLog {
             log_end_offset: self.last_offset.load(),
             position_info: NO_POSITION_INFO,
         })
+    }
+
+    /// calculate queue log segment size
+    pub fn readonly_segment_size(&self, base_offset: i64) -> usize {
+        let segment_path = PathBuf::from(self.topic_partition.partition_dir())
+            .join(format!("{}.log", base_offset));
+        match File::open(&segment_path) {
+            Ok(file) => match file.metadata() {
+                Ok(metadata) => metadata.len() as usize,
+                Err(_) => 0,
+            },
+            Err(_) => 0,
+        }
     }
 }

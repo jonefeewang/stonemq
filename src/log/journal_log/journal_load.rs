@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::Arc,
 };
 use tracing::{info, trace};
 
@@ -10,7 +11,8 @@ use crate::{
     log::{
         index_file::{ReadOnlyIndexFile, WritableIndexFile},
         segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
-        CheckPointFile, LogType, SegmentFileType, NEXT_OFFSET_CHECKPOINT_FILE_NAME,
+        ActiveSegmentWriter, CheckPointFile, LogType, SegmentFileType,
+        NEXT_OFFSET_CHECKPOINT_FILE_NAME,
     },
     message::TopicPartition,
     AppError, AppResult,
@@ -55,6 +57,7 @@ impl JournalLog {
         split_offset: i64,
         dir: impl AsRef<Path>,
         index_file_max_size: u32,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         // load segments
         let (segments, active_segment) =
@@ -78,7 +81,7 @@ impl JournalLog {
 
         // if no active segment, create new log
         if active_segment.is_none() {
-            return JournalLog::new(topic_partition);
+            return JournalLog::new(topic_partition, active_segment_writer);
         }
 
         let metadata = JournalLogMetadata {
@@ -91,7 +94,13 @@ impl JournalLog {
         };
 
         // build log
-        let log = JournalLog::open(segments, active_segment.unwrap(), topic_partition, metadata)?;
+        let log = JournalLog::open(
+            segments,
+            active_segment.unwrap(),
+            topic_partition,
+            metadata,
+            active_segment_writer,
+        )?;
 
         info!(
             "loaded journal log:{} next_offset:{}, recover_point:{}, split_offset:{}",
@@ -268,11 +277,7 @@ impl JournalLog {
     ) -> AppResult<ReadOnlySegmentIndex> {
         let index_file_name = format!("{}/{}.index", topic_partition.partition_dir(), base_offset);
         let index_file = ReadOnlyIndexFile::new(index_file_name)?;
-        Ok(ReadOnlySegmentIndex::open(
-            topic_partition,
-            base_offset,
-            index_file,
-        ))
+        Ok(ReadOnlySegmentIndex::open(base_offset, index_file))
     }
 }
 

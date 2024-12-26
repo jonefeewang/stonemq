@@ -3,19 +3,17 @@ use crate::utils::{MultipleChannelWorkerPool, PoolHandler, WorkerPoolConfig};
 use crate::{AppError, AppResult};
 
 use dashmap::DashMap;
-use tokio::sync::mpsc::Sender;
 
 use std::io;
 use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
 
 use super::log_request::{FlushRequest, JournalFileWriteReq, QueueFileWriteReq};
-use super::{ActiveLogFileWriter, FileWriteRequest, SegmentLog, WriteConfig};
+use super::{ActiveSegmentWriter, FileWriteRequest, SegmentLog, WriteConfig};
 
-impl ActiveLogFileWriter {
+impl ActiveSegmentWriter {
     pub fn new(
         notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
         worker_pool_config: Option<WorkerPoolConfig>,
         write_config: Option<WriteConfig>,
     ) -> Self {
@@ -27,8 +25,12 @@ impl ActiveLogFileWriter {
             writers: Arc::clone(&writers),
         };
 
-        let worker_pool =
-            MultipleChannelWorkerPool::new(notify_shutdown, shutdown_complete_tx, handler, config);
+        let worker_pool = MultipleChannelWorkerPool::new(
+            notify_shutdown,
+            "active_log_file_writer".to_string(),
+            handler,
+            config,
+        );
         Self {
             writers,
             worker_pool,

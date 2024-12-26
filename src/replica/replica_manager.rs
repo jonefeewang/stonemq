@@ -1,15 +1,14 @@
-use super::{global_journal_partition_appender, DelayedFetch};
+use super::{DelayedFetch, PartitionAppender};
 use crate::log::{LogAppendInfo, DEFAULT_LOG_APPEND_TIME};
 use crate::log::{LogManager, LogType};
 use crate::message::{JournalPartition, QueuePartition, TopicData, TopicPartition};
 use crate::request::{ErrorCode, KafkaError, PartitionResponse};
-use crate::utils::DelayedAsyncOperationPurgatory;
+use crate::utils::{DelayedAsyncOperationPurgatory, WorkerPoolConfig};
 use crate::{global_config, AppError, AppResult, Shutdown};
 use dashmap::DashMap;
-use rocksdb::DB;
 
 use std::collections::{BTreeMap, HashSet};
-
+use std::time::Duration;
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
@@ -19,7 +18,6 @@ use tracing::{debug, error, info};
 use super::{JournalReplica, QueueReplica, ReplicaManager};
 
 impl ReplicaManager {
-    const KEY_QUEUE_TOPICS: &str = "queue_topics";
     pub async fn new(
         log_manager: Arc<LogManager>,
         notify_shutdown: broadcast::Sender<()>,
@@ -34,6 +32,20 @@ impl ReplicaManager {
         )
         .await;
 
+        let worker_pool_config = WorkerPoolConfig {
+            channel_capacity: global_config().partition_appender_pool.channel_capacity,
+            monitor_interval: Duration::from_secs(
+                global_config().partition_appender_pool.monitor_interval,
+            ),
+            num_channels: global_config().partition_appender_pool.num_channels,
+            worker_check_timeout: Duration::from_secs(
+                global_config().partition_appender_pool.worker_check_timeout,
+            ),
+        };
+
+        let partition_appender =
+            PartitionAppender::new(notify_shutdown.clone(), Some(worker_pool_config));
+
         ReplicaManager {
             log_manager,
             all_journal_partitions: DashMap::new(),
@@ -44,6 +56,7 @@ impl ReplicaManager {
             notify_shutdown,
             _shutdown_complete_tx,
             delayed_fetch_purgatory,
+            partition_appender,
         }
     }
     pub async fn append_records(
@@ -61,16 +74,16 @@ impl ReplicaManager {
         for topic_data in topics_data {
             let topic_name = &topic_data.topic_name;
             for partition in topic_data.partition_data {
-                let topic_partition =
-                    TopicPartition::new_journal(topic_name.clone(), partition.partition);
+                let queue_topic_partition =
+                    TopicPartition::new_queue(topic_name.clone(), partition.partition);
 
                 let journal_tp_clone = {
-                    let journal_tp = self.queue_2_journal.get(&topic_partition);
+                    let journal_tp = self.queue_2_journal.get(&queue_topic_partition);
                     if journal_tp.is_none() {
                         tp_response.insert(
-                            topic_partition.clone(),
+                            queue_topic_partition.clone(),
                             error_response(
-                                &topic_partition,
+                                &queue_topic_partition,
                                 ErrorCode::UnknownTopicOrPartition as i16,
                             ),
                         );
@@ -79,13 +92,18 @@ impl ReplicaManager {
                     journal_tp.unwrap().clone()
                 };
 
-                let append_result = global_journal_partition_appender()
-                    .append_journal(&topic_partition, &journal_tp_clone, partition.message_set)
+                let append_result = self
+                    .partition_appender
+                    .append_journal(
+                        &journal_tp_clone,
+                        &queue_topic_partition,
+                        partition.message_set,
+                    )
                     .await;
 
                 if let Ok(LogAppendInfo { first_offset, .. }) = append_result {
                     tp_response.insert(
-                        topic_partition.clone(),
+                        queue_topic_partition.clone(),
                         PartitionResponse {
                             partition: partition.partition,
                             error_code: 0,
@@ -96,9 +114,9 @@ impl ReplicaManager {
                 } else if let Err(e) = append_result {
                     error!("append records error: {:?}", e);
                     tp_response.insert(
-                        topic_partition.clone(),
+                        queue_topic_partition.clone(),
                         error_response(
-                            &topic_partition,
+                            &queue_topic_partition,
                             ErrorCode::from(&KafkaError::from(e)) as i16,
                         ),
                     );
@@ -138,7 +156,7 @@ impl ReplicaManager {
 
         // register journal partitions to the appender
         self.all_journal_partitions.iter().for_each(|entry| {
-            global_journal_partition_appender()
+            self.partition_appender
                 .register_partition(entry.key().clone(), entry.value().clone());
         });
 
@@ -162,7 +180,7 @@ impl ReplicaManager {
 
         // establish the relationship between journal and queue
         // get the actual JournalLog count
-        let journal_count = global_config().log.journal_count;
+        let journal_count = global_config().log.journal_topic_count;
         let mut sorted_queue_partitions = self
             .all_queue_partitions
             .iter()
@@ -325,7 +343,7 @@ impl ReplicaManager {
         }
     }
     fn get_journal_topics(&self) -> Vec<String> {
-        let journal_count = global_config().log.journal_count;
+        let journal_count = global_config().log.journal_topic_count;
         let mut topics = Vec::with_capacity(journal_count as usize);
         for i in 0..journal_count {
             topics.push(format!("journal-{}", i));
@@ -334,14 +352,11 @@ impl ReplicaManager {
     }
 
     fn get_queue_topics(&self) -> Vec<String> {
-        let path = &global_config().general.local_db_path;
-        let db = DB::open_default(path).unwrap();
-        let topics = db.get(Self::KEY_QUEUE_TOPICS).unwrap().unwrap();
-        let topics: Vec<String> = String::from_utf8(topics)
-            .unwrap()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect();
+        let queue_count = global_config().log.queue_topic_count;
+        let mut topics = Vec::with_capacity(queue_count as usize);
+        for i in 0..queue_count {
+            topics.push(format!("topic_a-{}", i));
+        }
         topics
     }
 }

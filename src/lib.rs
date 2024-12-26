@@ -17,4 +17,3 @@ pub use service::{
     global_config, setup_local_tracing, setup_tracing, AppError, AppResult, Broker, BrokerConfig,
     Shutdown,
 };
-pub use utils::KvStore;

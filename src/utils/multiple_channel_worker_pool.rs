@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{debug, error, trace, warn};
@@ -45,8 +45,6 @@ impl Default for WorkerPoolConfig {
 /// each channel has its own dedicated worker to ensure sequential processing
 #[derive(Debug)]
 pub struct MultipleChannelWorkerPool<T> {
-    notify_shutdown: broadcast::Sender<()>,
-    _shutdown_complete_tx: mpsc::Sender<()>,
     channels: Arc<HashMap<i8, TaskChannel<T>>>,
     config: WorkerPoolConfig,
 }
@@ -67,19 +65,18 @@ struct Worker {
 impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
     pub fn new<H: PoolHandler<T>>(
         notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: mpsc::Sender<()>,
+        name: String,
         handler: H,
         config: WorkerPoolConfig,
     ) -> Self {
-        let channels =
-            Self::spawn_channels_with_monitor(config.clone(), notify_shutdown.clone(), handler);
+        let channels = Self::spawn_channels_with_monitor(
+            config.clone(),
+            notify_shutdown.clone(),
+            handler,
+            name.clone(),
+        );
 
-        Self {
-            notify_shutdown,
-            _shutdown_complete_tx: shutdown_complete_tx,
-            channels,
-            config,
-        }
+        Self { channels, config }
     }
     /// Send request to specified channel
     pub async fn send(
@@ -98,15 +95,11 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         &self.config
     }
 
-    /// Get channel count
-    pub fn channel_count(&self) -> usize {
-        self.channels.len()
-    }
-
     fn spawn_channels_with_monitor<H: PoolHandler<T>>(
         config: WorkerPoolConfig,
         notify_shutdown: broadcast::Sender<()>,
         handler: H,
+        name: String,
     ) -> Arc<HashMap<i8, TaskChannel<T>>> {
         let mut workers = Vec::with_capacity(config.num_channels as usize);
         let mut channels = HashMap::with_capacity(config.num_channels as usize);
@@ -114,12 +107,7 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         // Create a dedicated worker for each channel
         for id in 0..config.num_channels {
             let (sender, receiver) = async_channel::bounded(config.channel_capacity);
-            let worker = Self::spawn_worker(
-                id,
-                handler.clone(),
-                notify_shutdown.clone(),
-                receiver.clone(),
-            );
+            let worker = Self::spawn_worker(id, handler.clone(), receiver.clone(), &name);
             workers.push(worker);
             channels.insert(
                 id,
@@ -134,7 +122,14 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         let channels_clone = channels.clone();
 
         // Start monitor
-        Self::spawn_monitor(workers, channels_clone, notify_shutdown, handler, config);
+        Self::spawn_monitor(
+            workers,
+            channels_clone,
+            notify_shutdown,
+            handler,
+            config,
+            name,
+        );
 
         channels
     }
@@ -142,23 +137,19 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
     fn spawn_worker<H: PoolHandler<T>>(
         id: i8,
         handler: H,
-        notify_shutdown: broadcast::Sender<()>,
         receiver: async_channel::Receiver<T>,
+        name: &str,
     ) -> Worker {
-        let mut shutdown = Shutdown::new(notify_shutdown.subscribe());
-
+        let name = name.to_string();
         let handle = tokio::spawn(async move {
-            debug!("Worker {id} started");
+            debug!("{name} Worker {id} started");
 
             loop {
-                tokio::select! {
-                    Ok(request) = receiver.recv() => {
-                        handler.handle(request).await;
-                    }
-                    _ = shutdown.recv() => {
-                        debug!("Worker {id} shutting down");
-                        break;
-                    }
+                if let Ok(request) = receiver.recv().await {
+                    handler.handle(request).await;
+                } else {
+                    debug!("{name} Worker {id} shutting down");
+                    break;
                 }
             }
         });
@@ -172,6 +163,7 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
         notify_shutdown: broadcast::Sender<()>,
         handler: H,
         config: WorkerPoolConfig,
+        name: String,
     ) {
         tokio::spawn(async move {
             let mut interval = time::interval(config.monitor_interval);
@@ -180,7 +172,7 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
             loop {
                 tokio::select! {
                     _ = shutdown.recv() => {
-                        debug!("Worker monitor received shutdown signal");
+                        debug!("{} Worker monitor received shutdown signal", &name);
                         break;
                     }
                     _ = interval.tick() => {
@@ -189,48 +181,57 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
                                 Ok(join_result) => {
                                     match join_result {
                                         Ok(_) => {
-                                            warn!("Worker {} completed unexpectedly", worker.id);
+                                            warn!("{} Worker {} completed unexpectedly", &name, worker.id);
                                         }
                                         Err(err) => {
                                             if err.is_panic() {
-                                                Self::log_worker_panic(worker.id, err);
+                                                Self::log_worker_panic(&name, worker.id, err);
                                             } else {
-                                                error!("Worker {} failed with non-panic error", worker.id);
+                                                error!(
+                                                    "{} Worker {} failed with non-panic error",
+                                                    &name, worker.id
+                                                );
                                             }
                                         }
                                     }
 
-                                    warn!("Worker {} failed, restarting...", worker.id);
-                                    // 重启 worker
+                                    warn!(
+                                        "{} Worker {} failed, restarting...",
+                                        &name, worker.id
+                                    );
+                                    if shutdown.is_shutdown() {
+                                        break;
+                                    }
+                                    // restart worker
                                     *worker = Self::spawn_worker(
                                         worker.id,
                                         handler.clone(),
-                                        notify_shutdown.clone(),
                                         channels.get(&worker.id).unwrap().receiver.clone(),
+                                        &name,
                                     );
-                                    debug!("Worker {} restarted", worker.id);
+                                        debug!("{} Worker {} restarted", &name, worker.id);
                                 }
                                 Err(_) => {
-                                    trace!("Worker {} is running", worker.id);
+                                    trace!("{} Worker {} is running", &name, worker.id);
                                 }
                             }
                         }
                     }
                 }
             }
-            debug!("Worker monitor exiting");
+            debug!("{name} Worker monitor exiting");
         });
     }
 
-    fn log_worker_panic(worker_id: i8, err: tokio::task::JoinError) {
+    fn log_worker_panic(name: &str, worker_id: i8, err: tokio::task::JoinError) {
         let payload = err.into_panic();
         if let Some(message) = payload.downcast_ref::<&'static str>() {
-            error!("Worker {worker_id} panicked with message: {message}");
+            error!("{name} Worker {worker_id} panicked with message: {message}");
         } else if let Some(message) = payload.downcast_ref::<String>() {
-            error!("Worker {worker_id} panicked with message: {message}");
+            error!("{name} Worker {worker_id} panicked with message: {message}");
         } else {
             error!(
-                "Worker {worker_id} panicked with an unknown type: {}",
+                "{name} Worker {worker_id} panicked with an unknown type: {}",
                 get_type_name(&payload)
             );
         }
@@ -264,7 +265,6 @@ mod tests {
     #[tokio::test]
     async fn test_worker_pool() {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         let handler = TestHandler {
             counter: Arc::new(AtomicI32::new(0)),
@@ -279,7 +279,7 @@ mod tests {
 
         let pool = MultipleChannelWorkerPool::new(
             notify_shutdown,
-            shutdown_complete_tx,
+            "test".to_string(),
             handler.clone(),
             config,
         );
@@ -297,17 +297,14 @@ mod tests {
     #[tokio::test]
     async fn test_worker_panic_recovery() {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         #[derive(Clone)]
         struct PanicHandler;
 
         impl PoolHandler<bool> for PanicHandler {
-            fn handle(&self, should_panic: bool) -> impl Future<Output = ()> + Send {
-                async move {
-                    if should_panic {
-                        panic!("Test panic");
-                    }
+            async fn handle(&self, should_panic: bool) {
+                if should_panic {
+                    panic!("Test panic");
                 }
             }
         }
@@ -321,7 +318,7 @@ mod tests {
 
         let pool = MultipleChannelWorkerPool::new(
             notify_shutdown,
-            shutdown_complete_tx,
+            "test".to_string(),
             PanicHandler,
             config,
         );

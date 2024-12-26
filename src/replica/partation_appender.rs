@@ -5,11 +5,7 @@ use crate::{AppError, AppResult};
 use dashmap::DashMap;
 
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc::Sender, oneshot};
-
-use super::JOURNAL_PARTITION_APPENDER;
-
-// 全局单例
+use tokio::sync::{broadcast, oneshot};
 
 #[derive(Debug)]
 pub struct PartitionAppender {
@@ -26,23 +22,8 @@ struct AppendRequest {
 }
 
 impl PartitionAppender {
-    pub fn global_init(
+    pub fn new(
         notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
-        worker_pool_config: Option<WorkerPoolConfig>,
-    ) -> &'static Arc<PartitionAppender> {
-        JOURNAL_PARTITION_APPENDER.get_or_init(|| {
-            Arc::new(Self::new(
-                notify_shutdown,
-                shutdown_complete_tx,
-                worker_pool_config,
-            ))
-        })
-    }
-
-    fn new(
-        notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
         worker_pool_config: Option<WorkerPoolConfig>,
     ) -> Self {
         let partitions = Arc::new(DashMap::new());
@@ -52,8 +33,12 @@ impl PartitionAppender {
             partitions: Arc::clone(&partitions),
         };
 
-        let worker_pool =
-            MultipleChannelWorkerPool::new(notify_shutdown, shutdown_complete_tx, handler, config);
+        let worker_pool = MultipleChannelWorkerPool::new(
+            notify_shutdown,
+            "partition_appender".to_string(),
+            handler,
+            config,
+        );
 
         Self {
             partitions,

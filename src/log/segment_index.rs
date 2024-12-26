@@ -1,20 +1,15 @@
-use std::fs::File;
-use std::path::PathBuf;
-
 use crate::log::index_file::{ReadOnlyIndexFile, WritableIndexFile};
 use crate::message::TopicPartition;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
 use tracing::trace;
 
-use super::log_file_writer::global_active_log_file_writer;
 use super::{LogType, INDEX_FILE_SUFFIX};
 
-/// 定义日志段的公共行为
+/// define the common behavior of segment index
 pub trait SegmentIndexCommon {
     fn base_offset(&self) -> i64;
     fn lookup_index(&self, relative_offset: u32) -> Option<(u32, u32)>;
-    fn size(&self) -> u64;
 
     fn get_relative_position(&self, offset: i64) -> AppResult<PositionInfo> {
         let offset_position = self
@@ -40,7 +35,6 @@ pub trait SegmentIndexCommon {
 
 #[derive(Debug)]
 pub struct ReadOnlySegmentIndex {
-    topic_partition: TopicPartition,
     base_offset: i64,
     offset_index: ReadOnlyIndexFile,
 }
@@ -68,18 +62,6 @@ impl SegmentIndexCommon for ReadOnlySegmentIndex {
     fn lookup_index(&self, relative_offset: u32) -> Option<(u32, u32)> {
         self.offset_index.lookup(relative_offset)
     }
-
-    fn size(&self) -> u64 {
-        let segment_path = PathBuf::from(self.topic_partition.partition_dir())
-            .join(format!("{}.log", self.base_offset));
-        match File::open(&segment_path) {
-            Ok(file) => match file.metadata() {
-                Ok(metadata) => metadata.len(),
-                Err(_) => 0,
-            },
-            Err(_) => 0,
-        }
-    }
 }
 
 impl SegmentIndexCommon for ActiveSegmentIndex {
@@ -90,20 +72,11 @@ impl SegmentIndexCommon for ActiveSegmentIndex {
     fn lookup_index(&self, relative_offset: u32) -> Option<(u32, u32)> {
         self.offset_index.lookup(relative_offset)
     }
-
-    fn size(&self) -> u64 {
-        global_active_log_file_writer().active_segment_size(&self.topic_partition)
-    }
 }
 
 impl ReadOnlySegmentIndex {
-    pub fn open(
-        topic_partition: &TopicPartition,
-        base_offset: i64,
-        offset_index: ReadOnlyIndexFile,
-    ) -> Self {
+    pub fn open(base_offset: i64, offset_index: ReadOnlyIndexFile) -> Self {
         Self {
-            topic_partition: topic_partition.clone(),
             base_offset,
             offset_index,
         }
@@ -125,16 +98,13 @@ impl ActiveSegmentIndex {
         let offset_index = WritableIndexFile::new(index_file_name, index_file_max_size)?;
         Self::open(topic_partition, base_offset, offset_index, None)
     }
-    /// open a new active log segment
+    /// open a new active log segment index
     pub fn open(
         topic_partition: &TopicPartition,
         base_offset: i64,
         offset_index: WritableIndexFile,
         _time_index: Option<WritableIndexFile>,
     ) -> AppResult<Self> {
-        // open log file
-        global_active_log_file_writer().open_file(topic_partition, base_offset)?;
-
         Ok(Self {
             topic_partition: topic_partition.clone(),
             base_offset,
@@ -148,8 +118,8 @@ impl ActiveSegmentIndex {
         records_size: usize,
         first_offset: i64,
         log_type: LogType,
+        segment_size: u64,
     ) -> AppResult<()> {
-        let segment_size = self.size();
         let relative_offset = first_offset - self.base_offset;
 
         let index_interval = match log_type {
@@ -157,7 +127,8 @@ impl ActiveSegmentIndex {
             LogType::Queue => global_config().log.queue_index_interval_bytes,
         };
 
-        if index_interval <= self.bytes_since_last_index_entry.load() {
+        //|| index_interval <= self.bytes_since_last_index_entry.load()
+        if true {
             self.offset_index
                 .add_entry(relative_offset as u32, segment_size as u32)?;
 
@@ -186,7 +157,6 @@ impl ActiveSegmentIndex {
         let readonly_offset_index = self.offset_index.into_readonly()?;
 
         Ok(ReadOnlySegmentIndex {
-            topic_partition: self.topic_partition,
             base_offset: self.base_offset,
             offset_index: readonly_offset_index,
         })

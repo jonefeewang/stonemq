@@ -29,6 +29,8 @@ use crate::{
     AppError, AppResult,
 };
 
+use super::ActiveSegmentWriter;
+
 /// Constants for queue log operations
 const INIT_LOG_START_OFFSET: i64 = 0;
 const INIT_RECOVER_POINT: i64 = -1;
@@ -51,7 +53,7 @@ pub struct QueueLog {
     segments_order: RwLock<BTreeSet<i64>>,
 
     /// Currently active segment for writing
-    active_segment: RwLock<ActiveSegmentIndex>,
+    active_segment_index: RwLock<ActiveSegmentIndex>,
 
     /// Base offset of the active segment
     active_segment_id: AtomicCell<i64>,
@@ -67,6 +69,9 @@ pub struct QueueLog {
 
     /// Last offset in the log
     last_offset: AtomicCell<i64>,
+
+    /// Active segment writer
+    active_segment_writer: Arc<ActiveSegmentWriter>,
 }
 
 impl Hash for QueueLog {
@@ -93,7 +98,10 @@ impl QueueLog {
     /// # Returns
     ///
     /// A new QueueLog instance or an error if creation fails
-    pub fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
+    pub fn new(
+        topic_partition: &TopicPartition,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
+    ) -> AppResult<Self> {
         let dir = topic_partition.partition_dir();
         Self::ensure_dir_exists(&dir)?;
 
@@ -104,11 +112,12 @@ impl QueueLog {
             topic_partition: topic_partition.clone(),
             segments: DashMap::new(),
             segments_order: RwLock::new(BTreeSet::new()),
-            active_segment: RwLock::new(active_segment),
+            active_segment_index: RwLock::new(active_segment),
             active_segment_id: AtomicCell::new(0),
             log_start_offset: INIT_LOG_START_OFFSET,
             recover_point: AtomicCell::new(INIT_RECOVER_POINT),
             last_offset: AtomicCell::new(INIT_LAST_OFFSET),
+            active_segment_writer,
         })
     }
 
@@ -129,6 +138,7 @@ impl QueueLog {
         log_start_offset: i64,
         recover_point: i64,
         last_offset: i64,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let segments_order = segments.keys().cloned().collect();
         let active_segment_id = active_segment.base_offset();
@@ -137,11 +147,12 @@ impl QueueLog {
             topic_partition: topic_partition.clone(),
             segments: DashMap::from_iter(segments.into_iter().map(|(k, v)| (k, Arc::new(v)))),
             segments_order: RwLock::new(segments_order),
-            active_segment: RwLock::new(active_segment),
+            active_segment_index: RwLock::new(active_segment),
             active_segment_id: AtomicCell::new(active_segment_id),
             log_start_offset,
             recover_point: AtomicCell::new(recover_point),
             last_offset: AtomicCell::new(last_offset),
+            active_segment_writer,
         })
     }
 

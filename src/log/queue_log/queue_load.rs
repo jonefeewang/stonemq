@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::log::SegmentFileType;
+use crate::log::{ActiveSegmentWriter, SegmentFileType};
 use crate::{
     log::index_file::{ReadOnlyIndexFile, WritableIndexFile},
     log::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
@@ -25,11 +26,12 @@ impl QueueLog {
         topic_partition: &TopicPartition,
         recover_point: i64,
         index_file_max_size: u32,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let (segments, active_segment) = Self::load_segments(topic_partition, index_file_max_size)?;
 
         if active_segment.is_none() {
-            let log = Self::new(topic_partition)?;
+            let log = Self::new(topic_partition, active_segment_writer)?;
             return Ok(log);
         }
 
@@ -42,6 +44,7 @@ impl QueueLog {
             log_start_offset,
             recover_point,
             recover_point,
+            active_segment_writer,
         )?;
 
         Ok(log)
@@ -194,7 +197,7 @@ impl QueueLog {
             } else {
                 segments.insert(
                     base_offset,
-                    Self::create_readonly_segment(topic_partition, base_offset, &index_path)?,
+                    Self::create_readonly_segment(base_offset, &index_path)?,
                 );
             }
         }
@@ -215,16 +218,11 @@ impl QueueLog {
 
     /// Creates a readonly segment
     fn create_readonly_segment(
-        topic_partition: &TopicPartition,
         base_offset: i64,
         index_path: &str,
     ) -> AppResult<ReadOnlySegmentIndex> {
         let index_file = ReadOnlyIndexFile::new(index_path)?;
-        Ok(ReadOnlySegmentIndex::open(
-            topic_partition,
-            base_offset,
-            index_file,
-        ))
+        Ok(ReadOnlySegmentIndex::open(base_offset, index_file))
     }
 }
 
@@ -264,11 +262,7 @@ mod tests {
 
         segments.insert(
             50,
-            ReadOnlySegmentIndex::open(
-                &TopicPartition::new("test", 0, crate::log::LogType::Queue),
-                50,
-                ReadOnlyIndexFile::new("dummy").unwrap(),
-            ),
+            ReadOnlySegmentIndex::open(50, ReadOnlyIndexFile::new("dummy").unwrap()),
         );
 
         assert_eq!(

@@ -25,7 +25,10 @@ use crate::{
     AppError, AppResult,
 };
 
-use super::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon};
+use super::{
+    segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
+    ActiveSegmentWriter,
+};
 
 struct JournalLogMetadata {
     queue_next_offset_info: DashMap<TopicPartition, i64>,
@@ -78,6 +81,9 @@ pub struct JournalLog {
 
     /// Checkpoint file for queue next offsets
     queue_next_offset_checkpoints: CheckPointFile,
+
+    /// Active segment writer
+    active_segment_writer: Arc<ActiveSegmentWriter>,
 }
 
 impl JournalLog {
@@ -102,7 +108,10 @@ impl JournalLog {
     /// Returns an error if:
     /// - Directory creation fails
     /// - Initial segment creation fails
-    pub fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
+    pub fn new(
+        topic_partition: &TopicPartition,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
+    ) -> AppResult<Self> {
         let dir = topic_partition.partition_dir();
         std::fs::create_dir_all(&dir).map_err(|e| {
             AppError::DetailedIoError(format!(
@@ -134,6 +143,7 @@ impl JournalLog {
             recover_point: AtomicCell::new(Self::INIT_RECOVER_POINT),
             split_offset: AtomicCell::new(Self::INIT_SPLIT_OFFSET),
             topic_partition: topic_partition.clone(),
+            active_segment_writer,
         })
     }
 
@@ -159,6 +169,7 @@ impl JournalLog {
         active_segment: ActiveSegmentIndex,
         topic_partition: &TopicPartition,
         metadata: JournalLogMetadata,
+        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let segments_order = segments.keys().cloned().collect();
         let segments_map = segments
@@ -180,6 +191,7 @@ impl JournalLog {
             recover_point: AtomicCell::new(metadata.recover_point),
             split_offset: AtomicCell::new(metadata.split_offset),
             topic_partition: topic_partition.clone(),
+            active_segment_writer,
         })
     }
 }

@@ -1,7 +1,7 @@
 mod delayed_fetch;
-mod replica_manager;
 mod partation_appender;
 mod read;
+mod replica_manager;
 
 pub use partation_appender::PartitionAppender;
 
@@ -59,6 +59,7 @@ pub struct ReplicaManager {
     notify_shutdown: broadcast::Sender<()>,
     _shutdown_complete_tx: Sender<()>,
     delayed_fetch_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedFetch>>,
+    partition_appender: PartitionAppender,
 }
 type FetchResultSender = oneshot::Sender<BTreeMap<TopicPartition, LogFetchInfo>>;
 #[derive(Debug)]
@@ -68,10 +69,4 @@ pub struct DelayedFetch {
     pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
     pub tx: Arc<Mutex<Option<FetchResultSender>>>,
     is_completed: AtomicCell<bool>,
-}
-
-pub static JOURNAL_PARTITION_APPENDER: OnceCell<Arc<PartitionAppender>> = OnceCell::new();
-
-pub fn global_journal_partition_appender() -> &'static Arc<PartitionAppender> {
-    JOURNAL_PARTITION_APPENDER.get().unwrap()
 }
