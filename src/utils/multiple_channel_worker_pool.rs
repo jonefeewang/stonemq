@@ -47,6 +47,7 @@ impl Default for WorkerPoolConfig {
 pub struct MultipleChannelWorkerPool<T> {
     channels: Arc<HashMap<i8, TaskChannel<T>>>,
     config: WorkerPoolConfig,
+    name: String,
 }
 /// represent a task channel
 #[derive(Debug)]
@@ -76,7 +77,11 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
             name.clone(),
         );
 
-        Self { channels, config }
+        Self {
+            channels,
+            config,
+            name,
+        }
     }
     /// Send request to specified channel
     pub async fn send(
@@ -235,6 +240,11 @@ impl<T: Send + Debug + 'static> MultipleChannelWorkerPool<T> {
                 get_type_name(&payload)
             );
         }
+    }
+}
+impl<T> Drop for MultipleChannelWorkerPool<T> {
+    fn drop(&mut self) {
+        debug!("{} multiple channel worker pool dropped", self.name);
     }
 }
 

@@ -99,7 +99,7 @@ impl JournalLog {
             active_segment.unwrap(),
             topic_partition,
             metadata,
-            active_segment_writer,
+            active_segment_writer.clone(),
         )?;
 
         info!(

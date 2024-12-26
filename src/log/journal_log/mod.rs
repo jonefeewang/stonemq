@@ -121,16 +121,19 @@ impl JournalLog {
         })?;
 
         let index_file_max_size = global_config().log.journal_index_file_size;
-        let segment = ActiveSegmentIndex::new(
+        let active_segment_index = ActiveSegmentIndex::new(
             topic_partition,
             Self::INIT_LOG_START_OFFSET,
             index_file_max_size as usize,
         )?;
 
+        // open active segment writer
+        active_segment_writer.open_file(topic_partition, active_segment_index.base_offset())?;
+
         Ok(Self {
             segments_order: RwLock::new(BTreeSet::new()),
             segment_index: DashMap::new(),
-            active_segment_index: RwLock::new(segment),
+            active_segment_index: RwLock::new(active_segment_index),
             active_segment_base_offset: AtomicCell::new(0),
             queue_next_offset_info: DashMap::new(),
             queue_next_offset_checkpoints: CheckPointFile::new(format!(
@@ -178,6 +181,9 @@ impl JournalLog {
             .collect();
 
         let active_segment_base_offset = active_segment.base_offset();
+
+        // open active segment writer
+        active_segment_writer.open_file(topic_partition, active_segment_base_offset)?;
 
         Ok(Self {
             segments_order: RwLock::new(segments_order),

@@ -106,13 +106,17 @@ impl QueueLog {
         Self::ensure_dir_exists(&dir)?;
 
         let index_file_max_size = global_config().log.queue_index_file_size;
-        let active_segment = ActiveSegmentIndex::new(topic_partition, 0, index_file_max_size)?;
+        let active_segment_index = ActiveSegmentIndex::new(topic_partition, 0, index_file_max_size)?;
+
+        // open active segment writer
+        active_segment_writer
+            .open_file(topic_partition, active_segment_index.base_offset())?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
             segments: DashMap::new(),
             segments_order: RwLock::new(BTreeSet::new()),
-            active_segment_index: RwLock::new(active_segment),
+            active_segment_index: RwLock::new(active_segment_index),
             active_segment_id: AtomicCell::new(0),
             log_start_offset: INIT_LOG_START_OFFSET,
             recover_point: AtomicCell::new(INIT_RECOVER_POINT),
@@ -142,6 +146,10 @@ impl QueueLog {
     ) -> AppResult<Self> {
         let segments_order = segments.keys().cloned().collect();
         let active_segment_id = active_segment.base_offset();
+
+        // open active segment writer
+        active_segment_writer
+            .open_file(topic_partition, active_segment_id)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
