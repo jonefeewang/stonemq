@@ -40,12 +40,17 @@ impl Broker {
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
 
         // startup log manager
-        let log_manager = LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
-        let log_manager = log_manager.startup().await?;
+        let mut log_manager =
+            LogManager::new(notify_shutdown.clone(), shutdown_complete_tx.clone());
+        log_manager.startup()?;
+        let log_manager = Arc::new(log_manager);
+        let log_manager_clone = log_manager.clone();
+        log_manager.start_checkpoint_task().await?;
 
         // startup replica manager
+
         let mut replica_manager = ReplicaManager::new(
-            log_manager.clone(),
+            log_manager_clone,
             notify_shutdown.clone(),
             shutdown_complete_tx.clone(),
         )
@@ -64,7 +69,6 @@ impl Broker {
         notify_shutdown
             .send(())
             .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
-        drop(log_manager);
         drop(replica_manager);
         drop(shutdown_complete_tx);
         debug!("waiting for shutdown complete...");

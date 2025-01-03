@@ -19,11 +19,14 @@ mod splitter;
 // Re-exports
 pub use checkpoint::CheckPointFile;
 pub use journal_log::JournalLog;
-pub use log_file_writer::ActiveSegmentWriter;
 pub use log_manager::LogManager;
 pub use log_reader::seek;
 pub use queue_log::QueueLog;
 pub use segment_index::PositionInfo;
+
+pub use log_file_writer::get_active_segment_writer;
+pub use log_file_writer::init_active_segment_writer;
+pub use log_file_writer::WriteConfig;
 
 /// Represents a position in the log with no valid information
 pub const NO_POSITION_INFO: PositionInfo = PositionInfo {

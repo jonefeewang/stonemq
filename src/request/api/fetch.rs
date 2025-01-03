@@ -43,6 +43,7 @@ impl TryFrom<i8> for IsolationLevel {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FetchRequest {
     pub replica_id: i32,
     pub max_wait_ms: i32,
@@ -50,23 +51,6 @@ pub struct FetchRequest {
     pub max_bytes: i32,
     pub isolation_level: IsolationLevel,
     pub fetch_data: BTreeMap<TopicPartition, PartitionDataReq>,
-}
-
-impl FetchRequest {
-    pub const CONSUMER_REPLICA_ID: i32 = -1;
-    pub const REPLICA_ID_KEY_NAME: &'static str = "replica_id";
-    pub const MAX_WAIT_KEY_NAME: &'static str = "max_wait_time";
-    pub const MIN_BYTES_KEY_NAME: &'static str = "min_bytes";
-    pub const ISOLATION_LEVEL_KEY_NAME: &'static str = "isolation_level";
-    pub const TOPICS_KEY_NAME: &'static str = "topics";
-    pub const MAX_BYTES_KEY_NAME: &'static str = "max_bytes";
-    pub const TOPIC_KEY_NAME: &'static str = "topic";
-    pub const PARTITIONS_KEY_NAME: &'static str = "partitions";
-    pub const PARTITION_KEY_NAME: &'static str = "partition";
-    pub const FETCH_OFFSET_KEY_NAME: &'static str = "fetch_offset";
-    pub const LOG_START_OFFSET_KEY_NAME: &'static str = "log_start_offset";
-    pub const DEFAULT_RESPONSE_MAX_BYTES: i32 = i32::MAX;
-    pub const INVALID_LOG_START_OFFSET: i64 = -1;
 }
 
 #[derive(Debug)]
@@ -110,32 +94,6 @@ pub struct FetchResponse {
     pub responses: BTreeMap<TopicPartition, PartitionDataRep>,
     pub throttle_time: i32,
 }
-impl FetchResponse {
-    pub const RESPONSES_KEY_NAME: &'static str = "responses";
-
-    // topic level field names
-    pub const TOPIC_KEY_NAME: &'static str = "topic";
-    pub const PARTITIONS_KEY_NAME: &'static str = "partition_responses";
-
-    // partition level field names
-    pub const PARTITION_HEADER_KEY_NAME: &'static str = "partition_header";
-    pub const PARTITION_KEY_NAME: &'static str = "partition";
-    pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
-    pub const HIGH_WATERMARK_KEY_NAME: &'static str = "high_watermark";
-    pub const LAST_STABLE_OFFSET_KEY_NAME: &'static str = "last_stable_offset";
-    pub const LOG_START_OFFSET_KEY_NAME: &'static str = "log_start_offset";
-    pub const ABORTED_TRANSACTIONS_KEY_NAME: &'static str = "aborted_transactions";
-    pub const RECORD_SET_KEY_NAME: &'static str = "record_set";
-
-    // aborted transaction field names
-    pub const PRODUCER_ID_KEY_NAME: &'static str = "producer_id";
-    pub const FIRST_OFFSET_KEY_NAME: &'static str = "first_offset";
-
-    pub const DEFAULT_THROTTLE_TIME: i32 = 0;
-    pub const INVALID_HIGHWATERMARK: i64 = -1;
-    pub const INVALID_LAST_STABLE_OFFSET: i64 = -1;
-    pub const INVALID_LOG_START_OFFSET: i64 = -1;
-}
 
 #[derive(Debug)]
 pub struct PartitionDataRep {
@@ -143,13 +101,16 @@ pub struct PartitionDataRep {
     pub high_watermark: i64,
     pub last_stable_offset: i64,
     pub log_start_offset: i64,
+    #[allow(dead_code)]
     pub aborted_transactions: Option<Vec<AbortedTransaction>>,
     pub records: MemoryRecords,
 }
 
 #[derive(Debug)]
 pub struct AbortedTransaction {
+    #[allow(dead_code)]
     pub producer_id: i64,
+    #[allow(dead_code)]
     pub first_offset: i64,
 }
 

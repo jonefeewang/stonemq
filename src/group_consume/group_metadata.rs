@@ -130,6 +130,7 @@ impl GroupMetadata {
     }
 
     /// cancel all members' assignment
+    #[allow(dead_code)]
     pub fn cancel_all_member_assignment(&mut self) {
         self.members.values_mut().for_each(|member| {
             member.assignment = None;

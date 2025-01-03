@@ -58,6 +58,7 @@ impl FetchOffsetsResponse {
 }
 // 在fetch offsets response 中使用
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PartitionOffsetData {
     pub partition_id: i32,
     pub offset: i64,

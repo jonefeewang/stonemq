@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use super::DelayedFetch;
 use super::ReplicaManager;
+use crate::global_config;
 use crate::log::PositionInfo;
 use crate::message::{LogFetchInfo, TopicPartition};
 use crate::request::{FetchRequest, FetchResponse};
 
+use crate::AppError;
 use crate::AppResult;
 
 impl ReplicaManager {
@@ -74,5 +76,66 @@ impl ReplicaManager {
         drop(queue_partition);
         let leo_info = queue_partition_clone.get_leo_info()?;
         Ok(leo_info)
+    }
+
+    ///
+    /// return (topic name, topic partitions, protocol error)
+    pub fn get_queue_metadata(
+        &self,
+        topics: Option<Vec<&str>>,
+    ) -> Vec<(String, Option<Vec<i32>>, Option<AppError>)> {
+        match topics {
+            None => {
+                // return all topics
+                self.queue_metadata_cache
+                    .iter()
+                    .map(|entry| {
+                        (
+                            entry.key().clone(),
+                            Some(entry.value().iter().copied().collect()),
+                            None,
+                        )
+                    })
+                    .collect()
+            }
+            Some(topics) => {
+                // return the topics requested by the client
+                topics
+                    .iter()
+                    .map(|topic| {
+                        let partitions = self.queue_metadata_cache.get(*topic);
+                        match partitions {
+                            None => (
+                                topic.to_string(),
+                                None,
+                                Some(AppError::InvalidTopic(topic.to_string())),
+                            ),
+                            Some(partitions) => (
+                                topic.to_string(),
+                                Some(partitions.iter().copied().collect()),
+                                None,
+                            ),
+                        }
+                    })
+                    .collect()
+            }
+        }
+    }
+    pub fn get_journal_topics(&self) -> Vec<String> {
+        let journal_count = global_config().log.journal_topic_count;
+        let mut topics = Vec::with_capacity(journal_count as usize);
+        for i in 0..journal_count {
+            topics.push(format!("journal-{}", i));
+        }
+        topics
+    }
+
+    pub fn get_queue_topics(&self) -> Vec<String> {
+        let queue_count = global_config().log.queue_topic_count;
+        let mut topics = Vec::with_capacity(queue_count as usize);
+        for i in 0..queue_count {
+            topics.push(format!("topic_a-{}", i));
+        }
+        topics
     }
 }

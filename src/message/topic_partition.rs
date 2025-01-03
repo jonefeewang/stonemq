@@ -8,6 +8,7 @@ use tracing::trace;
 use crate::log::{LogAppendInfo, LogType, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
 use crate::replica::{JournalReplica, QueueReplica};
+use crate::utils::MemoryUsage;
 use crate::{global_config, AppError, AppResult};
 
 use super::LogFetchInfo;
@@ -140,14 +141,12 @@ impl Display for TopicPartition {
 }
 
 impl TopicPartition {
-    #[inline]
     fn parse_topic_partition(tp_str: &str) -> Option<(String, i32)> {
         let last_hyphen_idx = tp_str.rfind('-')?;
         let (topic, partition_str) = tp_str.split_at(last_hyphen_idx);
         let partition = partition_str[1..].parse::<i32>().ok()?;
         Some((topic.to_string(), partition))
     }
-    #[inline]
     pub fn from_str(tp_str: &str, log_type: LogType) -> AppResult<Self> {
         let (topic, partition) = Self::parse_topic_partition(tp_str).ok_or_else(|| {
             AppError::InvalidValue(format!("invalid topic partition  name: {}", tp_str))
@@ -166,7 +165,6 @@ impl TopicPartition {
         }
     }
 
-    #[inline]
     pub fn new_journal(topic: impl Into<String>, partition: i32) -> Self {
         Self {
             topic: topic.into(),
@@ -175,7 +173,6 @@ impl TopicPartition {
         }
     }
 
-    #[inline]
     pub fn new_queue(topic: impl Into<String>, partition: i32) -> Self {
         Self {
             topic: topic.into(),
@@ -184,32 +181,29 @@ impl TopicPartition {
         }
     }
 
-    #[inline]
     pub fn topic(&self) -> &str {
         &self.topic
     }
 
-    #[inline]
     pub fn partition(&self) -> i32 {
         self.partition
     }
+    pub fn log_type(&self) -> LogType {
+        self.log_type
+    }
 
-    #[inline]
     pub fn is_journal(&self) -> bool {
         self.log_type == LogType::Journal
     }
 
-    #[inline]
     pub fn is_queue(&self) -> bool {
         self.log_type == LogType::Queue
     }
 
-    #[inline]
     pub fn id(&self) -> String {
         format!("{}-{}", self.topic, self.partition)
     }
 
-    #[inline]
     pub fn partition_dir(&self) -> String {
         if self.is_journal() {
             format!("{}/{}", global_config().log.journal_base_dir, self.id())
@@ -218,7 +212,6 @@ impl TopicPartition {
         }
     }
 
-    #[inline]
     pub fn protocol_size(&self) -> u32 {
         4 + self.id().as_bytes().len() as u32
     }
@@ -251,5 +244,23 @@ impl TopicData {
             topic_name,
             partition_data,
         }
+    }
+}
+
+impl MemoryUsage for TopicPartition {
+    fn memory_usage(&self) -> usize {
+        // 基础结构体大小
+        let struct_size = std::mem::size_of::<Self>();
+
+        // topic字符串的内存使用
+        let topic_size = self.topic.capacity();
+
+        // partition的大小
+        let partition_size = std::mem::size_of::<i32>();
+
+        // log_type的大小
+        let log_type_size = std::mem::size_of::<LogType>();
+
+        struct_size + topic_size + partition_size + log_type_size
     }
 }

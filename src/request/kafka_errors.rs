@@ -2,6 +2,7 @@ use thiserror::Error;
 
 /// Kafka错误类型
 #[derive(Error, Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum KafkaError {
     #[error("None")]
     None,
@@ -262,6 +263,7 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// 获取错误描述信息
+    #[allow(dead_code)]
     pub fn message(&self) -> &'static str {
         match self {
             ErrorCode::Unknown => "The server experienced an unexpected error when processing the request",
@@ -326,7 +328,7 @@ impl ErrorCode {
         }
     }
 
-    /// 从错误码数字转换为ErrorCode枚举
+    #[allow(dead_code)]
     pub fn from_code(code: i16) -> Self {
         match code {
             -1 => ErrorCode::Unknown,
@@ -391,7 +393,7 @@ impl ErrorCode {
         }
     }
 
-    /// 将ErrorCode转换为KafkaError
+    #[allow(dead_code)]
     pub fn into_error(self) -> Option<KafkaError> {
         match self {
             ErrorCode::None => None,
@@ -456,7 +458,7 @@ impl ErrorCode {
     }
 }
 
-/// 实现从KafkaError到ErrorCode的转换
+#[allow(dead_code)]
 impl From<&KafkaError> for ErrorCode {
     fn from(error: &KafkaError) -> Self {
         match error {
@@ -522,7 +524,7 @@ impl From<&KafkaError> for ErrorCode {
     }
 }
 
-/// 定义Result类型别名，方便使用
+
 pub type KafkaResult<T> = Result<T, KafkaError>;
 
 #[cfg(test)]

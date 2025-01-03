@@ -69,7 +69,7 @@ impl JoinGroupRequest {}
 #[derive(Debug)]
 pub struct JoinGroupResponse {
     pub throttle_time: Option<i32>,
-    // 可能的错误代码：
+    // possible error codes:
     // COORDINATOR_LOAD_IN_PROGRESS (14)
     // GROUP_COORDINATOR_NOT_AVAILABLE (15)
     // NOT_COORDINATOR (16)
@@ -86,18 +86,6 @@ pub struct JoinGroupResponse {
 }
 
 impl JoinGroupResponse {
-    pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
-    pub const GENERATION_ID_KEY_NAME: &'static str = "generation_id";
-    pub const GROUP_PROTOCOL_KEY_NAME: &'static str = "group_protocol";
-    pub const LEADER_ID_KEY_NAME: &'static str = "leader_id";
-    pub const MEMBER_ID_KEY_NAME: &'static str = "member_id";
-    pub const MEMBERS_KEY_NAME: &'static str = "members";
-    pub const MEMBER_METADATA_KEY_NAME: &'static str = "member_metadata";
-
-    pub const UNKNOWN_PROTOCOL: &'static str = "";
-    pub const UNKNOWN_GENERATION_ID: i32 = -1;
-    pub const UNKNOWN_MEMBER_ID: &'static str = "";
-
     pub fn new(
         error: i16,
         generation_id: i32,

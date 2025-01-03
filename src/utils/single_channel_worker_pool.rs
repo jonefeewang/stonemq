@@ -23,11 +23,12 @@ where
     _phantom: std::marker::PhantomData<(F, Fut)>,
 }
 
+#[allow(dead_code)]
 struct Worker {
     id: usize,
     handle: JoinHandle<()>,
 }
-
+#[allow(dead_code)]
 impl<T, F, Fut> WorkerPool<T, F, Fut>
 where
     T: Send + Debug + 'static,
@@ -50,7 +51,7 @@ where
             _phantom: std::marker::PhantomData,
         };
 
-        // 启动workers和monitor
+        // start workers and monitor
         pool.spawn_workers_with_monitor(
             num_workers,
             request_rx,
@@ -72,7 +73,7 @@ where
     ) {
         let mut workers = Vec::with_capacity(num_workers);
 
-        // 创建初始workers
+        // create initial workers
         for id in 0..num_workers {
             let worker = self.spawn_worker(id, request_rx.clone(), handler.clone());
             workers.push(worker);
@@ -188,7 +189,6 @@ where
     }
 }
 
-// 为了支持 Clone
 impl<T, F, Fut> Clone for WorkerPool<T, F, Fut>
 where
     T: Send + 'static,

@@ -29,7 +29,6 @@ tokio = { version = "1.33", features = [
 ] }
 
 num_cpus = "1.16"
-regex = "1.10.0"
 
 tokio-stream = "0.1.11"
 futures = "0.3"
@@ -51,7 +50,6 @@ parking_lot = "0.12.3"
 config = "0.14"
 tracing = { version = "0.1", features = ["log"] }
 metrics = "0.23.0"
-metrics-exporter-prometheus = "0.15.3"
 clap = { version = "4.4", features = ["derive"] }
 
 
@@ -96,6 +94,7 @@ tracing-core = "0.1.28"
 tracing-appender = "0.2"
 console-subscriber = "0.1.5"
 
+
 [dev-dependencies]
 fake = "2.9.2"
 tempfile = "3"
@@ -108,3 +107,10 @@ path = "src/bin/stonemq.rs"
 [[bin]]
 name = "log-parser"
 path = "src/bin/log_parser.rs"
+
+
+[profile.release]
+debug = true
+
+[profile.dev]
+debug = true # 默认开启

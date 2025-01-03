@@ -141,10 +141,11 @@ struct WriteBuffer {
 
 impl WriteBuffer {
     pub fn new(config: &WriteConfig) -> Self {
+        let config_clone = config.clone();
         Self {
             buffer: Some(Vec::with_capacity(config.buffer_capacity)),
             last_flush: Instant::now(),
-            config: config.clone(),
+            config: config_clone,
         }
     }
 

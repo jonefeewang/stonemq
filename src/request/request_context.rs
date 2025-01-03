@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::RequestHeader;
 
+#[allow(dead_code)]
 pub struct RequestContext {
     pub client_ip: String,
     pub request_header: RequestHeader,

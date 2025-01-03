@@ -52,8 +52,20 @@ impl Drop for OtelGuard {
     }
 }
 
+/// Sets up local tracing configuration
+///
+/// Initializes a basic tracing configuration suitable for local development.
+/// The configuration includes:
+/// - Timestamp format: YYYY-MM-DD HH:MM:SS.microseconds
+/// - Log target display
+/// - Thread name display
+/// - Thread ID display
+/// - Line number display
+///
+/// # Returns
+///
+/// Returns `AppResult<()>` indicating whether initialization was successful
 pub fn setup_local_tracing() -> AppResult<()> {
-    // load .env file
     dotenv().ok();
     let timer = ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -69,6 +81,22 @@ pub fn setup_local_tracing() -> AppResult<()> {
     Ok(())
 }
 
+/// Sets up the complete tracing system
+///
+/// Initializes the tracing system based on different logging modes, supporting file output
+/// and OpenTelemetry integration.
+///
+/// # Arguments
+///
+/// * `tracing_off` - Boolean flag to control whether OpenTelemetry tracing is disabled
+/// * `log_mode` - Logging mode enum with three options:
+///   - `LogMode::Prod`: Production mode, outputs to file only
+///   - `LogMode::Perf`: Performance mode, outputs to both console and file
+///   - `LogMode::Dev`: Development mode, outputs to both console and file
+///
+/// # Returns
+///
+/// Returns an `OtelGuard` struct that manages the lifecycle of OpenTelemetry resources
 pub async fn setup_tracing(tracing_off: bool, log_mode: LogMode) -> OtelGuard {
     // file appender
     let file_appender = tracing_appender::rolling::hourly("logs", "stonemq.log");

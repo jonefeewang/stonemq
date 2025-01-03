@@ -35,15 +35,40 @@ pub struct ActiveSegmentWriter {
 
 #[derive(Debug, Clone)]
 pub struct WriteConfig {
-    pub buffer_capacity: usize,   // 例如：1MB
-    pub flush_interval: Duration, // 例如：100ms
+    pub buffer_capacity: usize,
+    pub flush_interval: Duration,
 }
 
 impl Default for WriteConfig {
     fn default() -> Self {
         Self {
-            buffer_capacity: 1024 * 1024, // 1MB
+            buffer_capacity: 1024 * 1024,
             flush_interval: Duration::from_millis(500),
         }
     }
+}
+
+use std::sync::OnceLock;
+
+pub static ACTIVE_SEGMENT_WRITER: OnceLock<Arc<ActiveSegmentWriter>> = OnceLock::new();
+
+pub fn init_active_segment_writer(
+    notify_shutdown: tokio::sync::broadcast::Sender<()>,
+    worker_pool_config: Option<crate::utils::WorkerPoolConfig>,
+    write_config: Option<WriteConfig>,
+) {
+    let writer = Arc::new(ActiveSegmentWriter::new(
+        notify_shutdown,
+        worker_pool_config,
+        write_config,
+    ));
+    ACTIVE_SEGMENT_WRITER
+        .set(writer)
+        .expect("ActiveSegmentWriter already initialized");
+}
+
+pub fn get_active_segment_writer() -> &'static Arc<ActiveSegmentWriter> {
+    ACTIVE_SEGMENT_WRITER
+        .get()
+        .expect("ActiveSegmentWriter not initialized")
 }

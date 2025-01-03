@@ -81,6 +81,7 @@ impl PartitionOffsetCommitData {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct OffsetCommitRequest {
     pub group_id: String,
     pub generation_id: i32,

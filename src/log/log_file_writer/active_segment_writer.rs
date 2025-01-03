@@ -42,7 +42,8 @@ impl ActiveSegmentWriter {
     /// Add the new segment to the mapping, allowing the previous segment to be automatically dropped.
     pub fn open_file(&self, topic_partition: &TopicPartition, base_offset: i64) -> io::Result<()> {
         let segment_log = SegmentLog::new(base_offset, topic_partition, &self.write_config);
-        self.writers.insert(topic_partition.clone(), segment_log);
+        let tp_clone = topic_partition.clone();
+        self.writers.insert(tp_clone, segment_log);
         Ok(())
     }
     pub async fn append_journal(&self, request: JournalFileWriteReq) -> AppResult<()> {

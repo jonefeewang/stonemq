@@ -1,22 +1,23 @@
 mod delayed_async_operation;
-mod mini_kv_db;
 mod multiple_channel_worker_pool;
-mod worker_pool;
+mod profile;
+mod single_channel_worker_pool;
 
-use crossbeam::atomic::AtomicCell;
-use dashmap::DashMap;
 pub use multiple_channel_worker_pool::MultipleChannelWorkerPool;
 pub use multiple_channel_worker_pool::PoolHandler;
 pub use multiple_channel_worker_pool::WorkerPoolConfig;
+pub use profile::MemoryUsage;
+
+use crossbeam::atomic::AtomicCell;
+use dashmap::DashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 use tokio_util::time::delay_queue;
 
-use tokio::sync::mpsc::Sender;
-
-// 管理延迟操作的Purgatory
+// manage delayed async operation
 #[derive(Debug)]
 pub struct DelayedAsyncOperationPurgatory<T: DelayedAsyncOperation + 'static> {
     name: String,
@@ -25,7 +26,7 @@ pub struct DelayedAsyncOperationPurgatory<T: DelayedAsyncOperation + 'static> {
     _shutdown_complete_tx: Sender<()>,
 }
 
-// 异步的DelayedOperation trait
+// delayed async operation trait
 pub trait DelayedAsyncOperation: Send + Sync {
     fn delay_ms(&self) -> u64;
     fn try_complete(&self) -> impl Future<Output = bool> + Send;
@@ -33,7 +34,7 @@ pub trait DelayedAsyncOperation: Send + Sync {
     fn on_expiration(&self) -> impl Future<Output = ()> + Send;
 }
 
-// 包装DelayedOperation的状态管理
+// manage the state of delayed operation
 #[derive(Debug)]
 struct DelayedAsyncOperationState<T: DelayedAsyncOperation> {
     operation: Arc<T>,
@@ -42,7 +43,7 @@ struct DelayedAsyncOperationState<T: DelayedAsyncOperation> {
     is_expired: AtomicCell<bool>,
 }
 
-// 定义 DelayQueue 的操作枚举
+// define the operation of delay queue
 enum DelayQueueOp<T: DelayedAsyncOperation> {
     Insert(Arc<DelayedAsyncOperationState<T>>, Duration),
     Remove(tokio_util::time::delay_queue::Key),

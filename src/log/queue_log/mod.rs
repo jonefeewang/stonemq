@@ -12,7 +12,6 @@ mod queue_write;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    hash::{Hash, Hasher},
     path::Path,
     sync::Arc,
 };
@@ -29,7 +28,7 @@ use crate::{
     AppError, AppResult,
 };
 
-use super::ActiveSegmentWriter;
+use super::get_active_segment_writer;
 
 /// Constants for queue log operations
 const INIT_LOG_START_OFFSET: i64 = 0;
@@ -69,24 +68,7 @@ pub struct QueueLog {
 
     /// Last offset in the log
     last_offset: AtomicCell<i64>,
-
-    /// Active segment writer
-    active_segment_writer: Arc<ActiveSegmentWriter>,
 }
-
-impl Hash for QueueLog {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.topic_partition.hash(state);
-    }
-}
-
-impl PartialEq for QueueLog {
-    fn eq(&self, other: &Self) -> bool {
-        self.topic_partition == other.topic_partition
-    }
-}
-
-impl Eq for QueueLog {}
 
 impl QueueLog {
     /// Creates a new empty queue log
@@ -98,30 +80,27 @@ impl QueueLog {
     /// # Returns
     ///
     /// A new QueueLog instance or an error if creation fails
-    pub fn new(
-        topic_partition: &TopicPartition,
-        active_segment_writer: Arc<ActiveSegmentWriter>,
-    ) -> AppResult<Self> {
+    pub fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
         let dir = topic_partition.partition_dir();
         Self::ensure_dir_exists(&dir)?;
 
         let index_file_max_size = global_config().log.queue_index_file_size;
-        let active_segment_index = ActiveSegmentIndex::new(topic_partition, 0, index_file_max_size)?;
+        let active_segment_index =
+            ActiveSegmentIndex::new(topic_partition, 0, index_file_max_size)?;
 
         // open active segment writer
-        active_segment_writer
+        get_active_segment_writer()
             .open_file(topic_partition, active_segment_index.base_offset())?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
-            segments: DashMap::new(),
+            segments: DashMap::with_capacity(1),
             segments_order: RwLock::new(BTreeSet::new()),
             active_segment_index: RwLock::new(active_segment_index),
             active_segment_id: AtomicCell::new(0),
             log_start_offset: INIT_LOG_START_OFFSET,
             recover_point: AtomicCell::new(INIT_RECOVER_POINT),
             last_offset: AtomicCell::new(INIT_LAST_OFFSET),
-            active_segment_writer,
         })
     }
 
@@ -142,14 +121,12 @@ impl QueueLog {
         log_start_offset: i64,
         recover_point: i64,
         last_offset: i64,
-        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let segments_order = segments.keys().cloned().collect();
         let active_segment_id = active_segment.base_offset();
 
         // open active segment writer
-        active_segment_writer
-            .open_file(topic_partition, active_segment_id)?;
+        get_active_segment_writer().open_file(topic_partition, active_segment_id)?;
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
@@ -160,7 +137,6 @@ impl QueueLog {
             log_start_offset,
             recover_point: AtomicCell::new(recover_point),
             last_offset: AtomicCell::new(last_offset),
-            active_segment_writer,
         })
     }
 

@@ -1,4 +1,5 @@
 use crate::message::TopicPartition;
+use crate::utils::MemoryUsage;
 use crate::AppError::{self};
 use crate::AppResult;
 use std::collections::HashMap;
@@ -102,6 +103,18 @@ impl CheckPointFile {
             line.clear();
         }
         Ok(points)
+    }
+}
+
+impl MemoryUsage for CheckPointFile {
+    fn memory_usage(&self) -> usize {
+        // 基础结构体大小
+        let struct_size = std::mem::size_of::<Self>();
+
+        // file_name 的内存使用
+        let file_name_size = self.file_name.capacity();
+
+        struct_size + file_name_size
     }
 }
 

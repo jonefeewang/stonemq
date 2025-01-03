@@ -6,7 +6,10 @@ use bytes::BytesMut;
 use tracing::{debug, trace};
 
 use crate::{
-    log::{seek, segment_index::SegmentIndexCommon, LogType, PositionInfo, NO_POSITION_INFO},
+    log::{
+        get_active_segment_writer, seek, segment_index::SegmentIndexCommon, LogType, PositionInfo,
+        NO_POSITION_INFO,
+    },
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
     AppError, AppResult,
 };
@@ -29,9 +32,8 @@ impl QueueLog {
 
     /// get LEO(Log End Offset) info
     pub fn get_leo_info(&self) -> AppResult<PositionInfo> {
-        let active_seg_size = self
-            .active_segment_writer
-            .active_segment_size(&self.topic_partition);
+        let active_seg_size =
+            get_active_segment_writer().active_segment_size(&self.topic_partition);
 
         Ok(PositionInfo {
             base_offset: self.active_segment_id.load(),
@@ -175,8 +177,7 @@ impl QueueLog {
             .copied()
             .map(|offset| {
                 if offset == self.active_segment_id.load() {
-                    self.active_segment_writer
-                        .active_segment_size(&self.topic_partition) as usize
+                    get_active_segment_writer().active_segment_size(&self.topic_partition) as usize
                 } else {
                     self.readonly_segment_size(offset)
                 }

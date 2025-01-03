@@ -36,11 +36,6 @@ pub struct HeartbeatRequest {
     pub member_id: String,
     pub generation_id: i32,
 }
-impl HeartbeatRequest {
-    pub const GROUP_ID_KEY_NAME: &'static str = "group_id";
-    pub const GROUP_GENERATION_ID_KEY_NAME: &'static str = "group_generation_id";
-    pub const MEMBER_ID_KEY_NAME: &'static str = "member_id";
-}
 
 #[derive(Debug)]
 pub struct HeartbeatResponse {
@@ -58,7 +53,6 @@ pub struct HeartbeatResponse {
     pub throttle_time_ms: i32,
 }
 impl HeartbeatResponse {
-    pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
     pub fn new(error: KafkaError, throttle_time_ms: i32) -> Self {
         let error_code = ErrorCode::from(&error);
         HeartbeatResponse {

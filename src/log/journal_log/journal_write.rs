@@ -9,6 +9,7 @@ use tracing::{debug, trace};
 use crate::{
     global_config,
     log::{
+        get_active_segment_writer,
         log_file_writer::{FlushRequest, JournalFileWriteReq},
         segment_index::ActiveSegmentIndex,
         LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME,
@@ -67,8 +68,7 @@ impl JournalLog {
             records: memory_records,
         };
 
-        if let Err(e) = self
-            .active_segment_writer
+        if let Err(e) = get_active_segment_writer()
             .append_journal(journal_log_write_op)
             .await
         {
@@ -124,9 +124,8 @@ impl JournalLog {
 
         // Check if segment rolling is needed
         let active_segment_offset_index_full = self.active_segment_index.read().offset_index_full();
-        let active_seg_size = self
-            .active_segment_writer
-            .active_segment_size(&self.topic_partition);
+        let active_seg_size =
+            get_active_segment_writer().active_segment_size(&self.topic_partition);
 
         if self.need_roll(
             active_seg_size as u32,
@@ -142,8 +141,7 @@ impl JournalLog {
                 memory_records.size(),
                 log_append_info.first_offset,
                 LogType::Journal,
-                self.active_segment_writer
-                    .active_segment_size(&self.topic_partition),
+                get_active_segment_writer().active_segment_size(&self.topic_partition),
             )?;
         }
 
@@ -158,7 +156,7 @@ impl JournalLog {
         let new_base_offset = self.next_offset.load();
 
         // Flush old segment
-        self.active_segment_writer
+        get_active_segment_writer()
             .flush(FlushRequest {
                 topic_partition: self.topic_partition.clone(),
             })
@@ -174,8 +172,7 @@ impl JournalLog {
             global_config().log.journal_segment_size as usize,
         )?;
         // open new segment
-        self.active_segment_writer
-            .open_file(&self.topic_partition, new_base_offset)?;
+        get_active_segment_writer().open_file(&self.topic_partition, new_base_offset)?;
 
         {
             // Swap active segment index
@@ -292,7 +289,7 @@ impl JournalLog {
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
-        self.active_segment_writer.flush(request).await?;
+        get_active_segment_writer().flush(request).await?;
 
         self.recover_point.store(self.next_offset.load() - 1);
 

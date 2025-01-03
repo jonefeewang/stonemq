@@ -1,8 +1,9 @@
 use crate::log::index_file::{ReadOnlyIndexFile, WritableIndexFile};
 use crate::message::TopicPartition;
+use crate::utils::MemoryUsage;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
-use tracing::trace;
+use tracing::{info, trace};
 
 use super::{LogType, INDEX_FILE_SUFFIX};
 
@@ -41,7 +42,6 @@ pub struct ReadOnlySegmentIndex {
 
 #[derive(Debug)]
 pub struct ActiveSegmentIndex {
-    topic_partition: TopicPartition,
     base_offset: i64,
     offset_index: WritableIndexFile,
     bytes_since_last_index_entry: AtomicCell<usize>,
@@ -96,17 +96,15 @@ impl ActiveSegmentIndex {
             INDEX_FILE_SUFFIX
         );
         let offset_index = WritableIndexFile::new(index_file_name, index_file_max_size)?;
-        Self::open(topic_partition, base_offset, offset_index, None)
+        Self::open(base_offset, offset_index, None)
     }
     /// open a new active log segment index
     pub fn open(
-        topic_partition: &TopicPartition,
         base_offset: i64,
         offset_index: WritableIndexFile,
         _time_index: Option<WritableIndexFile>,
     ) -> AppResult<Self> {
         Ok(Self {
-            topic_partition: topic_partition.clone(),
             base_offset,
             offset_index,
             bytes_since_last_index_entry: AtomicCell::new(0),
@@ -127,8 +125,8 @@ impl ActiveSegmentIndex {
             LogType::Queue => global_config().log.queue_index_interval_bytes,
         };
 
-        //|| index_interval <= self.bytes_since_last_index_entry.load()
-        if true {
+        if index_interval <= self.bytes_since_last_index_entry.load() {
+            // if true {
             self.offset_index
                 .add_entry(relative_offset as u32, segment_size as u32)?;
 
@@ -166,5 +164,47 @@ impl ActiveSegmentIndex {
         // flush offset index
         self.offset_index.flush()?;
         Ok(())
+    }
+}
+
+impl MemoryUsage for ActiveSegmentIndex {
+    fn memory_usage(&self) -> usize {
+        // 基础结构体大小
+        let struct_size = std::mem::size_of::<Self>();
+
+        // offset_index 的内存使用
+        let offset_index_size = self.offset_index.memory_usage();
+
+        // base_offset 的大小
+        let base_offset_size = std::mem::size_of::<i64>();
+
+        // bytes_since_last_index_entry 的大小
+        let bytes_since_last_index_size = std::mem::size_of::<AtomicCell<usize>>();
+
+        info!(
+            "ActiveSegmentIndex memory usage: \n\
+             struct: {} bytes\n\
+             offset_index: {} bytes\n\
+             base_offset: {} bytes\n\
+             bytes_since_last_index_entry: {} bytes",
+            struct_size, offset_index_size, base_offset_size, bytes_since_last_index_size
+        );
+
+        struct_size + offset_index_size + base_offset_size + bytes_since_last_index_size
+    }
+}
+
+impl MemoryUsage for ReadOnlySegmentIndex {
+    fn memory_usage(&self) -> usize {
+        // 基础结构体大小
+        let struct_size = std::mem::size_of::<Self>();
+
+        // offset_index 的内存使用
+        let offset_index_size = self.offset_index.memory_usage();
+
+        // base_offset 的大小
+        let base_offset_size = std::mem::size_of::<i64>();
+
+        struct_size + offset_index_size + base_offset_size
     }
 }

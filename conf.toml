@@ -17,8 +17,8 @@ max_package_size = 10_048_576
 
 [log]
 ###### general config
-journal_topic_count = 2
-queue_topic_count = 2
+journal_topic_count = 1
+queue_topic_count = 1000
 recovery_checkpoint_interval = 1000
 file_records_comm_channel_size = 1000
 ## default 8192(8kb)
@@ -51,7 +51,7 @@ kv_store_path = "test_data/kv_store/kv.db"
 
 [group_consume]
 ###### group config
-group_min_session_timeout = 6_000
+group_min_session_timeout = 6_000   
 group_max_session_timeout = 300_000
 group_initial_rebalance_delay = 3000
 

@@ -53,26 +53,6 @@ pub struct SyncGroupRequest {
     pub member_id: String,
     pub group_assignment: HashMap<String, BytesMut>,
 }
-impl SyncGroupRequest {
-    pub const GROUP_ID_KEY_NAME: &'static str = "group_id";
-    pub const GENERATION_ID_KEY_NAME: &'static str = "generation_id";
-    pub const MEMBER_ID_KEY_NAME: &'static str = "member_id";
-    pub const GROUP_ASSIGNMENT_KEY_NAME: &'static str = "group_assignment";
-    pub const MEMBER_ASSIGNMENT_KEY_NAME: &'static str = "member_assignment";
-    pub fn new(
-        group_id: String,
-        generation_id: i32,
-        member_id: String,
-        group_assignment: HashMap<String, BytesMut>,
-    ) -> Self {
-        SyncGroupRequest {
-            group_id,
-            generation_id,
-            member_id,
-            group_assignment,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct SyncGroupResponse {
@@ -81,9 +61,6 @@ pub struct SyncGroupResponse {
     pub member_assignment: Bytes,
 }
 impl SyncGroupResponse {
-    pub const ERROR_CODE_KEY_NAME: &'static str = "error_code";
-    pub const THROTTLE_TIME_MS_KEY_NAME: &'static str = "throttle_time_ms";
-    pub const MEMBER_ASSIGNMENT_KEY_NAME: &'static str = "member_assignment";
     pub fn new(error_code: ErrorCode, throttle_time_ms: i32, member_assignment: Bytes) -> Self {
         SyncGroupResponse {
             error_code,

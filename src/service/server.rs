@@ -335,7 +335,10 @@ impl Server {
                 .await
                 .unwrap();
 
+            debug!("accept new connection");
+
             let socket = self.accept().await?;
+
             let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
             let (reader, writer) = socket.into_split();
 

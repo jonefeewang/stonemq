@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::{
+    get_active_segment_writer,
     segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
-    ActiveSegmentWriter,
 };
 
 struct JournalLogMetadata {
@@ -81,9 +81,7 @@ pub struct JournalLog {
 
     /// Checkpoint file for queue next offsets
     queue_next_offset_checkpoints: CheckPointFile,
-
-    /// Active segment writer
-    active_segment_writer: Arc<ActiveSegmentWriter>,
+    // active_segment_writer: Arc<ActiveSegmentWriter>,
 }
 
 impl JournalLog {
@@ -108,10 +106,7 @@ impl JournalLog {
     /// Returns an error if:
     /// - Directory creation fails
     /// - Initial segment creation fails
-    pub fn new(
-        topic_partition: &TopicPartition,
-        active_segment_writer: Arc<ActiveSegmentWriter>,
-    ) -> AppResult<Self> {
+    pub fn new(topic_partition: &TopicPartition) -> AppResult<Self> {
         let dir = topic_partition.partition_dir();
         std::fs::create_dir_all(&dir).map_err(|e| {
             AppError::DetailedIoError(format!(
@@ -128,7 +123,8 @@ impl JournalLog {
         )?;
 
         // open active segment writer
-        active_segment_writer.open_file(topic_partition, active_segment_index.base_offset())?;
+        get_active_segment_writer()
+            .open_file(topic_partition, active_segment_index.base_offset())?;
 
         Ok(Self {
             segments_order: RwLock::new(BTreeSet::new()),
@@ -146,7 +142,6 @@ impl JournalLog {
             recover_point: AtomicCell::new(Self::INIT_RECOVER_POINT),
             split_offset: AtomicCell::new(Self::INIT_SPLIT_OFFSET),
             topic_partition: topic_partition.clone(),
-            active_segment_writer,
         })
     }
 
@@ -172,7 +167,6 @@ impl JournalLog {
         active_segment: ActiveSegmentIndex,
         topic_partition: &TopicPartition,
         metadata: JournalLogMetadata,
-        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let segments_order = segments.keys().cloned().collect();
         let segments_map = segments
@@ -183,7 +177,7 @@ impl JournalLog {
         let active_segment_base_offset = active_segment.base_offset();
 
         // open active segment writer
-        active_segment_writer.open_file(topic_partition, active_segment_base_offset)?;
+        get_active_segment_writer().open_file(topic_partition, active_segment_base_offset)?;
 
         Ok(Self {
             segments_order: RwLock::new(segments_order),
@@ -197,7 +191,6 @@ impl JournalLog {
             recover_point: AtomicCell::new(metadata.recover_point),
             split_offset: AtomicCell::new(metadata.split_offset),
             topic_partition: topic_partition.clone(),
-            active_segment_writer,
         })
     }
 }

@@ -44,7 +44,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         notify_shutdown: broadcast::Sender<()>,
         shutdown_complete_tx: Sender<()>,
     ) -> Arc<Self> {
-        let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000); // 适当的缓冲大小
+        let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000);
 
         let purgatory = DelayedAsyncOperationPurgatory {
             name: name.to_string(),
@@ -131,7 +131,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                                     &purgatory_name,
                                     key
                                 );
-                            }   
+                            }
                         }
                     }
                     Some(expired) = delay_queue.next() => {
@@ -151,7 +151,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
             }
         });
 
-        // 清理循环保持不变
+        // clean completed operation
         let self_clone = Arc::clone(&self);
         tokio::spawn(async move {
             loop {
@@ -193,7 +193,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
     async fn purge_completed(&self) {
         let mut keys_to_remove = Vec::new();
 
-        // 遍历entry时按每个entry锁定
+        // lock each entry when iterating
         for mut entry in self.watchers.iter_mut() {
             let mut new_ops = Vec::new();
 
@@ -311,7 +311,7 @@ mod tests {
         )
         .await;
 
-        // 测试立即完成的操作
+        // test immediately completed operation
         let op = Arc::new(TestShortDelayedOperation::new(true));
         let op_clone = Arc::clone(&op);
         let completed = purgatory
@@ -320,7 +320,7 @@ mod tests {
         assert!(completed);
         assert!(op.completed.load());
 
-        // 测试需要watch的操作
+        // test operation need watch
         let op = Arc::new(TestShortDelayedOperation::new(false));
         let op_clone = Arc::clone(&op);
         let completed = purgatory
@@ -328,7 +328,7 @@ mod tests {
             .await;
         assert!(!completed);
 
-        // 验证watchers中有一个操作
+        // verify watchers has one operation
         assert_eq!(purgatory.watchers.get("test_key").unwrap().len(), 1);
     }
 
@@ -345,7 +345,7 @@ mod tests {
         )
         .await;
 
-        // 添加两个操作到watchers
+        // add two operation to watchers
         let op1 = Arc::new(TestShortDelayedOperation::new(false));
         let op2 = Arc::new(TestShortDelayedOperation::new(false));
         let op1_clone = Arc::clone(&op1);
@@ -358,16 +358,16 @@ mod tests {
             .try_complete_else_watch(op2_clone, vec!["test_key".to_string()])
             .await;
 
-        // 验证初始状态
+        // verify initial state
         assert_eq!(purgatory.watchers.get("test_key").unwrap().len(), 2);
 
-        // 修改第一个操作为可完成
+        // modify first operation to be completed
         purgatory.watchers.get("test_key").unwrap()[0]
             .operation
             .should_complete
             .store(true);
 
-        // 检查完成状态
+        // check completed state
         let completed = purgatory.check_and_complete("test_key").await;
         assert_eq!(completed, 1);
     }
@@ -385,15 +385,15 @@ mod tests {
         )
         .await;
 
-        // 添加一个已完成的操作
+        // add a completed operation
         let op = Arc::new(TestShortDelayedOperation::new(false));
         let op_clone = Arc::clone(&op);
-        // 加进watchers
+        // add to watchers
         purgatory
             .try_complete_else_watch(op_clone, vec!["test_key".to_string()])
             .await;
 
-        // 修改第一个操作为可完成
+        // modify first operation to be completed
         purgatory.watchers.get("test_key").unwrap()[0]
             .operation
             .should_complete
@@ -401,10 +401,10 @@ mod tests {
 
         let completed = purgatory.check_and_complete("test_key").await;
         assert_eq!(completed, 1);
-        // 清理已完成的操作
+        // clean completed operation
         purgatory.purge_completed().await;
 
-        // 验证watchers为空
+        // verify watchers is empty
         assert!(purgatory.watchers.is_empty());
     }
 
@@ -429,21 +429,21 @@ mod tests {
         )
         .await;
 
-        // 添加一个短超时的操作
+        // add a short delay operation
         let short_delay_op = Arc::new(TestShortDelayedOperation::new(false));
         let short_delay_op_clone = Arc::clone(&short_delay_op);
         short_delay_purgatory
             .try_complete_else_watch(short_delay_op_clone, vec!["test_key1".to_string()])
             .await;
 
-        // 添加一个长超时的操作
+        // add a long delay operation
         let long_delay_op = Arc::new(TestLongDelayedOperation::new(false));
         let long_delay_op_clone = Arc::clone(&long_delay_op);
         long_delay_purgatory
             .try_complete_else_watch(long_delay_op_clone, vec!["test_key2".to_string()])
             .await;
 
-        // 等待第一个操作超时
+        // wait first operation expired
         tokio::time::sleep(Duration::from_millis(4000)).await;
         assert!(short_delay_purgatory.watchers.get("test_key1").unwrap()[0]
             .is_expired
@@ -452,7 +452,7 @@ mod tests {
             .is_expired
             .load());
 
-        // 提前完成第二个操作
+        // complete second operation early
         long_delay_op.should_complete.store(true);
         let completed = long_delay_purgatory.check_and_complete("test_key2").await;
         assert_eq!(completed, 1);

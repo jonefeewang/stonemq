@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::Arc;
 
 use tracing::{info, warn};
 
-use crate::log::{ActiveSegmentWriter, SegmentFileType};
+use crate::log::SegmentFileType;
 use crate::{
     log::index_file::{ReadOnlyIndexFile, WritableIndexFile},
     log::segment_index::{ActiveSegmentIndex, ReadOnlySegmentIndex, SegmentIndexCommon},
@@ -26,12 +25,11 @@ impl QueueLog {
         topic_partition: &TopicPartition,
         recover_point: i64,
         index_file_max_size: u32,
-        active_segment_writer: Arc<ActiveSegmentWriter>,
     ) -> AppResult<Self> {
         let (segments, active_segment) = Self::load_segments(topic_partition, index_file_max_size)?;
 
         if active_segment.is_none() {
-            let log = Self::new(topic_partition, active_segment_writer)?;
+            let log = Self::new(topic_partition)?;
             return Ok(log);
         }
 
@@ -44,7 +42,6 @@ impl QueueLog {
             log_start_offset,
             recover_point,
             recover_point,
-            active_segment_writer,
         )?;
 
         Ok(log)
@@ -86,13 +83,7 @@ impl QueueLog {
             return Ok((BTreeMap::new(), None));
         }
 
-        Self::build_segments(
-            topic_partition,
-            &dir,
-            index_files,
-            log_files,
-            index_file_max_size,
-        )
+        Self::build_segments(&dir, index_files, log_files, index_file_max_size)
     }
 
     /// Checks if directory has any segment files
@@ -168,7 +159,6 @@ impl QueueLog {
 
     /// Builds segments from files
     fn build_segments(
-        topic_partition: &TopicPartition,
         dir: impl AsRef<Path>,
         index_files: BTreeSet<i64>,
         log_files: BTreeSet<i64>,
@@ -189,7 +179,6 @@ impl QueueLog {
 
             if active_segment.is_none() {
                 active_segment = Some(Self::create_active_segment(
-                    topic_partition,
                     base_offset,
                     &index_path,
                     index_file_max_size,
@@ -207,13 +196,12 @@ impl QueueLog {
 
     /// Creates an active segment
     fn create_active_segment(
-        topic_partition: &TopicPartition,
         base_offset: i64,
         index_path: &str,
         index_file_max_size: u32,
     ) -> AppResult<ActiveSegmentIndex> {
         let index_file = WritableIndexFile::new(index_path, index_file_max_size as usize)?;
-        ActiveSegmentIndex::open(topic_partition, base_offset, index_file, None)
+        ActiveSegmentIndex::open(base_offset, index_file, None)
     }
 
     /// Creates a readonly segment
