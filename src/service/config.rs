@@ -25,6 +25,7 @@ pub struct NetworkConfig {
     pub port: u16,
     pub max_connection: usize,
     pub max_package_size: usize,
+    pub conn_read_buffer_size: usize,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct GroupConsumeConfig {

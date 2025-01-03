@@ -1,12 +1,10 @@
 mod delayed_async_operation;
 mod multiple_channel_worker_pool;
-mod profile;
 mod single_channel_worker_pool;
 
 pub use multiple_channel_worker_pool::MultipleChannelWorkerPool;
 pub use multiple_channel_worker_pool::PoolHandler;
 pub use multiple_channel_worker_pool::WorkerPoolConfig;
-pub use profile::MemoryUsage;
 
 use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;

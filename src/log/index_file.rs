@@ -2,7 +2,7 @@ use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::{fs::File, path::Path};
 
-use crate::{utils::MemoryUsage, AppError, AppResult};
+use crate::{AppError, AppResult};
 
 const INDEX_ENTRY_SIZE: usize = 8;
 
@@ -156,39 +156,4 @@ fn binary_search_index(slice: &[u8], entries: usize, target_offset: u32) -> Opti
     }
 
     None
-}
-
-impl MemoryUsage for ReadOnlyIndexFile {
-    fn memory_usage(&self) -> usize {
-        // 基础结构体大小
-        let struct_size = std::mem::size_of::<Self>();
-
-        // mmap 映射的内存大小
-        // 注意：这个值表示映射的文件大小，但实际内存使用可能更少
-        // 因为操作系统可能只加载了部分页面到物理内存中
-        let mmap_size = self.mmap.len();
-
-        // entries 字段的大小
-        let entries_size = std::mem::size_of::<usize>();
-
-        struct_size + mmap_size + entries_size
-    }
-}
-
-impl MemoryUsage for WritableIndexFile {
-    fn memory_usage(&self) -> usize {
-        // 基础结构体大小
-        let struct_size = std::mem::size_of::<Self>();
-
-        // mmap 映射的内存大小
-        // let mmap_size = parse_smaps_for_rss;
-
-        // AtomicCell<usize> 的大小
-        let entries_size = std::mem::size_of::<AtomicCell<usize>>();
-
-        // max_entry_count 的大小
-        let max_entry_count_size = std::mem::size_of::<usize>();
-
-        struct_size + entries_size + max_entry_count_size
-    }
 }

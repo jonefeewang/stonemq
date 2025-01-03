@@ -1,9 +1,8 @@
 use crate::log::index_file::{ReadOnlyIndexFile, WritableIndexFile};
 use crate::message::TopicPartition;
-use crate::utils::MemoryUsage;
 use crate::{global_config, AppResult};
 use crossbeam::atomic::AtomicCell;
-use tracing::{info, trace};
+use tracing::trace;
 
 use super::{LogType, INDEX_FILE_SUFFIX};
 
@@ -164,47 +163,5 @@ impl ActiveSegmentIndex {
         // flush offset index
         self.offset_index.flush()?;
         Ok(())
-    }
-}
-
-impl MemoryUsage for ActiveSegmentIndex {
-    fn memory_usage(&self) -> usize {
-        // 基础结构体大小
-        let struct_size = std::mem::size_of::<Self>();
-
-        // offset_index 的内存使用
-        let offset_index_size = self.offset_index.memory_usage();
-
-        // base_offset 的大小
-        let base_offset_size = std::mem::size_of::<i64>();
-
-        // bytes_since_last_index_entry 的大小
-        let bytes_since_last_index_size = std::mem::size_of::<AtomicCell<usize>>();
-
-        info!(
-            "ActiveSegmentIndex memory usage: \n\
-             struct: {} bytes\n\
-             offset_index: {} bytes\n\
-             base_offset: {} bytes\n\
-             bytes_since_last_index_entry: {} bytes",
-            struct_size, offset_index_size, base_offset_size, bytes_since_last_index_size
-        );
-
-        struct_size + offset_index_size + base_offset_size + bytes_since_last_index_size
-    }
-}
-
-impl MemoryUsage for ReadOnlySegmentIndex {
-    fn memory_usage(&self) -> usize {
-        // 基础结构体大小
-        let struct_size = std::mem::size_of::<Self>();
-
-        // offset_index 的内存使用
-        let offset_index_size = self.offset_index.memory_usage();
-
-        // base_offset 的大小
-        let base_offset_size = std::mem::size_of::<i64>();
-
-        struct_size + offset_index_size + base_offset_size
     }
 }

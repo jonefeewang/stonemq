@@ -326,6 +326,7 @@ impl Server {
             request_handler_config,
             self.notify_shutdown.clone(),
         );
+        let buffer_size = global_config().network.conn_read_buffer_size;
 
         loop {
             let permit = self
@@ -349,7 +350,7 @@ impl Server {
                 _shutdown_complete_tx: shutdown_complete_tx,
                 notify_shutdown: notify_shutdown_clone,
                 connection_id,
-                connection: Connection::new(reader),
+                connection: Connection::new(reader, buffer_size),
                 writer: BufWriter::new(writer),
                 request_tx: request_sender.clone(),
             };

@@ -8,7 +8,6 @@ use tracing::trace;
 use crate::log::{LogAppendInfo, LogType, PositionInfo};
 use crate::message::memory_records::MemoryRecords;
 use crate::replica::{JournalReplica, QueueReplica};
-use crate::utils::MemoryUsage;
 use crate::{global_config, AppError, AppResult};
 
 use super::LogFetchInfo;
@@ -244,23 +243,5 @@ impl TopicData {
             topic_name,
             partition_data,
         }
-    }
-}
-
-impl MemoryUsage for TopicPartition {
-    fn memory_usage(&self) -> usize {
-        // 基础结构体大小
-        let struct_size = std::mem::size_of::<Self>();
-
-        // topic字符串的内存使用
-        let topic_size = self.topic.capacity();
-
-        // partition的大小
-        let partition_size = std::mem::size_of::<i32>();
-
-        // log_type的大小
-        let log_type_size = std::mem::size_of::<LogType>();
-
-        struct_size + topic_size + partition_size + log_type_size
     }
 }

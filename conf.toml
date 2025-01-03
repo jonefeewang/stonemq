@@ -14,6 +14,8 @@ port = 9092
 max_connection = 65536
 #default package size 10M
 max_package_size = 10_048_576
+# default connection read buffer size 4kb
+conn_read_buffer_size = 4096
 
 [log]
 ###### general config
