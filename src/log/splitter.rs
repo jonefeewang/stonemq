@@ -1,4 +1,3 @@
-use crate::log::segment_index::PositionInfo;
 use crate::log::{JournalLog, LogType};
 use crate::message::{MemoryRecords, TopicPartition};
 use crate::{global_config, AppError, AppResult, Shutdown};
@@ -6,6 +5,7 @@ use bytes::{Buf, BytesMut};
 
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::fs::File;
 use std::io::{self, ErrorKind, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tokio::time::Interval;
 use tracing::{debug, error, instrument, trace};
 
 use super::queue_log::QueueLog;
+use super::JournalRecordsBatch;
 
 #[derive(Debug)]
 pub struct SplitterTask {
@@ -51,35 +52,38 @@ impl SplitterTask {
         );
         while !shutdown.is_shutdown() {
             let target_offset = self.journal_log.split_offset.load() + 1;
-            debug!("start loop and read target offset: {}", target_offset);
+            debug!(
+                "start loop and read target offset: {} / {}",
+                target_offset, &self.topic_partition
+            );
 
-            match self
-                .process_target_offset(target_offset, &mut shutdown)
-                .await
-            {
+            match self.read_from(target_offset, &mut shutdown).await {
+                // 正常读取和处理，一直读取到段末尾EOF，本段处理完成，返回Ok(())，等待切换到下一个段
                 Ok(()) => continue,
                 Err(e) if self.is_retrievable_error(&e) => {
                     trace!(
-                        "读取目标offset失败，可恢复中: {}，interval: {:?}",
+                        "读取目标offset失败,可恢复中: {}/{}",
                         e,
-                        self.read_wait_interval
+                        &self.topic_partition
                     );
                     if shutdown.is_shutdown() {
                         return Ok(());
                     }
                     tokio::select! {
                         _ = self.read_wait_interval.tick() => {
-                            trace!("等待继续读取......");
+                            trace!("等待继续读取...... / {}", &self.topic_partition);
                         },
                         _ = shutdown.recv() => {
-                            println!("shutdown 收到信号");
                             return Ok(());
                         }
                     }
                     continue;
                 }
                 Err(e) => {
-                    error!("读取目标offset失败，不no no可恢复: {}", e);
+                    error!(
+                        "读取目标offset失败,不no no可恢复: {}/{}",
+                        e, &self.topic_partition
+                    );
                     return Err(e);
                 }
             }
@@ -88,19 +92,8 @@ impl SplitterTask {
         Ok(())
     }
 
-    async fn process_target_offset(
-        &mut self,
-        target_offset: i64,
-        shutdown: &mut Shutdown,
-    ) -> AppResult<()> {
-        let position_info = self.journal_log.get_relative_position_info(target_offset)?;
-
-        self.read_and_process_segment(target_offset, position_info, shutdown)
-            .await
-    }
-
     fn is_retrievable_error(&self, e: &AppError) -> bool {
-        trace!("is_retrievable_error: {:?}", e);
+        trace!("is_retrievable_error: {:?}/{}", e, &self.topic_partition);
         e.source()
             .and_then(|e| e.downcast_ref::<std::io::Error>())
             .map_or(false, |std_err| {
@@ -111,85 +104,97 @@ impl SplitterTask {
             })
     }
 
-    async fn read_and_process_segment(
-        &mut self,
-        target_offset: i64,
-        position_info: PositionInfo,
-        shutdown: &mut Shutdown,
-    ) -> AppResult<()> {
+    // 只要将文件指针seek到目标offset，然后一直读取到段末尾EOF，本段处理完成，返回Ok(()),读取过程中出现的Eof错误,自己处理
+    // 函数返回值:
+    //   1. 正常读取和处理，一直读取到段末尾EOF，本段处理完成，返回Ok(())，等待切换到下一个段
+    //   2. get_relative_position_info返回not found,或seek_file返回NotFound或Eof错误,File::open返回NotFound，返回Err(e)，这种错误需要在下游重试
+    //   3. 其他文件错误，返回Err(e)，不可恢复错误，下游应该明确抛出，并退出
+    async fn read_from(&mut self, target_offset: i64, shutdown: &mut Shutdown) -> AppResult<()> {
+        let refer_position_info = self.journal_log.get_relative_position_info(target_offset)?;
+
         let journal_topic_dir = PathBuf::from(global_config().log.journal_base_dir.clone())
             .join(self.topic_partition.id());
-        let segment_path = journal_topic_dir.join(format!("{}.log", position_info.base_offset));
+        let segment_path =
+            journal_topic_dir.join(format!("{}.log", refer_position_info.base_offset));
         let journal_seg_file = std::fs::File::open(&segment_path)?;
 
         debug!(
-            "开始读取一个segment{:?} ref:  {:?}, target offset: {}",
-            segment_path, &position_info, target_offset
+            "开始读取一个segment{:?} ref:  {:?}, target offset: {} / {}",
+            segment_path, &refer_position_info, target_offset, &self.topic_partition
         );
 
-        // 这里会报UnexpectedEof错误，然后返回，也会报NotFound错误
-        let (_, current_position) = crate::log::seek(
+        let (file, exact_position) = crate::log::seek_file(
             journal_seg_file,
             target_offset,
-            position_info,
+            refer_position_info,
             LogType::Journal,
         )
         .await?;
 
-        trace!("文件内部读指针位置: {}", current_position.position);
+        trace!(
+            "文件内部读指针位置: {}/{}",
+            exact_position.position,
+            &self.topic_partition
+        );
 
         loop {
             if shutdown.is_shutdown() {
                 return Ok(());
             }
-            let ret = tokio::select! {
-                read_result = self.read_batch(& current_position) => read_result,
+            let file_clone = file.try_clone()?;
+            let read_result = tokio::select! {
+                read_result = self.read_batch(file_clone) => read_result,
                 _ = shutdown.recv() => {
                     return Ok(());
                 }
             };
 
-            match ret {
-                Ok((
-                    journal_offset,
-                    topic_partition,
-                    first_batch_queue_base_offset,
-                    last_batch_queue_base_offset,
-                    records_count,
-                    recrods,
-                )) => {
-                    // 写入queue log失败怎么办？
-                    self.process_batch(
-                        journal_offset,
-                        topic_partition,
-                        first_batch_queue_base_offset,
-                        last_batch_queue_base_offset,
+            match read_result {
+                Ok(journal_records_batch) => {
+                    // successfully read a batch from journal log, append to the corresponding queue log
+                    let records_count = journal_records_batch.records_count;
+                    let journal_offset = journal_records_batch.journal_offset;
+                    self.queue_logs
+                        .get(&journal_records_batch.queue_topic_partition)
+                        .unwrap()
+                        .append_records(journal_records_batch)
+                        .await?;
+
+                    self.journal_log.split_offset.store(journal_offset);
+                    trace!(
+                        "process batch,{}, update split offset: {}/{}",
                         records_count,
-                        recrods,
-                    )
-                    .await?;
+                        self.journal_log.split_offset.load(),
+                        &self.topic_partition
+                    );
+                    continue;
                 }
                 Err(e) => {
+                    // read batch from journal log failed
                     if let Some(io_err) =
                         e.source().and_then(|e| e.downcast_ref::<std::io::Error>())
                     {
-                        trace!("io_err: {:?}", io_err);
+                        trace!("io_err: {:?}/{}", io_err, &self.topic_partition);
                         if io_err.kind() == ErrorKind::UnexpectedEof {
-                            // 如果当前是active的segment的，就一直等待，直到active segment切换
-                            if self.is_active_segment(position_info.base_offset).await? {
+                            // 如果读到EOF，原因只有两种
+                            // 1. 历史段，已经读取完毕
+                            // 2. 活动段，数据暂时还读不到(可能是因为数据还在写入)，活动段确实已经读取到结尾
+                            if self.is_active_segment(exact_position.base_offset)? {
                                 if shutdown.is_shutdown() {
                                     return Ok(());
                                 }
-                                trace!("当前segment是active segment,等待继续重试");
+                                trace!(
+                                    "current segment is active segment, wait to retry / {}",
+                                    &self.topic_partition
+                                );
                                 tokio::select! {
                                     _ = self.read_wait_interval.tick() => {},
                                     _ = shutdown.recv() => return Ok(()),
                                 }
                                 continue;
                             } else {
-                                // 如果当前segment不是active segment，则直接返回, 直到读取到最后一个offset，
-                                // 这里有可能会导致切换到下一个segment，这也是整个读取过程中切换segment的唯一地方
-                                // 这里需要返回，否则会一直循环
+                                // if current segment is not active segment,
+                                // return and switch to next segment
                                 return Ok(());
                             }
                         }
@@ -201,18 +206,15 @@ impl SplitterTask {
         }
     }
 
-    async fn read_batch(
-        &self,
-        position_info: &PositionInfo,
-    ) -> AppResult<(i64, TopicPartition, i64, i64, u32, MemoryRecords)> {
-        let file_name = format!(
-            "{}/{}.log",
-            self.topic_partition.partition_dir(),
-            position_info.base_offset
-        );
+    fn is_active_segment(&self, base_offset: i64) -> AppResult<bool> {
+        let current_active_seg_offset = self.journal_log.current_active_seg_offset();
+        Ok(base_offset == current_active_seg_offset)
+    }
+
+    async fn read_batch(&self, mut file: File) -> AppResult<JournalRecordsBatch> {
+        // read a batch from journal log
         let mut buf = tokio::task::spawn_blocking({
             move || -> io::Result<BytesMut> {
-                let mut file = std::fs::File::open(file_name)?;
                 let mut buffer = [0u8; 4];
                 file.read_exact(&mut buffer)?;
                 let batch_size = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
@@ -225,103 +227,27 @@ impl SplitterTask {
         .await
         .map_err(|e| AppError::DetailedIoError(format!("Failed to read file: {}", e)))??;
 
-        let (
-            journal_offset,
-            tp_str,
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
-        ) = Self::read_topic_partition(&mut buf).await;
-        let topic_partition = TopicPartition::from_str(&tp_str, LogType::Queue)?;
-
-        let memory_records = MemoryRecords::new(buf);
-
-        Ok((
-            journal_offset,
-            topic_partition,
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
-            memory_records,
-        ))
-    }
-
-    async fn process_batch(
-        &self,
-        journal_offset: i64,
-        topic_partition: TopicPartition,
-        first_batch_queue_base_offset: i64,
-        last_batch_queue_base_offset: i64,
-        records_count: u32,
-        memory_records: MemoryRecords,
-    ) -> AppResult<()> {
-        self.write_queue_log(
-            journal_offset,
-            topic_partition,
-            first_batch_queue_base_offset,
-            last_batch_queue_base_offset,
-            records_count,
-            memory_records,
-        )
-        .await?;
-
-        self.journal_log.split_offset.store(journal_offset);
-        trace!(
-            "d,{}, 更新split offset: {}",
-            records_count,
-            self.journal_log.split_offset.load()
-        );
-        Ok(())
-    }
-
-    async fn is_active_segment(&self, base_offset: i64) -> AppResult<bool> {
-        let current_active_seg_offset = self.journal_log.current_active_seg_offset();
-        Ok(base_offset == current_active_seg_offset)
-    }
-
-    async fn write_queue_log(
-        &self,
-        journal_offset: i64,
-        topic_partition: TopicPartition,
-        first_batch_queue_base_offset: i64,
-        last_batch_queue_base_offset: i64,
-        records_count: u32,
-        memory_records: MemoryRecords,
-    ) -> AppResult<()> {
-        return if let Some(queue_log) = self.queue_logs.get(&topic_partition) {
-            queue_log
-                .append_records((
-                    journal_offset,
-                    topic_partition,
-                    first_batch_queue_base_offset,
-                    last_batch_queue_base_offset,
-                    records_count,
-                    memory_records,
-                ))
-                .await?;
-            Ok(())
-        } else {
-            Err(AppError::IllegalStateError(format!(
-                "Queue log not found for topic partition: {}",
-                topic_partition
-            )))
-        };
-    }
-
-    async fn read_topic_partition(buf: &mut BytesMut) -> (i64, String, i64, i64, u32) {
+        // Parse the buffer and create a `JournalRecordsBatch`.
         let journal_offset = buf.get_i64();
         let tp_str_size = buf.get_u32();
+        // queue topic partition string
         let mut tp_str_bytes = vec![0; tp_str_size as usize];
         buf.copy_to_slice(&mut tp_str_bytes);
+        let queue_topic_partition_str = String::from_utf8(tp_str_bytes).unwrap();
+        let queue_topic_partition =
+            TopicPartition::from_str(&queue_topic_partition_str, LogType::Queue)?;
         let first_batch_queue_base_offset = buf.get_i64();
         let last_batch_queue_base_offset = buf.get_i64();
         let records_count = buf.get_u32();
-        (
+        let memory_records = MemoryRecords::new(buf);
+
+        Ok(JournalRecordsBatch {
             journal_offset,
-            String::from_utf8(tp_str_bytes).unwrap(),
+            queue_topic_partition,
             first_batch_queue_base_offset,
             last_batch_queue_base_offset,
             records_count,
-        )
+            records: memory_records,
+        })
     }
 }

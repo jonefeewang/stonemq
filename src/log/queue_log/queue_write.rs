@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use crate::log::log_file_writer::{FlushRequest, QueueFileWriteReq};
 use crate::log::segment_index::ActiveSegmentIndex;
-use crate::log::{get_active_segment_writer, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME};
-use crate::message::{MemoryRecords, TopicPartition};
+use crate::log::{
+    get_active_segment_writer, JournalRecordsBatch, LogAppendInfo, LogType, DEFAULT_LOG_APPEND_TIME,
+};
+use crate::message::MemoryRecords;
 use crate::{global_config, AppResult};
 use tracing::trace;
 
@@ -25,20 +27,20 @@ impl QueueLog {
     /// This method acquires a write lock on the entire log, which may impact concurrent operations.
     pub async fn append_records(
         &self,
-        records: (i64, TopicPartition, i64, i64, u32, MemoryRecords),
+        journal_records_batch: JournalRecordsBatch,
     ) -> AppResult<LogAppendInfo> {
-        let (
-            _,
-            topic_partition,
+        let JournalRecordsBatch {
+            journal_offset: _,
+            queue_topic_partition,
             first_batch_queue_base_offset,
             last_batch_queue_base_offset,
             records_count,
-            memory_records,
-        ) = records;
+            records: memory_records,
+        } = journal_records_batch;
 
         trace!(
             "append records to queue log:{}, offset:{}",
-            &topic_partition,
+            &queue_topic_partition,
             first_batch_queue_base_offset,
         );
 
@@ -115,10 +117,12 @@ impl QueueLog {
             // add old segment to segments
             let readonly_seg = old_segment.into_readonly()?;
             let mut segments_order = self.segments_order.write();
-            segments_order.insert(old_base_offset);
+            segments_order.insert(new_base_offset);
             self.segments
                 .insert(old_base_offset, Arc::new(readonly_seg));
         }
+
+        trace!("after rolling new segment, self status={:?}", &self);
 
         Ok(())
     }
@@ -149,8 +153,8 @@ impl QueueLog {
         let active_seg_size =
             get_active_segment_writer().active_segment_size(&self.topic_partition);
         self.active_segment_index.write().update_index(
-            memory_records.size(),
             first_offset,
+            memory_records.size(),
             LogType::Queue,
             active_seg_size,
         )
@@ -174,17 +178,8 @@ impl QueueLog {
             .store(first_offset + records_count as i64 - 1);
     }
 
-    /// Flushes the active segment to disk.
-    ///
-    /// # Arguments
-    ///
-    /// * `active_segment` - The active LogSegment to flush.
-    ///
-    /// # Returns
-    ///
-    /// Returns `AppResult<()>` indicating success or failure.
-    pub async fn flush(&self) -> AppResult<()> {
-        self.active_segment_index.write().flush_index()?;
+    pub async fn close(&self) -> AppResult<()> {
+        self.active_segment_index.write().close()?;
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),

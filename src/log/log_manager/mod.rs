@@ -63,6 +63,9 @@ impl LogManager {
 
     pub fn startup(&mut self) -> AppResult<()> {
         info!("log manager startup ...");
+        
+        Self::init_active_segment_writer(self.notify_shutdown.clone());
+
         let log_config = &global_config().log;
         let journal_index_file_size = log_config.journal_index_file_size as u32;
         let queue_index_file_size = log_config.queue_index_file_size as u32;
@@ -72,8 +75,6 @@ impl LogManager {
 
         let queue_logs = self.load_queue_logs(queue_index_file_size)?;
         self.queue_logs.extend(queue_logs);
-
-        Self::init_active_segment_writer(self.notify_shutdown.clone());
 
         Ok(())
     }

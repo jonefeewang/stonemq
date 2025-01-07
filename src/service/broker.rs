@@ -48,7 +48,6 @@ impl Broker {
         log_manager.start_checkpoint_task().await?;
 
         // startup replica manager
-
         let mut replica_manager = ReplicaManager::new(
             log_manager_clone,
             notify_shutdown.clone(),
@@ -119,7 +118,7 @@ impl Broker {
             group_coordinator.clone(),
         );
 
-        info!("server startup complete");
+        info!("broker startup complete");
         tokio::select! {
           res = server.run() => {
               if let Err(err) = res {

@@ -39,7 +39,7 @@ impl LogManager {
                         entry.key().id()
                     );
                     let log = entry.value();
-                    log.flush().await.unwrap();
+                    log.close().await.unwrap();
                 }
                 for entry in self.queue_logs.iter() {
                     info!(
@@ -47,10 +47,11 @@ impl LogManager {
                         entry.key().id()
                     );
                     let log = entry.value();
-                    log.flush().await.unwrap();
+                    log.close().await.unwrap();
                 }
             }
 
+            // journal recovery checkpoint
             let check_points: HashMap<TopicPartition, i64> = self
                 .journal_logs
                 .iter()
@@ -70,7 +71,7 @@ impl LogManager {
                     ))
                 })?;
 
-            // 写入queue的recovery_checkpoint
+            // queue recovery checkpoint
             let queue_check_points: HashMap<TopicPartition, i64> = self
                 .queue_logs
                 .iter()
@@ -90,6 +91,7 @@ impl LogManager {
                     ))
                 })?;
 
+            // split checkpoint
             let split_checkpoints: HashMap<TopicPartition, i64> = self
                 .journal_logs
                 .iter()
@@ -111,6 +113,7 @@ impl LogManager {
                     AppError::DetailedIoError(format!("write split checkpoint error: {}", e))
                 })?;
 
+            // checkpoint next offset
             for entry in self.journal_logs.iter() {
                 let log = entry.value();
                 log.checkpoint_next_offset().await?;

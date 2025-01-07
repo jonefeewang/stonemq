@@ -91,11 +91,12 @@ impl QueueLog {
         // open active segment writer
         get_active_segment_writer()
             .open_file(topic_partition, active_segment_index.base_offset())?;
+        let segments_order = BTreeSet::from([active_segment_index.base_offset()]);
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
             segments: DashMap::with_capacity(1),
-            segments_order: RwLock::new(BTreeSet::new()),
+            segments_order: RwLock::new(segments_order),
             active_segment_index: RwLock::new(active_segment_index),
             active_segment_id: AtomicCell::new(0),
             log_start_offset: INIT_LOG_START_OFFSET,
@@ -122,18 +123,19 @@ impl QueueLog {
         recover_point: i64,
         last_offset: i64,
     ) -> AppResult<Self> {
-        let segments_order = segments.keys().cloned().collect();
-        let active_segment_id = active_segment.base_offset();
+        let mut segments_order = segments.keys().cloned().collect::<BTreeSet<i64>>();
+        let active_segment_base_offset = active_segment.base_offset();
 
         // open active segment writer
-        get_active_segment_writer().open_file(topic_partition, active_segment_id)?;
+        get_active_segment_writer().open_file(topic_partition, active_segment_base_offset)?;
+        segments_order.insert(active_segment_base_offset);
 
         Ok(Self {
             topic_partition: topic_partition.clone(),
             segments: DashMap::from_iter(segments.into_iter().map(|(k, v)| (k, Arc::new(v)))),
             segments_order: RwLock::new(segments_order),
             active_segment_index: RwLock::new(active_segment),
-            active_segment_id: AtomicCell::new(active_segment_id),
+            active_segment_id: AtomicCell::new(active_segment_base_offset),
             log_start_offset,
             recover_point: AtomicCell::new(recover_point),
             last_offset: AtomicCell::new(last_offset),

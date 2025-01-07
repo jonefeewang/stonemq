@@ -1,6 +1,7 @@
 use crossbeam::atomic::AtomicCell;
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::{fs::File, path::Path};
+use tracing::trace;
 
 use crate::{AppError, AppResult};
 
@@ -16,6 +17,7 @@ pub struct ReadOnlyIndexFile {
 /// 可读写的索引文件，用于活动的索引文件
 #[derive(Debug)]
 pub struct WritableIndexFile {
+    file: File,
     mmap: MmapMut,
     entries: AtomicCell<usize>,
     max_entry_count: usize,
@@ -28,12 +30,19 @@ impl ReadOnlyIndexFile {
         let entries = len / INDEX_ENTRY_SIZE;
 
         let mmap = unsafe { MmapOptions::new().map(&file)? };
+        trace!("open read only index file: {:?}/{}", path.as_ref(), entries);
 
         Ok(Self { mmap, entries })
     }
 
     pub fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
-        binary_search_index(&self.mmap[..], self.entries, target_offset)
+        let search_result = binary_search_index(&self.mmap[..], self.entries, target_offset);
+        trace!(
+            "read only index file search_result: {:?}/{}",
+            search_result,
+            target_offset
+        );
+        search_result
     }
 }
 
@@ -45,13 +54,21 @@ impl WritableIndexFile {
             .create(true)
             .open(file_name.as_ref())?;
 
+        // 获取文件长度，计算出已有的条目数
+        let entries = file.metadata()?.len() as usize / INDEX_ENTRY_SIZE;
+        trace!(
+            "open writable index file: {:?}/{}",
+            file_name.as_ref(),
+            entries
+        );
         file.set_len(max_size as u64)?;
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 
         Ok(Self {
+            file,
             mmap,
-            entries: AtomicCell::new(0),
+            entries: AtomicCell::new(entries),
             max_entry_count: max_size / INDEX_ENTRY_SIZE,
         })
     }
@@ -72,7 +89,13 @@ impl WritableIndexFile {
 
     pub fn lookup(&self, target_offset: u32) -> Option<(u32, u32)> {
         let entries = self.entries.load();
-        binary_search_index(&self.mmap[..], entries, target_offset)
+        let search_result = binary_search_index(&self.mmap[..], entries, target_offset);
+        trace!(
+            "writable index file search_result: {:?}/{}",
+            search_result,
+            target_offset
+        );
+        search_result
     }
 
     pub fn flush(&self) -> AppResult<()> {
@@ -81,16 +104,19 @@ impl WritableIndexFile {
             .map_err(|e| AppError::DetailedIoError(format!("flush index file error: {}", e)))
     }
 
-    /// 转换为只读索引文件
+    pub fn close(&mut self) -> AppResult<()> {
+        self.mmap.flush()?;
+        self.file
+            .set_len((self.entries.load() * INDEX_ENTRY_SIZE) as u64)?;
+        Ok(())
+    }
+
     pub fn into_readonly(self) -> std::io::Result<ReadOnlyIndexFile> {
-        // 获取当前条目数
         let entries = self.entries.load();
 
-        // 刷新数据
         self.mmap.flush()?;
-
-        // 直接转换为只读映射
         let readonly_mmap = self.mmap.make_read_only()?;
+        self.file.set_len((entries * INDEX_ENTRY_SIZE) as u64)?;
 
         Ok(ReadOnlyIndexFile {
             mmap: readonly_mmap,

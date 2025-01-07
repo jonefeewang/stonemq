@@ -132,14 +132,14 @@ impl JournalLog {
             memory_records,
             active_segment_offset_index_full,
         ) {
-            self.roll_active_segment(memory_records).await?;
+            self.roll_active_segment().await?;
         }
 
         // Update active segment metadata
         {
             self.active_segment_index.write().update_index(
+                self.next_offset.load(),
                 memory_records.size(),
-                log_append_info.first_offset,
                 LogType::Journal,
                 get_active_segment_writer().active_segment_size(&self.topic_partition),
             )?;
@@ -152,7 +152,7 @@ impl JournalLog {
     ///
     /// This method handles the process of creating a new segment and
     /// transitioning the current active segment to a read-only state.
-    async fn roll_active_segment(&self, memory_records: &MemoryRecords) -> AppResult<()> {
+    async fn roll_active_segment(&self) -> AppResult<()> {
         let new_base_offset = self.next_offset.load();
 
         // Flush old segment
@@ -182,17 +182,12 @@ impl JournalLog {
             // add old segment to segments
             let readonly_seg = old_segment_index.into_readonly()?;
             let mut segments_order = self.segments_order.write();
-            segments_order.insert(old_base_offset);
+            segments_order.insert(new_base_offset);
             self.segment_index
                 .insert(old_base_offset, Arc::new(readonly_seg));
         }
 
-        debug!(
-            "Rolled segment: size={}, config_size={}, index_full={}",
-            memory_records.size(),
-            global_config().log.journal_segment_size,
-            true
-        );
+        debug!("Rolled segment: self status={:?}", &self);
 
         Ok(())
     }
@@ -279,12 +274,8 @@ impl JournalLog {
         })
     }
 
-    /// Flushes the active segment to disk.
-    ///
-    /// This method ensures all data in the active segment is written to disk
-    /// and updates the recovery point.
-    pub async fn flush(&self) -> AppResult<()> {
-        self.active_segment_index.write().flush_index()?;
+    pub async fn close(&self) -> AppResult<()> {
+        self.active_segment_index.write().close()?;
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),

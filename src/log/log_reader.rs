@@ -23,7 +23,7 @@ use super::{LogType, PositionInfo};
 /// # Errors
 ///
 /// Returns error when target offset does not exist or file operations fail
-pub async fn seek(
+pub async fn seek_file(
     mut file: File,
     target_offset: i64,
     ref_pos: PositionInfo,
@@ -73,7 +73,11 @@ fn seek_to_target_offset_journal(file: &mut File, target_offset: i64) -> io::Res
             }
             // 当前offset大于目标offset，则返回-1，表示找不到,splitter 在读取下一个offset时，这个offset还未生产出来，或者还未落盘
             std::cmp::Ordering::Greater => {
-                return Err(io::Error::new(ErrorKind::NotFound, "target offset not found"))
+                let err_msg = format!(
+                    "target offset not found {}/{}",
+                    target_offset, current_offset
+                );
+                return Err(io::Error::new(ErrorKind::NotFound, err_msg));
             }
             std::cmp::Ordering::Less => {
                 file.seek(SeekFrom::Current(batch_size as i64 - 12))?;

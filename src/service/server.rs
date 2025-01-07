@@ -316,7 +316,6 @@ impl Server {
     /// Exit with an error if failing to accept new connections.
     ///
     /// Returns `AppResult<()>` indicating the success or failure of running the server.
-    #[tracing::instrument]
     pub async fn run(&self) -> AppResult<()> {
         let request_handler_config = &global_config().request_handler_pool;
 

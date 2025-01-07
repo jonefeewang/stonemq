@@ -62,7 +62,7 @@ impl JournalLog {
 
         // load checkpoint file
         let checkpoint_file = Self::load_checkpoint_file(topic_partition)?;
-        let queue_next_offset = checkpoint_file.read_checkpoints(LogType::Journal)?;
+        let queue_next_offset = checkpoint_file.read_checkpoints(LogType::Queue)?;
 
         trace!(
             "load journal log queue_next_offset: {:?}",

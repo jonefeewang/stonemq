@@ -7,7 +7,7 @@ use tracing::{debug, trace};
 
 use crate::{
     log::{
-        get_active_segment_writer, seek, segment_index::SegmentIndexCommon, LogType, PositionInfo,
+        get_active_segment_writer, seek_file, segment_index::SegmentIndexCommon, LogType, PositionInfo,
         NO_POSITION_INFO,
     },
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
@@ -146,7 +146,7 @@ impl QueueLog {
         start_offset: i64,
         position_info: PositionInfo,
     ) -> AppResult<(File, PositionInfo)> {
-        seek(file, start_offset, position_info, LogType::Queue)
+        seek_file(file, start_offset, position_info, LogType::Queue)
             .await
             .map_err(|e| AppError::DetailedIoError(format!("Failed to seek to position: {}", e)))
     }

@@ -126,8 +126,10 @@ impl JournalLog {
         get_active_segment_writer()
             .open_file(topic_partition, active_segment_index.base_offset())?;
 
+        let segments_order = BTreeSet::from([active_segment_index.base_offset()]);
+
         Ok(Self {
-            segments_order: RwLock::new(BTreeSet::new()),
+            segments_order: RwLock::new(segments_order),
             segment_index: DashMap::new(),
             active_segment_index: RwLock::new(active_segment_index),
             active_segment_base_offset: AtomicCell::new(0),
@@ -168,13 +170,14 @@ impl JournalLog {
         topic_partition: &TopicPartition,
         metadata: JournalLogMetadata,
     ) -> AppResult<Self> {
-        let segments_order = segments.keys().cloned().collect();
+        let mut segments_order = segments.keys().cloned().collect::<BTreeSet<i64>>();
         let segments_map = segments
             .into_iter()
             .map(|(k, v)| (k, Arc::new(v)))
             .collect();
 
         let active_segment_base_offset = active_segment.base_offset();
+        segments_order.insert(active_segment_base_offset);
 
         // open active segment writer
         get_active_segment_writer().open_file(topic_partition, active_segment_base_offset)?;

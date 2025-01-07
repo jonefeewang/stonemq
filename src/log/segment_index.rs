@@ -112,12 +112,12 @@ impl ActiveSegmentIndex {
 
     pub fn update_index(
         &mut self,
+        offset: i64,
         records_size: usize,
-        first_offset: i64,
         log_type: LogType,
         segment_size: u64,
     ) -> AppResult<()> {
-        let relative_offset = first_offset - self.base_offset;
+        let relative_offset = offset - self.base_offset;
 
         let index_interval = match log_type {
             LogType::Journal => global_config().log.journal_index_interval_bytes,
@@ -162,6 +162,11 @@ impl ActiveSegmentIndex {
     pub fn flush_index(&mut self) -> AppResult<()> {
         // flush offset index
         self.offset_index.flush()?;
+        Ok(())
+    }
+
+    pub fn close(&mut self) -> AppResult<()> {
+        self.offset_index.close()?;
         Ok(())
     }
 }
