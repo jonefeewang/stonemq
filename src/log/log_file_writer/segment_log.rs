@@ -132,7 +132,7 @@ impl SegmentLog {
         Ok(self.file_position.load(Ordering::Acquire))
     }
 
-    pub fn get_size(&self) -> u64 {
+    pub fn file_size(&self) -> u64 {
         self.file_position.load(Ordering::Acquire)
     }
 }

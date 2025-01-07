@@ -93,7 +93,7 @@ impl ActiveSegmentWriter {
     }
 
     pub fn active_segment_size(&self, topic_partition: &TopicPartition) -> u64 {
-        self.writers.get(topic_partition).unwrap().get_size()
+        self.writers.get(topic_partition).unwrap().file_size()
     }
 }
 
