@@ -15,7 +15,7 @@ use super::WriteConfig;
 #[derive(Debug)]
 pub struct SegmentLog {
     path: PathBuf,
-    size: AtomicU64,
+    file_position: AtomicU64,
     acc_buffer: WriteBuffer,
 }
 
@@ -34,7 +34,7 @@ impl SegmentLog {
 
         Self {
             path: path.into(),
-            size: AtomicU64::new(0),
+            file_position: AtomicU64::new(0),
             acc_buffer: WriteBuffer::new(write_config),
         }
     }
@@ -44,8 +44,11 @@ impl SegmentLog {
         let total_size = JournalLog::calculate_journal_log_overhead(&request.topic_partition)
             + msg.remaining() as u32;
 
-        // 准备写入数据
-        let mut buffer = Vec::with_capacity(total_size as usize);
+        // data + self length
+        let total_write = total_size + 4;
+
+        // prepare write data
+        let mut buffer = Vec::with_capacity(total_write as usize);
         buffer.extend_from_slice(&total_size.to_be_bytes());
         buffer.extend_from_slice(&request.journal_offset.to_be_bytes());
 
@@ -59,9 +62,9 @@ impl SegmentLog {
         buffer.extend_from_slice(&request.records_count.to_be_bytes());
         buffer.extend_from_slice(msg.as_ref());
 
-        // 尝试写入，如果返回 Some 则需要刷盘
+        // try write, if return Some then need flush
         if self.acc_buffer.try_write(&buffer) {
-            // 异步执行刷盘操作
+            // async execute flush
             let path = self.path.clone();
             let mut acc_buffer = self.acc_buffer.buffer.take().unwrap();
             let acc_buffer = tokio::task::spawn_blocking(move || -> io::Result<Vec<u8>> {
@@ -77,7 +80,8 @@ impl SegmentLog {
             .await??;
             self.acc_buffer.buffer = Some(acc_buffer);
         }
-        self.size.fetch_add(total_size as u64, Ordering::Release);
+        self.file_position
+            .fetch_add(total_write as u64, Ordering::Release);
         Ok(())
     }
 
@@ -102,7 +106,8 @@ impl SegmentLog {
             self.acc_buffer.buffer = Some(acc_buffer);
         }
 
-        self.size.fetch_add(total_write as u64, Ordering::Release);
+        self.file_position
+            .fetch_add(total_write as u64, Ordering::Release);
         Ok(())
     }
 
@@ -124,11 +129,11 @@ impl SegmentLog {
         .await??;
         self.acc_buffer.buffer = Some(acc_buffer);
 
-        Ok(self.size.load(Ordering::Acquire))
+        Ok(self.file_position.load(Ordering::Acquire))
     }
 
     pub fn get_size(&self) -> u64 {
-        self.size.load(Ordering::Acquire)
+        self.file_position.load(Ordering::Acquire)
     }
 }
 
