@@ -68,10 +68,10 @@ fn seek_to_target_offset_journal(file: &mut File, target_offset: i64) -> io::Res
 
         match current_offset.cmp(&target_offset) {
             std::cmp::Ordering::Equal => {
+                // If the current offset equals the target offset, return the current position, rewinding 12 bytes for both size and offset.
                 let current_position = file.seek(SeekFrom::Current(-12))?;
                 return Ok(current_position as i64);
             }
-            // 当前offset大于目标offset，则返回-1，表示找不到,splitter 在读取下一个offset时，这个offset还未生产出来，或者还未落盘
             std::cmp::Ordering::Greater => {
                 let err_msg = format!(
                     "target offset not found {}/{}",
@@ -80,7 +80,8 @@ fn seek_to_target_offset_journal(file: &mut File, target_offset: i64) -> io::Res
                 return Err(io::Error::new(ErrorKind::NotFound, err_msg));
             }
             std::cmp::Ordering::Less => {
-                file.seek(SeekFrom::Current(batch_size as i64 - 12))?;
+                // If it is less than the target offset, skip the current batch. Since the current position has already surpassed the offset, subtract 8 here.
+                file.seek(SeekFrom::Current(batch_size as i64 - 8))?;
             }
         }
     }
@@ -91,10 +92,11 @@ fn seek_to_target_offset_queue(file: &mut File, target_offset: i64) -> io::Resul
 
     loop {
         file.read_exact(&mut buffer)?;
-        let length = i32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
+
         let current_offset = i64::from_be_bytes([
             buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7],
         ]);
+        let length = i32::from_be_bytes([buffer[8], buffer[9], buffer[10], buffer[11]]);
 
         match current_offset.cmp(&target_offset) {
             std::cmp::Ordering::Equal => {

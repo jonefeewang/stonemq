@@ -114,8 +114,8 @@ pub struct AbortedTransaction {
     pub first_offset: i64,
 }
 
-impl From<BTreeMap<TopicPartition, LogFetchInfo>> for FetchResponse {
-    fn from(value: BTreeMap<TopicPartition, LogFetchInfo>) -> Self {
+impl FetchResponse {
+    pub fn from_data(value: BTreeMap<TopicPartition, LogFetchInfo>, throttle_time: i32) -> Self {
         let mut responses = BTreeMap::new();
         for (topic_partition, log_fetch_info) in value {
             responses.insert(
@@ -132,7 +132,7 @@ impl From<BTreeMap<TopicPartition, LogFetchInfo>> for FetchResponse {
         }
         FetchResponse {
             responses,
-            throttle_time: 0,
+            throttle_time,
         }
     }
 }

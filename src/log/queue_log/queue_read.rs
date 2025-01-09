@@ -7,8 +7,8 @@ use tracing::{debug, trace};
 
 use crate::{
     log::{
-        get_active_segment_writer, seek_file, segment_index::SegmentIndexCommon, LogType, PositionInfo,
-        NO_POSITION_INFO,
+        get_active_segment_writer, seek_file, segment_index::SegmentIndexCommon, LogType,
+        PositionInfo, NO_POSITION_INFO,
     },
     message::{LogFetchInfo, MemoryRecords, TopicPartition},
     AppError, AppResult,
@@ -44,8 +44,10 @@ impl QueueLog {
 
     /// get position info for offset
     pub fn get_reference_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
-        let segment_offset = self.find_segment_for_offset(offset)?;
-        self.get_segment_position(segment_offset, offset)
+        debug!("get_reference_position_info: {}", offset);
+        let base_offset = self.find_segment_for_offset(offset)?;
+        debug!("get_reference_position_info: {}", base_offset);
+        self.get_segment_position(base_offset, offset)
     }
 
     /// find segment for offset
@@ -62,14 +64,15 @@ impl QueueLog {
     }
 
     /// get segment position info
-    fn get_segment_position(&self, segment_offset: i64, offset: i64) -> AppResult<PositionInfo> {
-        if segment_offset == self.active_segment_id.load() {
+    fn get_segment_position(&self, base_offset: i64, offset: i64) -> AppResult<PositionInfo> {
+        debug!("get_segment_position: {} {}", base_offset, offset);
+        if base_offset == self.active_segment_id.load() {
             self.active_segment_index
                 .read()
                 .get_relative_position(offset)
         } else {
             self.segments
-                .get(&segment_offset)
+                .get(&base_offset)
                 .ok_or_else(|| {
                     AppError::InvalidValue(format!("segment not found for offset {}", offset))
                 })?
@@ -94,11 +97,14 @@ impl QueueLog {
         // retrieve the segment information where the `start_offset` resides.
         let ref_position_info = match self.get_reference_position_info(start_offset) {
             Ok(info) => info,
-            Err(_) => return self.create_empty_fetch_info(),
+            Err(_) => return Ok(self.create_empty_fetch_info()),
         };
+
+        debug!("ref_position_info: {:?}", ref_position_info);
 
         // open the segment file where the `start_offset` resides.
         let segment_file = self.open_segment_file(topic_partition, &ref_position_info)?;
+        debug!("open segment file: {:?}", segment_file);
 
         // seek file to the target position
         let (file, target_position_info) = match self
@@ -106,8 +112,10 @@ impl QueueLog {
             .await
         {
             Ok(result) => result,
-            Err(_) => return self.create_empty_fetch_info(),
+            Err(_) => return Ok(self.create_empty_fetch_info()),
         };
+
+        debug!("target_position_info: {:?}", target_position_info);
 
         // calculate read config
         let read_config = self.calculate_read_config(
@@ -115,6 +123,8 @@ impl QueueLog {
             target_position_info.position as u64,
             max_size,
         )?;
+
+        debug!("read_config: {:?}", read_config);
 
         // do read records
         self.do_read_records(file, topic_partition, read_config, target_position_info)
@@ -129,7 +139,7 @@ impl QueueLog {
     ) -> AppResult<File> {
         let segment_path = PathBuf::from(topic_partition.partition_dir())
             .join(format!("{}.log", position_info.base_offset));
-
+        debug!("open segment file: {}", segment_path.display());
         File::open(&segment_path).map_err(|e| {
             AppError::DetailedIoError(format!(
                 "Failed to open segment file: {} error: {}",
@@ -177,7 +187,7 @@ impl QueueLog {
             .copied()
             .map(|offset| {
                 if offset == self.active_segment_id.load() {
-                    get_active_segment_writer().active_segment_size(&self.topic_partition) as usize
+                    get_active_segment_writer().readable_size(&self.topic_partition) as usize
                 } else {
                     self.readonly_segment_size(offset)
                 }
@@ -208,7 +218,7 @@ impl QueueLog {
         );
 
         if left_len == 0 {
-            return self.create_empty_fetch_info();
+            return Ok(self.create_empty_fetch_info());
         }
 
         let read_size = if left_len < max_size as u64 {
@@ -245,13 +255,13 @@ impl QueueLog {
     }
 
     /// create empty fetch info
-    fn create_empty_fetch_info(&self) -> AppResult<LogFetchInfo> {
-        Ok(LogFetchInfo {
+    pub fn create_empty_fetch_info(&self) -> LogFetchInfo {
+        LogFetchInfo {
             records: MemoryRecords::empty(),
             log_start_offset: self.log_start_offset,
             log_end_offset: self.last_offset.load(),
             position_info: NO_POSITION_INFO,
-        })
+        }
     }
 
     /// calculate queue log segment size

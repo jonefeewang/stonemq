@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use tracing::debug;
+
 use super::DelayedFetch;
 use super::ReplicaManager;
 use crate::global_config;
@@ -15,7 +17,8 @@ impl ReplicaManager {
     pub async fn fetch_message(self: Arc<ReplicaManager>, request: FetchRequest) -> FetchResponse {
         let read_result = self.do_fetch(&request).await;
         if read_result.is_err() {
-            return FetchResponse::from(BTreeMap::new());
+            debug!("fetch error: {:?}", read_result);
+            return self.create_empty_fetch_response(&request);
         }
 
         let read_result = read_result.unwrap();
@@ -25,7 +28,8 @@ impl ReplicaManager {
             .sum::<i32>();
 
         if total_size > request.min_bytes {
-            FetchResponse::from(read_result)
+            debug!("fetch success: {:?}", read_result);
+            FetchResponse::from_data(read_result, 0)
         } else {
             // 如果读取到的消息小于min_bytes，则将请求加入到delayed_fetch_purgatory中
             let position_infos = read_result
@@ -46,8 +50,9 @@ impl ReplicaManager {
                 .try_complete_else_watch(delayed_fetch_clone, delay_fetch_keys)
                 .await;
             let result = rx.await.unwrap();
+            debug!("fetch success result: {:?}", result);
 
-            FetchResponse::from(result)
+            FetchResponse::from_data(result, 0)
         }
     }
 
@@ -68,6 +73,21 @@ impl ReplicaManager {
         }
 
         Ok(read_result)
+    }
+
+    fn create_empty_fetch_response(&self, request: &FetchRequest) -> FetchResponse {
+        let mut read_result = BTreeMap::new();
+        for topic_partition in request.fetch_data.keys() {
+            let queue_partition = self
+                .all_queue_partitions
+                .get(topic_partition)
+                .unwrap()
+                .clone();
+            let log_fetch_info = queue_partition.create_empty_fetch_info();
+            read_result.insert(topic_partition.clone(), log_fetch_info);
+        }
+        debug!("create empty fetch response: {:?}", read_result);
+        FetchResponse::from_data(read_result, 10000)
     }
 
     pub fn get_leo_info(&self, tp: &TopicPartition) -> AppResult<PositionInfo> {

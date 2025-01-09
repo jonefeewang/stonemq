@@ -46,7 +46,7 @@
                 "process handle SIGTERM -p true -s false -n true",
                 "process handle SIGQUIT -p true -s false -n true"
             ],
-            // "preLaunchTask": "rust: cargo build",
+            "preLaunchTask": "rust: cargo build",
         },
         ////////////////////////debug log-parser//////////////////////////////////////
         {

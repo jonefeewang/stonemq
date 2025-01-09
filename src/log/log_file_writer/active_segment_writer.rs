@@ -95,6 +95,9 @@ impl ActiveSegmentWriter {
     pub fn active_segment_size(&self, topic_partition: &TopicPartition) -> u64 {
         self.writers.get(topic_partition).unwrap().file_size()
     }
+    pub fn readable_size(&self, topic_partition: &TopicPartition) -> u64 {
+        self.writers.get(topic_partition).unwrap().readable_size()
+    }
 }
 
 // 处理器实现

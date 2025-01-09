@@ -13,3 +13,5 @@ target/
 
 stonemq.log.*
 *.sh
+
+work.txt

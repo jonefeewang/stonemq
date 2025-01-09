@@ -365,6 +365,7 @@ impl GroupCoordinator {
                 "maybe prepare rebalance: group can not rebalance, state: {:?}",
                 locked_group.state()
             );
+            drop(locked_group);
             return;
         }
         // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁

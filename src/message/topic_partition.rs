@@ -83,16 +83,7 @@ impl QueuePartition {
         let local_replica_id = global_config().general.id;
 
         let replica = {
-            let replica = self
-                .assigned_replicas
-                .get(&local_replica_id)
-                .ok_or_else(|| {
-                    AppError::IllegalStateError(format!(
-                        "replica: {}, topic partition: {}",
-                        local_replica_id,
-                        self.topic_partition.id()
-                    ))
-                })?;
+            let replica = self.assigned_replicas.get(&local_replica_id).unwrap();
             replica.clone()
         };
 
@@ -100,6 +91,16 @@ impl QueuePartition {
             .log
             .read_records(&self.topic_partition, offset, max_bytes)
             .await
+    }
+
+    pub fn create_empty_fetch_info(&self) -> LogFetchInfo {
+        let local_replica_id = global_config().general.id;
+        let replica = {
+            let replica = self.assigned_replicas.get(&local_replica_id).unwrap();
+            replica.clone()
+        };
+
+        replica.log.create_empty_fetch_info()
     }
 
     pub fn create_replica(&self, broker_id: i32, replica: QueueReplica) {

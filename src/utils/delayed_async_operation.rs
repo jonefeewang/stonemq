@@ -158,7 +158,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                 tokio::select! {
                     _ = purge_shutdown.recv() => break,
                     _ = async {
-                        sleep(Duration::from_secs(60)).await;
+                        sleep(Duration::from_secs(20)).await;
                         self_clone.purge_completed().await;
                     } => {}
                 }

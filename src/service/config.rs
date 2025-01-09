@@ -40,7 +40,6 @@ pub struct LogConfig {
     pub queue_topic_count: u32,
     /// The interval at which recovery checkpoints are written.
     pub recovery_checkpoint_interval: u64,
-    pub splitter_read_buffer_size: u32,
     pub splitter_wait_interval: u32,
     pub file_records_comm_channel_size: usize,
 
@@ -61,9 +60,6 @@ pub struct LogConfig {
     pub queue_index_file_size: usize,
     /// The interval at which queue index entries are written.
     pub queue_index_interval_bytes: usize,
-
-    /// The path to the key-value store.
-    pub kv_store_path: String,
 }
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct ActiveSegmentWriterPool {

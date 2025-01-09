@@ -158,6 +158,7 @@ async fn process_request(
         ..
     } = request;
     let (api_request, error_response) = ApiRequest::parse_from((request_body, &request_header));
+    debug!("handle request: {:?}", api_request);
     if let Some(api_request) = api_request {
         // handle request logic
         let context = RequestContext {
@@ -228,6 +229,11 @@ impl ConnectionHandler {
                 response_tx,
             };
 
+            let api_key = request.frame.request_header.api_key;
+            let correlation_id = request.frame.request_header.correlation_id;
+
+            debug!("send request: {:?}/{:?}", api_key, correlation_id);
+
             if let Err(e) = self.request_tx.send(request).await {
                 error!("Failed to send request: {:?}", e);
                 return Err(AppError::ChannelSendError(e.to_string()));
@@ -236,6 +242,7 @@ impl ConnectionHandler {
             // wait for response and write to client
             match response_rx.await {
                 Ok(response) => {
+                    debug!("receive response: {:?}/{:?}", api_key, correlation_id);
                     self.writer.write_all(&response).await.map_err(|e| {
                         AppError::DetailedIoError(format!("write response error: {}", e))
                     })?;

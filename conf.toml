@@ -19,36 +19,32 @@ conn_read_buffer_size = 4096
 
 [log]
 ###### general config
-journal_topic_count = 2
-queue_topic_count = 2
+journal_topic_count = 1
+queue_topic_count = 1
 recovery_checkpoint_interval = 1000
 file_records_comm_channel_size = 1000
-## default 8192(8kb)
-splitter_read_buffer_size = 8192
-splitter_wait_interval = 10_100
+## default 100ms
+splitter_wait_interval = 10_000
 
 
-# default 100ms
 ###### journal config
 # default segment size 1G
-journal_segment_size = 512
+journal_segment_size = 1_073_741_824
 journal_base_dir = "/tmp/journal"
 # default index file size 10M
-journal_index_file_size = 128
+journal_index_file_size = 1_048_576
 # default index interval 4096 bytes
-journal_index_interval_bytes = 32
+journal_index_interval_bytes = 4096
 
 
 ###### queue config
 # default segment size 1M
-queue_segment_size = 512
+queue_segment_size = 1_073_741_824
 queue_base_dir = "/tmp/queue"
 # default index file size 10M
-queue_index_file_size = 128
+queue_index_file_size = 1_048_576
 # default index interval 4096 bytes
-queue_index_interval_bytes = 32
-###### kv config
-kv_store_path = "test_data/kv_store/kv.db"
+queue_index_interval_bytes = 4096
 
 
 [group_consume]
@@ -78,8 +74,8 @@ flush_interval = 500
 [request_handler_pool]
 # default channel capacity 1024
 channel_capacity = 1024
-# default num channels 4
-num_channels = 2
+# default num channels 6
+num_channels = 6
 # default monitor interval 5000ms
 monitor_interval = 100_000
 # default worker check timeout 200ms

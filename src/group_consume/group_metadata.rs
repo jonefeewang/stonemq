@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use tracing::debug;
 
 use crate::request::KafkaError;
 use crate::request::KafkaResult;
@@ -277,6 +278,7 @@ impl GroupMetadata {
     }
 
     pub fn transition_to(&mut self, state: GroupState) {
+        debug!("transition_to: {:?} -> {:?}", self.state, state);
         self.state = state;
     }
 
