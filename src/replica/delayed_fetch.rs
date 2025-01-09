@@ -22,6 +22,7 @@ impl DelayedFetch {
         replica_manager: Arc<ReplicaManager>,
         read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
         tx: FetchResultSender,
+        correlation_id: i32,
     ) -> Self {
         Self {
             replica_manager,
@@ -29,6 +30,7 @@ impl DelayedFetch {
             read_position_infos,
             tx: Arc::new(Mutex::new(Some(tx))),
             is_completed: AtomicCell::new(false),
+            correlation_id,
         }
     }
 }
@@ -75,6 +77,6 @@ impl DelayedAsyncOperation for DelayedFetch {
     }
 
     async fn on_expiration(&self) {
-        debug!("delayed fetch expired");
+        debug!("delayed fetch expired, correlation_id: {}", self.correlation_id);
     }
 }

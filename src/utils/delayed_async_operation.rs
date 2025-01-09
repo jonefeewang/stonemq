@@ -39,18 +39,13 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationState<T> {
 }
 
 impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
-    pub async fn new(
-        name: &str,
-        notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
-    ) -> Arc<Self> {
+    pub async fn new(name: &str, notify_shutdown: broadcast::Sender<()>) -> Arc<Self> {
         let (tx, rx): (Sender<DelayQueueOp<T>>, Receiver<DelayQueueOp<T>>) = mpsc::channel(1000);
 
         let purgatory = DelayedAsyncOperationPurgatory {
             name: name.to_string(),
             watchers: DashMap::new(),
             delay_queue_tx: tx,
-            _shutdown_complete_tx: shutdown_complete_tx,
         };
         // (purgatory, rx, shutdown)
         let purgatory = Arc::new(purgatory);
@@ -102,7 +97,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         notify_shutdown: broadcast::Sender<()>,
     ) {
         // DelayQueue 处理循环
-        let purgatory_name = self.name.clone();
+        let purgatory_name_clone = self.name.clone();
 
         let mut delay_queue_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
         let mut purge_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
@@ -119,7 +114,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                                 state.delay_key.store(Some(key));
                                 trace!(
                                     "purgatory {} insert delay queue {:?}, duration: {}",
-                                    &purgatory_name,
+                                    &purgatory_name_clone,
                                     key,
                                     duration.as_millis()
                                 );
@@ -128,41 +123,50 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                                 delay_queue.remove(&key);
                                 trace!(
                                     "purgatory {} remove delay queue {:?}",
-                                    &purgatory_name,
+                                    &purgatory_name_clone,
                                     key
                                 );
                             }
                         }
                     }
                     Some(expired) = delay_queue.next() => {
-                        trace!("purgatory {} delay got expired", &purgatory_name);
+                        trace!("purgatory {} delay got expired", &purgatory_name_clone);
                         let op = expired.into_inner();
                         if op.force_complete().await {
                             op.operation.on_expiration().await;
                             op.is_expired.store(true);
                             trace!(
                                 "purgatory {} operation expired",
-                                &purgatory_name
+                                &purgatory_name_clone
                             );
                         }
                     }
-                    _ = delay_queue_shutdown.recv() => break,
+                    _ = delay_queue_shutdown.recv() => {
+                        debug!(" {} purgatory shutdown received", &purgatory_name_clone);
+                        break;
+                    }
                 }
             }
+            debug!("{} exit delay loop", &purgatory_name_clone);
         });
 
+        let purgatory_name_clone = self.name.clone();
         // clean completed operation
         let self_clone = Arc::clone(&self);
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = purge_shutdown.recv() => break,
+                    _ = purge_shutdown.recv() => {
+                        debug!(" {} purge-purgatory shutdown received", &purgatory_name_clone);
+                        break;
+                    }
                     _ = async {
                         sleep(Duration::from_secs(20)).await;
                         self_clone.purge_completed().await;
                     } => {}
                 }
             }
+            debug!("{} exit purge delay loop", &purgatory_name_clone);
         });
     }
 
@@ -217,7 +221,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
 }
 impl<T: DelayedAsyncOperation> Drop for DelayedAsyncOperationPurgatory<T> {
     fn drop(&mut self) {
-        debug!("purgatory {} dropped", self.name);
+        debug!(" {} purgatory dropped", self.name);
     }
 }
 
@@ -302,12 +306,10 @@ mod tests {
     #[tokio::test]
     async fn test_try_complete_else_watch(_setup: ()) {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         let purgatory = DelayedAsyncOperationPurgatory::<TestShortDelayedOperation>::new(
             "test",
             notify_shutdown,
-            shutdown_complete_tx,
         )
         .await;
 
@@ -336,12 +338,10 @@ mod tests {
     #[tokio::test]
     async fn test_check_and_complete(_setup: ()) {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         let purgatory = DelayedAsyncOperationPurgatory::<TestShortDelayedOperation>::new(
             "test",
             notify_shutdown,
-            shutdown_complete_tx,
         )
         .await;
 
@@ -376,12 +376,10 @@ mod tests {
     #[tokio::test]
     async fn test_purge_completed(_setup: ()) {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         let purgatory = DelayedAsyncOperationPurgatory::<TestShortDelayedOperation>::new(
             "test",
             notify_shutdown,
-            shutdown_complete_tx,
         )
         .await;
 
@@ -412,20 +410,17 @@ mod tests {
     #[tokio::test]
     async fn test_operation_expiration(_setup: ()) {
         let (notify_shutdown, _) = broadcast::channel(1);
-        let (shutdown_complete_tx, _) = mpsc::channel(1);
 
         let short_delay_purgatory =
             DelayedAsyncOperationPurgatory::<TestShortDelayedOperation>::new(
                 "test",
                 notify_shutdown.clone(),
-                shutdown_complete_tx.clone(),
             )
             .await;
 
         let long_delay_purgatory = DelayedAsyncOperationPurgatory::<TestLongDelayedOperation>::new(
             "test",
             notify_shutdown.clone(),
-            shutdown_complete_tx.clone(),
         )
         .await;
 

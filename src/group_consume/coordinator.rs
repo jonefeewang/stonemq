@@ -7,7 +7,7 @@ use std::{
 use bytes::Bytes;
 use crossbeam::atomic::AtomicCell;
 use tokio::{
-    sync::{broadcast, mpsc::Sender, oneshot, RwLock, RwLockWriteGuard},
+    sync::{broadcast, oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
 };
 use tracing::{debug, error, info, trace};
@@ -63,13 +63,11 @@ impl GroupCoordinator {
     pub async fn startup(
         group_config: GroupConsumeConfig,
         notify_shutdown: broadcast::Sender<()>,
-        shutdown_complete_tx: Sender<()>,
         node: Node,
     ) -> Self {
         let delayed_join_purgatory = DelayedAsyncOperationPurgatory::<DelayedJoin>::new(
             "delayed_join_purgatory",
             notify_shutdown.clone(),
-            shutdown_complete_tx.clone(),
         )
         .await;
 
@@ -77,13 +75,11 @@ impl GroupCoordinator {
             DelayedAsyncOperationPurgatory::<InitialDelayedJoin>::new(
                 "initial_delayed_join_purgatory",
                 notify_shutdown.clone(),
-                shutdown_complete_tx.clone(),
             )
             .await;
         let delayed_heartbeat_purgatory = DelayedAsyncOperationPurgatory::<DelayedHeartbeat>::new(
             "delayed_heartbeat_purgatory",
             notify_shutdown.clone(),
-            shutdown_complete_tx.clone(),
         )
         .await;
 

@@ -167,7 +167,7 @@ impl LogManager {
         let worker_pool_config = WorkerPoolConfig {
             channel_capacity: global_config().active_segment_writer_pool.channel_capacity,
             num_channels: global_config().active_segment_writer_pool.num_channels,
-            monitor_interval: Duration::from_millis(
+            monitor_interval: Duration::from_secs(
                 global_config().active_segment_writer_pool.monitor_interval,
             ),
             worker_check_timeout: Duration::from_millis(

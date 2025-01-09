@@ -42,11 +42,9 @@ impl ReplicaManager {
         _shutdown_complete_tx: Sender<()>,
     ) -> Self {
         let notify_shutdown_clone = notify_shutdown.clone();
-        let shutdown_complete_tx_clone = _shutdown_complete_tx.clone();
         let delayed_fetch_purgatory = DelayedAsyncOperationPurgatory::<DelayedFetch>::new(
             "delayed_fetch_purgatory",
             notify_shutdown_clone,
-            shutdown_complete_tx_clone,
         )
         .await;
 
@@ -72,7 +70,7 @@ impl ReplicaManager {
                 global_config().partition_appender_pool.monitor_interval,
             ),
             num_channels: global_config().partition_appender_pool.num_channels,
-            worker_check_timeout: Duration::from_secs(
+            worker_check_timeout: Duration::from_millis(
                 global_config().partition_appender_pool.worker_check_timeout,
             ),
         };

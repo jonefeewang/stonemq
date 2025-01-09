@@ -19,7 +19,7 @@ impl ApiHandler for FetchRequestHandler {
         request: FetchRequest,
         context: &RequestContext,
     ) -> FetchResponse {
-        context.replica_manager.clone().fetch_message(request).await
+        context.replica_manager.clone().fetch_message(request,context.request_header.correlation_id).await
     }
 }
 

@@ -3,6 +3,7 @@ use crate::message::{JournalPartition, MemoryRecords, TopicPartition};
 use crate::utils::{MultipleChannelWorkerPool, PoolHandler, WorkerPoolConfig};
 use crate::{AppError, AppResult};
 use dashmap::DashMap;
+use tracing::debug;
 
 use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
@@ -112,5 +113,11 @@ impl PoolHandler<AppendRequest> for AppendHandler {
         };
 
         let _ = request.reply.send(result);
+    }
+}
+
+impl Drop for PartitionAppender {
+    fn drop(&mut self) {
+        debug!("PartitionAppender dropped");
     }
 }

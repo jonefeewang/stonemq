@@ -112,7 +112,10 @@ impl QueueLog {
             .await
         {
             Ok(result) => result,
-            Err(_) => return Ok(self.create_empty_fetch_info()),
+            Err(e) => {
+                debug!("seek to position failed: {}", e);
+                return Ok(self.create_empty_fetch_info());
+            }
         };
 
         debug!("target_position_info: {:?}", target_position_info);

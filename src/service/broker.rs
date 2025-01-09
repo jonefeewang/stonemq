@@ -5,6 +5,7 @@ use crate::service::Server;
 use crate::AppError::{self, IllegalStateError};
 use crate::{global_config, AppResult};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 
 use tokio::signal;
@@ -45,6 +46,7 @@ impl Broker {
         log_manager.startup()?;
         let log_manager = Arc::new(log_manager);
         let log_manager_clone = log_manager.clone();
+        let log_manager_clone2 = log_manager.clone();
         log_manager.start_checkpoint_task().await?;
 
         // startup replica manager
@@ -64,11 +66,31 @@ impl Broker {
         )
         .await?;
 
+        debug!("run_tcp_server exit");
+
         // tcp server has been shutdown, send shutdown signal
         notify_shutdown
             .send(())
             .map_err(|e| AppError::ChannelSendError(e.to_string()))?;
+
+        // let shutdown_complete_tx_clone = shutdown_complete_tx.clone();
+
+        // tokio::spawn(async move {
+        //     let mut interval = tokio::time::interval(Duration::from_secs(5));
+        //     loop {
+        //         interval.tick().await;
+        //         debug!(
+        //             "broker exiting {}=={}==={}",
+        //             shutdown_complete_tx_clone.strong_count(),
+        //             Arc::strong_count(&replica_manager),
+        //             Arc::strong_count(&log_manager_clone2)
+        //         );
+        //     }
+        // });
+
         drop(replica_manager);
+        drop(log_manager_clone2);
+
         drop(shutdown_complete_tx);
         debug!("waiting for shutdown complete...");
         shutdown_complete_rx.recv().await;
@@ -99,13 +121,8 @@ impl Broker {
 
         let group_config = global_config().group_consume.clone();
         let node = Node::new_localhost();
-        let group_coordinator = GroupCoordinator::startup(
-            group_config,
-            notify_shutdown.clone(),
-            shutdown_complete_tx.clone(),
-            node,
-        )
-        .await;
+        let group_coordinator =
+            GroupCoordinator::startup(group_config, notify_shutdown.clone(), node).await;
         let group_coordinator = Arc::new(group_coordinator);
 
         let server = Server::new(
@@ -129,7 +146,6 @@ impl Broker {
               info!("get shutdown signal");
           }
         }
-
         Ok(())
     }
 }

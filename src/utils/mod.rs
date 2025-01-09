@@ -21,7 +21,6 @@ pub struct DelayedAsyncOperationPurgatory<T: DelayedAsyncOperation + 'static> {
     name: String,
     watchers: DashMap<String, Vec<Arc<DelayedAsyncOperationState<T>>>>,
     delay_queue_tx: Sender<DelayQueueOp<T>>,
-    _shutdown_complete_tx: Sender<()>,
 }
 
 // delayed async operation trait

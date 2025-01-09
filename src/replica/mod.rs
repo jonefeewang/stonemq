@@ -46,4 +46,5 @@ pub struct DelayedFetch {
     pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
     pub tx: Arc<Mutex<Option<FetchResultSender>>>,
     is_completed: AtomicCell<bool>,
+    pub correlation_id: i32,
 }

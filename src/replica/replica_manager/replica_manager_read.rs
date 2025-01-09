@@ -14,7 +14,11 @@ use crate::AppError;
 use crate::AppResult;
 
 impl ReplicaManager {
-    pub async fn fetch_message(self: Arc<ReplicaManager>, request: FetchRequest) -> FetchResponse {
+    pub async fn fetch_message(
+        self: Arc<ReplicaManager>,
+        request: FetchRequest,
+        correlation_id: i32,
+    ) -> FetchResponse {
         let read_result = self.do_fetch(&request).await;
         if read_result.is_err() {
             debug!("fetch error: {:?}", read_result);
@@ -44,7 +48,7 @@ impl ReplicaManager {
                 .keys()
                 .map(|topic_partition| topic_partition.to_string())
                 .collect();
-            let delayed_fetch = DelayedFetch::new(request, self.clone(), position_infos, tx);
+            let delayed_fetch = DelayedFetch::new(request, self.clone(), position_infos, tx,correlation_id);
             let delayed_fetch_clone = Arc::new(delayed_fetch);
             self.delayed_fetch_purgatory
                 .try_complete_else_watch(delayed_fetch_clone, delay_fetch_keys)

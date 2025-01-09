@@ -32,17 +32,17 @@ splitter_wait_interval = 10_000
 journal_segment_size = 1_073_741_824
 journal_base_dir = "/tmp/journal"
 # default index file size 10M
-journal_index_file_size = 1_048_576
+journal_index_file_size = 10_485_760
 # default index interval 4096 bytes
 journal_index_interval_bytes = 4096
 
 
 ###### queue config
-# default segment size 1M
+# default segment size 1G
 queue_segment_size = 1_073_741_824
 queue_base_dir = "/tmp/queue"
 # default index file size 10M
-queue_index_file_size = 1_048_576
+queue_index_file_size = 10_485_760
 # default index interval 4096 bytes
 queue_index_interval_bytes = 4096
 
@@ -59,8 +59,8 @@ group_initial_rebalance_delay = 3000
 channel_capacity = 1024
 # default num channels 4
 num_channels = 2
-# default monitor interval 5000ms
-monitor_interval = 100_000
+# default monitor interval 20s
+monitor_interval = 20
 # default worker check timeout 200ms
 worker_check_timeout = 200
 
@@ -76,8 +76,8 @@ flush_interval = 500
 channel_capacity = 1024
 # default num channels 6
 num_channels = 6
-# default monitor interval 5000ms
-monitor_interval = 100_000
+# default monitor interval 20s
+monitor_interval = 20
 # default worker check timeout 200ms
 worker_check_timeout = 200
 
@@ -86,7 +86,7 @@ worker_check_timeout = 200
 channel_capacity = 1024
 # default partition appender num channels 4
 num_channels = 2
-# default partition appender monitor interval 5000ms
-monitor_interval = 100_000
+# default partition appender monitor interval 20s
+monitor_interval = 20
 # default partition appender worker check timeout 200ms
 worker_check_timeout = 200
