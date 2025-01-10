@@ -68,6 +68,8 @@ impl JournalLog {
             records: memory_records,
         };
 
+        trace!("append_journal");
+
         if let Err(e) = get_active_segment_writer()
             .append_journal(journal_log_write_op)
             .await
@@ -127,16 +129,21 @@ impl JournalLog {
         let active_seg_size =
             get_active_segment_writer().active_segment_size(&self.topic_partition);
 
+
+        trace!("active_segment_offset_index_full={}", active_segment_offset_index_full);
+
         if self.need_roll(
             active_seg_size as u32,
             memory_records,
             active_segment_offset_index_full,
         ) {
+            trace!("roll_active_segment");
             self.roll_active_segment().await?;
         }
 
         // Update active segment metadata
         {
+            trace!("update_index");
             self.active_segment_index.write().update_index(
                 self.next_offset.load(),
                 memory_records.size(),
@@ -144,6 +151,7 @@ impl JournalLog {
                 get_active_segment_writer().active_segment_size(&self.topic_partition),
             )?;
         }
+        trace!("update_index complete");
 
         Ok(log_append_info)
     }

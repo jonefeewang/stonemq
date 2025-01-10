@@ -125,6 +125,7 @@ impl ActiveSegmentIndex {
         };
 
         if index_interval <= self.bytes_since_last_index_entry.load() {
+            trace!("add_entry");
             // if true {
             self.offset_index
                 .add_entry(relative_offset as u32, segment_size as u32)?;

@@ -6,6 +6,7 @@ mod group_state;
 mod member_metadata;
 
 pub use coordinator::GroupCoordinator;
+use rocksdb::DB;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -63,6 +64,7 @@ pub struct MemberMetadata {
 #[derive(Debug)]
 pub struct GroupMetadataManager {
     groups: DashMap<String, Arc<RwLock<GroupMetadata>>>,
+    db: DB,
 }
 
 /// 协议信息

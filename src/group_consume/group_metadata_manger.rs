@@ -24,8 +24,8 @@ impl GroupMetadataManager {
     pub fn offset_db_key(group_id: &str, topic_partition: &TopicPartition) -> String {
         format!("{}:{}:{}", Self::OFFSET_PREFIX, group_id, topic_partition)
     }
-    pub fn new(groups: DashMap<String, Arc<RwLock<GroupMetadata>>>) -> Self {
-        Self { groups }
+    pub fn new(groups: DashMap<String, Arc<RwLock<GroupMetadata>>>, db: DB) -> Self {
+        Self { groups, db }
     }
 
     pub fn add_group(&self, group_metadata: GroupMetadata) -> Arc<RwLock<GroupMetadata>> {
@@ -42,9 +42,7 @@ impl GroupMetadataManager {
         let group_id = write_lock.id.clone();
         let group_data = write_lock.serialize()?;
 
-        let db_path = &global_config().general.local_db_path;
-        let db = DB::open_default(db_path).unwrap();
-        let result = db.put(Self::group_db_key(&group_id), group_data);
+        let result = self.db.put(Self::group_db_key(&group_id), group_data);
         if result.is_err() {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.clone()));
         }
@@ -56,8 +54,6 @@ impl GroupMetadataManager {
         member_id: &str,
         offsets: HashMap<TopicPartition, PartitionOffsetCommitData>,
     ) -> KafkaResult<()> {
-        let db_path = &global_config().general.local_db_path;
-        let db = DB::open_default(db_path).unwrap();
         for (topic_partition, offset_and_metadata) in offsets {
             let key = Self::offset_db_key(group_id, &topic_partition);
             let value = offset_and_metadata.serialize();
@@ -69,7 +65,7 @@ impl GroupMetadataManager {
                 )));
             } else {
                 let value = value.unwrap();
-                let result = db.put(&key, &value);
+                let result = self.db.put(&key, &value);
                 if result.is_err() {
                     let error_msg = format!(
                         "group id:{}  member id:{} 存储offset失败: {:?}",
@@ -91,12 +87,10 @@ impl GroupMetadataManager {
         group_id: &str,
         partitions: Option<Vec<TopicPartition>>,
     ) -> KafkaResult<HashMap<TopicPartition, PartitionOffsetData>> {
-        let db_path = &global_config().general.local_db_path;
-        let db = DB::open_default(db_path).unwrap();
         let mut offsets = HashMap::new();
         for partition in partitions.unwrap_or_default() {
             let key = Self::offset_db_key(group_id, &partition);
-            let value = db.get(key);
+            let value = self.db.get(key);
             let partition_id = partition.partition();
             if let Ok(Some(value)) = value {
                 // 如果offset存在，则返回offset
@@ -167,6 +161,6 @@ impl GroupMetadataManager {
                 error!("加载组元数据失败: {}", result.err().unwrap());
             }
         }
-        Self::new(groups)
+        Self::new(groups, db)
     }
 }

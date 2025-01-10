@@ -54,7 +54,7 @@ impl WritableIndexFile {
             .create(true)
             .open(file_name.as_ref())?;
 
-        // 获取文件长度，计算出已有的条目数
+        // todo: In the event of an ungraceful shutdown, the file is not truncated, resulting in an incorrect file length.
         let entries = file.metadata()?.len() as usize / INDEX_ENTRY_SIZE;
         trace!(
             "open writable index file: {:?}/{}",
