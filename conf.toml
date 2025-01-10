@@ -20,11 +20,11 @@ conn_read_buffer_size = 4096
 [log]
 ###### general config
 journal_topic_count = 1
-queue_topic_count = 1
+queue_topic_count = 2
 recovery_checkpoint_interval = 1000
 file_records_comm_channel_size = 1000
 ## default 100ms
-splitter_wait_interval = 10_000
+splitter_wait_interval = 100
 
 
 ###### journal config

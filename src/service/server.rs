@@ -167,11 +167,22 @@ async fn process_request(
             replica_manager,
             group_coordinator,
         };
+
+        // if api_request.is_blocking() {
+        //     debug!("blocking request: {:?}", api_request);
+        //     tokio::spawn(async move {
+        //         let response = RequestProcessor::process_request(api_request, &context).await;
+        //         if let Err(e) = response_tx.send(response) {
+        //             error!("Failed to send response: {:?}", e);
+        //         }
+        //     });
+        // } else {
         let response = RequestProcessor::process_request(api_request, &context).await;
         if let Err(e) = response_tx.send(response) {
             // this send error is usually irrecoverable, print error and continue to process next request, no need to feedback to client
             error!("Failed to send response: {:?}", e);
         }
+        // }
     } else {
         // parse request failed, if it is apiversion request, return a complete response with error code, otherwise drop the oneshot sender and close the connection
         error!(

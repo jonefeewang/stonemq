@@ -9,8 +9,6 @@ use tokio_stream::StreamExt;
 use tokio_util::time::DelayQueue;
 use tracing::{debug, trace};
 
-use crate::Shutdown;
-
 use super::{
     DelayQueueOp, DelayedAsyncOperation, DelayedAsyncOperationPurgatory, DelayedAsyncOperationState,
 };
@@ -75,9 +73,16 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
             }
 
             self.watchers
-                .entry(key)
+                .entry(key.clone())
                 .or_default()
                 .push(Arc::clone(&op_state));
+
+            debug!(
+                "{} add watcher-count {} to purgatory, count: {}",
+                self.name,
+                key.clone(),
+                self.watchers.entry(key).or_default().len()
+            );
         }
 
         if !op_state.is_completed() {
@@ -94,13 +99,13 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
     async fn start(
         self: Arc<Self>,
         mut delay_queue_rx: Receiver<DelayQueueOp<T>>,
-        notify_shutdown: broadcast::Sender<()>,
+        _notify_shutdown: broadcast::Sender<()>,
     ) {
         // DelayQueue 处理循环
         let purgatory_name_clone = self.name.clone();
 
-        let mut delay_queue_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
-        let mut purge_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
+        // let mut delay_queue_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
+        // let mut purge_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());
 
         tokio::spawn(async move {
             let mut delay_queue = DelayQueue::new();
@@ -141,32 +146,18 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                             );
                         }
                     }
-                    _ = delay_queue_shutdown.recv() => {
-                        debug!(" {} purgatory shutdown received", &purgatory_name_clone);
-                        break;
-                    }
+
                 }
             }
-            debug!("{} exit delay loop", &purgatory_name_clone);
         });
 
-        let purgatory_name_clone = self.name.clone();
         // clean completed operation
         let self_clone = Arc::clone(&self);
         tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    _ = purge_shutdown.recv() => {
-                        debug!(" {} purge-purgatory shutdown received", &purgatory_name_clone);
-                        break;
-                    }
-                    _ = async {
-                        sleep(Duration::from_secs(20)).await;
-                        self_clone.purge_completed().await;
-                    } => {}
-                }
+                sleep(Duration::from_secs(20)).await;
+                self_clone.purge_completed().await;
             }
-            debug!("{} exit purge delay loop", &purgatory_name_clone);
         });
     }
 
@@ -216,6 +207,12 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
 
         for key in keys_to_remove {
             self.watchers.remove(&key);
+            debug!(
+                "{} remove watcher-count {} from purgatory, count: {}",
+                self.name,
+                key,
+                self.watchers.len()
+            );
         }
     }
 }
