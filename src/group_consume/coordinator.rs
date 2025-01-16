@@ -1,11 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
 use bytes::Bytes;
-use crossbeam::atomic::AtomicCell;
 use tokio::{
     sync::{broadcast, oneshot, RwLock, RwLockWriteGuard},
     time::Instant,
@@ -32,7 +34,7 @@ use super::delayed_join::{DelayedHeartbeat, DelayedJoin, InitialDelayedJoin};
 
 #[derive(Debug)]
 pub struct GroupCoordinator {
-    active: AtomicCell<bool>,
+    active: AtomicBool,
     node: Node,
     group_config: GroupConsumeConfig,
     group_manager: GroupMetadataManager,
@@ -51,7 +53,7 @@ impl GroupCoordinator {
         delayed_heartbeat_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedHeartbeat>>,
     ) -> Self {
         Self {
-            active: AtomicCell::new(false),
+            active: AtomicBool::new(false),
             node,
             group_config,
             group_manager,
@@ -94,10 +96,10 @@ impl GroupCoordinator {
         )
         .await;
 
-        coordinator.active.store(true);
+        coordinator.active.store(true, Ordering::Release);
         debug!(
             "group coordinator startup success :{:?}",
-            coordinator.active.load()
+            coordinator.active.load(Ordering::Relaxed)
         );
         coordinator
     }
@@ -111,7 +113,7 @@ impl GroupCoordinator {
         // 检查请求是否合法
         if request.group_id.is_empty() {
             return self.join_error(request.member_id.clone(), ErrorCode::InvalidGroupId);
-        } else if !self.active.load() {
+        } else if !self.active.load(Ordering::Relaxed) {
             return self.join_error(
                 request.member_id.clone(),
                 ErrorCode::CoordinatorNotAvailable,
@@ -629,7 +631,7 @@ impl GroupCoordinator {
         member_id: &str,
         generation_id: i32,
     ) -> KafkaResult<()> {
-        if !self.active.load() {
+        if !self.active.load(Ordering::Relaxed) {
             Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()))
         } else {
             let group = self.group_manager.get_group(group_id);
@@ -700,7 +702,7 @@ impl GroupCoordinator {
         generation_id: i32,
         group_assignment: HashMap<String, Bytes>,
     ) -> KafkaResult<SyncGroupResponse> {
-        if !self.active.load() {
+        if !self.active.load(Ordering::Relaxed) {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
         let group = self.group_manager.get_group(group_id);
@@ -861,7 +863,7 @@ impl GroupCoordinator {
         group_id: &str,
         member_id: &str,
     ) -> KafkaResult<()> {
-        if !self.active.load() {
+        if !self.active.load(Ordering::Relaxed) {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
 
@@ -904,7 +906,7 @@ impl GroupCoordinator {
             }
             topic_responses
         };
-        if !self.active.load() {
+        if !self.active.load(Ordering::Relaxed) {
             return result(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
 
@@ -971,7 +973,7 @@ impl GroupCoordinator {
         group_id: &str,
         partitions: Option<Vec<TopicPartition>>,
     ) -> KafkaResult<HashMap<TopicPartition, PartitionOffsetData>> {
-        if !self.active.load() {
+        if !self.active.load(Ordering::Relaxed) {
             return Err(KafkaError::CoordinatorNotAvailable(group_id.to_string()));
         }
 

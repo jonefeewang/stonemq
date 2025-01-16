@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::{fs::File, sync::atomic::Ordering};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -27,7 +27,7 @@ struct ReadConfig {
 impl QueueLog {
     /// get recover point offset
     pub fn get_recover_point(&self) -> i64 {
-        self.recover_point.load()
+        self.recover_point.load(Ordering::Acquire)
     }
 
     /// get LEO(Log End Offset) info
@@ -36,8 +36,8 @@ impl QueueLog {
             get_active_segment_writer().active_segment_size(&self.topic_partition);
 
         Ok(PositionInfo {
-            base_offset: self.active_segment_id.load(),
-            offset: self.last_offset.load(),
+            base_offset: self.active_segment_id.load(Ordering::Acquire),
+            offset: self.last_offset.load(Ordering::Acquire),
             position: active_seg_size as i64,
         })
     }
@@ -66,7 +66,7 @@ impl QueueLog {
     /// get segment position info
     fn get_segment_position(&self, base_offset: i64, offset: i64) -> AppResult<PositionInfo> {
         debug!("get_segment_position: {} {}", base_offset, offset);
-        if base_offset == self.active_segment_id.load() {
+        if base_offset == self.active_segment_id.load(Ordering::Acquire) {
             self.active_segment_index
                 .read()
                 .get_relative_position(offset)
@@ -189,7 +189,7 @@ impl QueueLog {
             .next_back()
             .copied()
             .map(|offset| {
-                if offset == self.active_segment_id.load() {
+                if offset == self.active_segment_id.load(Ordering::Acquire) {
                     get_active_segment_writer().readable_size(&self.topic_partition) as usize
                 } else {
                     self.readonly_segment_size(offset)
@@ -241,7 +241,7 @@ impl QueueLog {
         Ok(LogFetchInfo {
             records,
             log_start_offset: self.log_start_offset,
-            log_end_offset: self.last_offset.load(),
+            log_end_offset: self.last_offset.load(Ordering::Acquire),
             position_info: target_position_info,
         })
     }
@@ -262,7 +262,7 @@ impl QueueLog {
         LogFetchInfo {
             records: MemoryRecords::empty(),
             log_start_offset: self.log_start_offset,
-            log_end_offset: self.last_offset.load(),
+            log_end_offset: self.last_offset.load(Ordering::Acquire),
             position_info: NO_POSITION_INFO,
         }
     }

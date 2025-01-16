@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::Duration,
 };
 
@@ -58,7 +58,7 @@ impl LogManager {
                 .map(|entry| {
                     let tp = entry.key();
                     let log = entry.value();
-                    (tp.clone(), log.recover_point.load())
+                    (tp.clone(), log.recover_point.load(Ordering::Acquire))
                 })
                 .collect();
             self.journal_recovery_checkpoints
@@ -100,10 +100,10 @@ impl LogManager {
                     let log = entry.value();
                     debug!(
                         "split progress:{}/{}",
-                        log.split_offset.load(),
-                        log.next_offset.load()
+                        log.split_offset.load(Ordering::Acquire),
+                        log.next_offset.load(Ordering::Acquire)
                     );
-                    (tp.clone(), log.split_offset.load())
+                    (tp.clone(), log.split_offset.load(Ordering::Acquire))
                 })
                 .collect();
             self.split_checkpoint

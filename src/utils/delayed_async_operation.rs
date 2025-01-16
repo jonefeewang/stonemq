@@ -1,5 +1,6 @@
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
+use parking_lot::lock_api::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -16,18 +17,18 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationState<T> {
     pub fn new(operation: Arc<T>) -> Self {
         Self {
             operation,
-            completed: AtomicCell::new(false),
-            delay_key: AtomicCell::new(None),
-            is_expired: AtomicCell::new(false),
+            completed: AtomicBool::new(false),
+            delay_key: RwLock::new(None),
+            is_expired: AtomicBool::new(false),
         }
     }
 
     pub fn is_completed(&self) -> bool {
-        self.completed.load()
+        self.completed.load(Ordering::Acquire)
     }
 
     pub async fn force_complete(&self) -> bool {
-        if !self.completed.swap(true) {
+        if !self.completed.swap(true, Ordering::AcqRel) {
             self.operation.on_complete().await;
             true
         } else {
@@ -116,7 +117,11 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                         match op {
                             DelayQueueOp::Insert(state, duration) => {
                                 let key = delay_queue.insert(state.clone(), duration);
-                                state.delay_key.store(Some(key));
+                                {
+                                    let mut delay_key = state.delay_key.write();
+                                    *delay_key = Some(key);
+                                }
+
                                 trace!(
                                     "purgatory {} insert delay queue {:?}, duration: {}",
                                     &purgatory_name_clone,
@@ -139,7 +144,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                         let op = expired.into_inner();
                         if op.force_complete().await {
                             op.operation.on_expiration().await;
-                            op.is_expired.store(true);
+                            op.is_expired.store(true, Ordering::Release);
                             trace!(
                                 "purgatory {} operation expired",
                                 &purgatory_name_clone
@@ -170,7 +175,11 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
                     && op.force_complete().await
                 {
                     completed += 1;
-                    if let Some(delay_key) = op.delay_key.load() {
+                    let key_clone = {
+                        let delay_key = op.delay_key.read();
+                        *delay_key
+                    };
+                    if let Some(delay_key) = key_clone {
                         trace!("check and complete remove delay queue key: {:?}", delay_key);
                         self.delay_queue_tx
                             .send(DelayQueueOp::Remove(delay_key))
@@ -229,7 +238,7 @@ mod tests {
     use crate::service::setup_local_tracing;
 
     use super::*;
-    use std::{future::Future, pin::Pin, time::Duration};
+    use std::{future::Future, pin::Pin, sync::atomic::AtomicBool, time::Duration};
 
     #[fixture]
     #[once]
@@ -238,28 +247,28 @@ mod tests {
     }
 
     struct TestShortDelayedOperation {
-        should_complete: AtomicCell<bool>,
-        completed: AtomicCell<bool>,
+        should_complete: AtomicBool,
+        completed: AtomicBool,
     }
 
     struct TestLongDelayedOperation {
-        should_complete: AtomicCell<bool>,
-        completed: AtomicCell<bool>,
+        should_complete: AtomicBool,
+        completed: AtomicBool,
     }
 
     impl TestShortDelayedOperation {
         fn new(should_complete: bool) -> Self {
             Self {
-                should_complete: AtomicCell::new(should_complete),
-                completed: AtomicCell::new(false),
+                should_complete: AtomicBool::new(should_complete),
+                completed: AtomicBool::new(false),
             }
         }
     }
     impl TestLongDelayedOperation {
         fn new(should_complete: bool) -> Self {
             Self {
-                should_complete: AtomicCell::new(should_complete),
-                completed: AtomicCell::new(false),
+                should_complete: AtomicBool::new(should_complete),
+                completed: AtomicBool::new(false),
             }
         }
     }
@@ -270,12 +279,12 @@ mod tests {
         }
 
         async fn try_complete(&self) -> bool {
-            self.should_complete.load()
+            self.should_complete.load(Ordering::Acquire)
         }
 
         fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
             Box::pin(async move {
-                self.completed.store(true);
+                self.completed.store(true, Ordering::Release);
             })
         }
 
@@ -287,12 +296,12 @@ mod tests {
         }
 
         async fn try_complete(&self) -> bool {
-            self.should_complete.load()
+            self.should_complete.load(Ordering::Acquire)
         }
 
         fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
             Box::pin(async move {
-                self.completed.store(true);
+                self.completed.store(true, Ordering::Release);
             })
         }
 
@@ -317,7 +326,7 @@ mod tests {
             .try_complete_else_watch(op_clone, vec!["test_key".to_string()])
             .await;
         assert!(completed);
-        assert!(op.completed.load());
+        assert!(op.completed.load(Ordering::Acquire));
 
         // test operation need watch
         let op = Arc::new(TestShortDelayedOperation::new(false));
@@ -362,7 +371,7 @@ mod tests {
         purgatory.watchers.get("test_key").unwrap()[0]
             .operation
             .should_complete
-            .store(true);
+            .store(true, Ordering::Release);
 
         // check completed state
         let completed = purgatory.check_and_complete("test_key").await;
@@ -392,7 +401,7 @@ mod tests {
         purgatory.watchers.get("test_key").unwrap()[0]
             .operation
             .should_complete
-            .store(true);
+            .store(true, Ordering::Release);
 
         let completed = purgatory.check_and_complete("test_key").await;
         assert_eq!(completed, 1);
@@ -439,15 +448,15 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(4000)).await;
         assert!(short_delay_purgatory.watchers.get("test_key1").unwrap()[0]
             .is_expired
-            .load());
+            .load(Ordering::Acquire));
         assert!(!long_delay_purgatory.watchers.get("test_key2").unwrap()[0]
             .is_expired
-            .load());
+            .load(Ordering::Acquire));
 
         // complete second operation early
-        long_delay_op.should_complete.store(true);
+        long_delay_op.should_complete.store(true, Ordering::Release);
         let completed = long_delay_purgatory.check_and_complete("test_key2").await;
         assert_eq!(completed, 1);
-        assert!(long_delay_op.completed.load());
+        assert!(long_delay_op.completed.load(Ordering::Acquire));
     }
 }

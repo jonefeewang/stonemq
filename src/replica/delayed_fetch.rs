@@ -1,9 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::BTreeMap, sync::Arc};
-
-use crossbeam::atomic::AtomicCell;
 
 use tokio::sync::Mutex;
 use tracing::{debug, error};
@@ -29,7 +28,7 @@ impl DelayedFetch {
             request,
             read_position_infos,
             tx: Arc::new(Mutex::new(Some(tx))),
-            is_completed: AtomicCell::new(false),
+            is_completed: AtomicBool::new(false),
             correlation_id,
         }
     }
@@ -41,7 +40,7 @@ impl DelayedAsyncOperation for DelayedFetch {
     }
 
     async fn try_complete(&self) -> bool {
-        if self.is_completed.load() {
+        if self.is_completed.load(Ordering::Acquire) {
             return true;
         }
         // 1.读取的partition里有segment roll，读取的offset已经不在active的segment里了
@@ -77,6 +76,9 @@ impl DelayedAsyncOperation for DelayedFetch {
     }
 
     async fn on_expiration(&self) {
-        debug!("delayed fetch expired, correlation_id: {}", self.correlation_id);
+        debug!(
+            "delayed fetch expired, correlation_id: {}",
+            self.correlation_id
+        );
     }
 }

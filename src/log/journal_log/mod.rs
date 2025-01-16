@@ -11,10 +11,9 @@ mod journal_write;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{atomic::AtomicI64, Arc},
 };
 
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
@@ -59,22 +58,22 @@ pub struct JournalLog {
     active_segment_index: RwLock<ActiveSegmentIndex>,
 
     /// Base offset of current active segment
-    active_segment_base_offset: AtomicCell<i64>,
+    active_segment_base_offset: AtomicI64,
 
     /// Next offset information for queues
     queue_next_offset_info: DashMap<TopicPartition, i64>,
 
     /// Starting offset of the log
-    _log_start_offset: AtomicCell<i64>,
+    _log_start_offset: AtomicI64,
 
     /// Next offset to be assigned
-    pub(crate) next_offset: AtomicCell<i64>,
+    pub(crate) next_offset: AtomicI64,
 
     /// Recovery point offset
-    pub(crate) recover_point: AtomicCell<i64>,
+    pub(crate) recover_point: AtomicI64,
 
     /// Split point offset
-    pub split_offset: AtomicCell<i64>,
+    pub split_offset: AtomicI64,
 
     /// Topic partition information
     topic_partition: TopicPartition,
@@ -132,17 +131,17 @@ impl JournalLog {
             segments_order: RwLock::new(segments_order),
             segment_index: DashMap::new(),
             active_segment_index: RwLock::new(active_segment_index),
-            active_segment_base_offset: AtomicCell::new(0),
+            active_segment_base_offset: AtomicI64::new(0),
             queue_next_offset_info: DashMap::new(),
             queue_next_offset_checkpoints: CheckPointFile::new(format!(
                 "{}/{}",
                 &topic_partition.partition_dir(),
                 NEXT_OFFSET_CHECKPOINT_FILE_NAME
             )),
-            _log_start_offset: AtomicCell::new(Self::INIT_LOG_START_OFFSET),
-            next_offset: AtomicCell::new(Self::INIT_NEXT_OFFSET),
-            recover_point: AtomicCell::new(Self::INIT_RECOVER_POINT),
-            split_offset: AtomicCell::new(Self::INIT_SPLIT_OFFSET),
+            _log_start_offset: AtomicI64::new(Self::INIT_LOG_START_OFFSET),
+            next_offset: AtomicI64::new(Self::INIT_NEXT_OFFSET),
+            recover_point: AtomicI64::new(Self::INIT_RECOVER_POINT),
+            split_offset: AtomicI64::new(Self::INIT_SPLIT_OFFSET),
             topic_partition: topic_partition.clone(),
         })
     }
@@ -186,13 +185,13 @@ impl JournalLog {
             segments_order: RwLock::new(segments_order),
             segment_index: segments_map,
             active_segment_index: RwLock::new(active_segment),
-            active_segment_base_offset: AtomicCell::new(active_segment_base_offset),
+            active_segment_base_offset: AtomicI64::new(active_segment_base_offset),
             queue_next_offset_info: metadata.queue_next_offset_info,
             queue_next_offset_checkpoints: metadata.queue_next_offset_checkpoints,
-            _log_start_offset: AtomicCell::new(metadata.log_start_offset),
-            next_offset: AtomicCell::new(metadata.next_offset),
-            recover_point: AtomicCell::new(metadata.recover_point),
-            split_offset: AtomicCell::new(metadata.split_offset),
+            _log_start_offset: AtomicI64::new(metadata.log_start_offset),
+            next_offset: AtomicI64::new(metadata.next_offset),
+            recover_point: AtomicI64::new(metadata.recover_point),
+            split_offset: AtomicI64::new(metadata.split_offset),
             topic_partition: topic_partition.clone(),
         })
     }

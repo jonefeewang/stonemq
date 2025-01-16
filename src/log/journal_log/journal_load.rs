@@ -2,6 +2,7 @@ use dashmap::DashMap;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
+    sync::atomic::Ordering,
 };
 use tracing::{info, trace};
 
@@ -96,9 +97,9 @@ impl JournalLog {
         info!(
             "loaded journal log:{} next_offset:{}, recover_point:{}, split_offset:{}",
             topic_partition.id(),
-            log.next_offset.load(),
-            log.recover_point.load(),
-            log.split_offset.load()
+            log.next_offset.load(Ordering::Relaxed),
+            log.recover_point.load(Ordering::Relaxed),
+            log.split_offset.load(Ordering::Relaxed)
         );
 
         Ok(log)

@@ -109,7 +109,6 @@ impl CheckPointFile {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
-    use tokio::fs;
 
     #[tokio::test]
     async fn test_write_and_read_checkpoints() -> AppResult<()> {
@@ -138,7 +137,7 @@ mod tests {
         let file_name = temp_file.path().to_str().unwrap().to_string();
 
         // Write an invalid version to the file
-        fs::write(&file_name, "2\n").await.unwrap();
+        std::fs::write(&file_name, "2\n").unwrap();
 
         let checkpoint_file = CheckPointFile::new(file_name);
         let result = checkpoint_file.read_checkpoints(LogType::Journal);
@@ -153,9 +152,7 @@ mod tests {
         let file_name = temp_file.path().to_str().unwrap().to_string();
 
         // Write an invalid format to the file
-        fs::write(&file_name, "1\ntopic1-0 invalid\n")
-            .await
-            .unwrap();
+        std::fs::write(&file_name, "1\ntopic1-0 invalid\n").unwrap();
 
         let checkpoint_file = CheckPointFile::new(file_name);
         let result = checkpoint_file.read_checkpoints(LogType::Journal);

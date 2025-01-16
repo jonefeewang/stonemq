@@ -1,7 +1,8 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::log::index_file::{ReadOnlyIndexFile, WritableIndexFile};
 use crate::message::TopicPartition;
 use crate::{global_config, AppResult};
-use crossbeam::atomic::AtomicCell;
 use tracing::trace;
 
 use super::{LogType, INDEX_FILE_SUFFIX};
@@ -43,7 +44,7 @@ pub struct ReadOnlySegmentIndex {
 pub struct ActiveSegmentIndex {
     base_offset: i64,
     offset_index: WritableIndexFile,
-    bytes_since_last_index_entry: AtomicCell<usize>,
+    bytes_since_last_index_entry: AtomicUsize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -106,7 +107,7 @@ impl ActiveSegmentIndex {
         Ok(Self {
             base_offset,
             offset_index,
-            bytes_since_last_index_entry: AtomicCell::new(0),
+            bytes_since_last_index_entry: AtomicUsize::new(0),
         })
     }
 
@@ -124,7 +125,7 @@ impl ActiveSegmentIndex {
             LogType::Queue => global_config().log.queue_index_interval_bytes,
         };
 
-        if index_interval <= self.bytes_since_last_index_entry.load() {
+        if index_interval <= self.bytes_since_last_index_entry.load(Ordering::Acquire) {
             trace!("add_entry");
             // if true {
             self.offset_index
@@ -136,12 +137,14 @@ impl ActiveSegmentIndex {
                 segment_size,
                 self.offset_index,
                 index_interval,
-                self.bytes_since_last_index_entry.load()
+                self.bytes_since_last_index_entry.load(Ordering::Acquire)
             );
 
-            self.bytes_since_last_index_entry.store(0);
+            self.bytes_since_last_index_entry
+                .store(0, Ordering::Release);
         }
-        self.bytes_since_last_index_entry.fetch_add(records_size);
+        self.bytes_since_last_index_entry
+            .fetch_add(records_size, Ordering::AcqRel);
 
         Ok(())
     }

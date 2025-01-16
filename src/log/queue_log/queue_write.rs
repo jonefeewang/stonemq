@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::log::log_file_writer::{FlushRequest, QueueFileWriteReq};
@@ -67,7 +68,7 @@ impl QueueLog {
 
         trace!(
             "append records to queue log success, update last offset:{}",
-            self.last_offset.load()
+            self.last_offset.load(Ordering::Acquire)
         );
 
         Ok(log_append_info)
@@ -89,15 +90,16 @@ impl QueueLog {
 
     /// roll new segment
     async fn roll_new_segment(&self) -> AppResult<()> {
-        let new_base_offset = self.last_offset.load() + 1;
+        let new_base_offset = self.last_offset.load(Ordering::Acquire) + 1;
 
         let request = FlushRequest {
             topic_partition: self.topic_partition.clone(),
         };
         get_active_segment_writer().flush(request).await?;
         self.active_segment_index.write().flush_index()?;
-        self.recover_point.store(self.last_offset.load());
-        let old_base_offset = self.active_segment_id.load();
+        self.recover_point
+            .store(self.last_offset.load(Ordering::Acquire), Ordering::Release);
+        let old_base_offset = self.active_segment_id.load(Ordering::Acquire);
 
         // Create new segment
         let new_seg = ActiveSegmentIndex::new(
@@ -112,7 +114,8 @@ impl QueueLog {
             // Swap active segment
             let mut active_seg = self.active_segment_index.write();
             let old_segment = std::mem::replace(&mut *active_seg, new_seg);
-            self.active_segment_id.store(new_base_offset);
+            self.active_segment_id
+                .store(new_base_offset, Ordering::Release);
 
             // add old segment to segments
             let readonly_seg = old_segment.into_readonly()?;
@@ -175,7 +178,7 @@ impl QueueLog {
     /// update last offset
     fn update_last_offset(&self, first_offset: i64, records_count: u32) {
         self.last_offset
-            .store(first_offset + records_count as i64 - 1);
+            .store(first_offset + records_count as i64 - 1, Ordering::Release);
     }
 
     pub async fn close(&self) -> AppResult<()> {
@@ -186,7 +189,8 @@ impl QueueLog {
         };
         get_active_segment_writer().flush(request).await?;
 
-        self.recover_point.store(self.last_offset.load());
+        self.recover_point
+            .store(self.last_offset.load(Ordering::Acquire), Ordering::Release);
         Ok(())
     }
 

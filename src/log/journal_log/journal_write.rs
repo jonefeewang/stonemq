@@ -3,7 +3,7 @@
 //! This module provides functionality for appending records to journal logs,
 //! including metadata management and segment rolling.
 
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 use tracing::{debug, trace};
 
 use crate::{
@@ -59,7 +59,7 @@ impl JournalLog {
 
         // Create and execute write operation
         let journal_log_write_op = JournalFileWriteReq {
-            journal_offset: self.next_offset.load(),
+            journal_offset: self.next_offset.load(Ordering::Acquire),
             topic_partition: self.topic_partition.clone(),
             queue_topic_partition: queue_topic_partition.clone(),
             first_batch_queue_base_offset: log_append_info.first_offset,
@@ -79,12 +79,12 @@ impl JournalLog {
 
         debug!(
             " append journal log success with journal offset {} of topic_partition {}",
-            self.next_offset.load(),
+            self.next_offset.load(Ordering::Acquire),
             self.topic_partition.id()
         );
 
         // Update offsets and send success response
-        self.next_offset.fetch_add(1);
+        self.next_offset.fetch_add(1, Ordering::AcqRel);
         Ok(log_append_info)
     }
 
@@ -119,7 +119,7 @@ impl JournalLog {
             trace!(
                 "topic_partition={} append_complete next_offset={} entry_value={:?}",
                 queue_topic_partition.id(),
-                self.next_offset.load(),
+                self.next_offset.load(Ordering::Acquire),
                 *offset_info
             );
         }
@@ -129,8 +129,10 @@ impl JournalLog {
         let active_seg_size =
             get_active_segment_writer().active_segment_size(&self.topic_partition);
 
-
-        trace!("active_segment_offset_index_full={}", active_segment_offset_index_full);
+        trace!(
+            "active_segment_offset_index_full={}",
+            active_segment_offset_index_full
+        );
 
         if self.need_roll(
             active_seg_size as u32,
@@ -145,7 +147,7 @@ impl JournalLog {
         {
             trace!("update_index");
             self.active_segment_index.write().update_index(
-                self.next_offset.load(),
+                self.next_offset.load(Ordering::Acquire),
                 memory_records.size(),
                 LogType::Journal,
                 get_active_segment_writer().active_segment_size(&self.topic_partition),
@@ -161,7 +163,7 @@ impl JournalLog {
     /// This method handles the process of creating a new segment and
     /// transitioning the current active segment to a read-only state.
     async fn roll_active_segment(&self) -> AppResult<()> {
-        let new_base_offset = self.next_offset.load();
+        let new_base_offset = self.next_offset.load(Ordering::Acquire);
 
         // Flush old segment
         get_active_segment_writer()
@@ -170,8 +172,9 @@ impl JournalLog {
             })
             .await?;
         self.active_segment_index.write().flush_index()?;
-        self.recover_point.store(self.next_offset.load() - 1);
-        let old_base_offset = self.active_segment_base_offset.load();
+        self.recover_point
+            .store(self.next_offset.load(Ordering::Acquire) - 1, Ordering::Release);
+        let old_base_offset = self.active_segment_base_offset.load(Ordering::Acquire);
 
         // Create new segment
         let new_seg = ActiveSegmentIndex::new(
@@ -186,7 +189,8 @@ impl JournalLog {
             // Swap active segment index
             let mut active_seg_index = self.active_segment_index.write();
             let old_segment_index = std::mem::replace(&mut *active_seg_index, new_seg);
-            self.active_segment_base_offset.store(new_base_offset);
+            self.active_segment_base_offset
+                .store(new_base_offset, Ordering::Release);
             // add old segment to segments
             let readonly_seg = old_segment_index.into_readonly()?;
             let mut segments_order = self.segments_order.write();
@@ -290,13 +294,14 @@ impl JournalLog {
         };
         get_active_segment_writer().flush(request).await?;
 
-        self.recover_point.store(self.next_offset.load() - 1);
+        self.recover_point
+            .store(self.next_offset.load(Ordering::Acquire) - 1, Ordering::Release);
 
         debug!(
             "Flushed segment: topic_partition={} offset={} recover_point={}",
             self.topic_partition.id(),
-            self.next_offset.load(),
-            self.recover_point.load()
+            self.next_offset.load(Ordering::Acquire),
+            self.recover_point.load(Ordering::Acquire)
         );
 
         Ok(())

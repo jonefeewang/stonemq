@@ -8,6 +8,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::{self, ErrorKind, Read};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tokio::time::Interval;
@@ -51,7 +52,7 @@ impl SplitterTask {
                 .collect::<Vec<String>>()
         );
         while !shutdown.is_shutdown() {
-            let target_offset = self.journal_log.split_offset.load() + 1;
+            let target_offset = self.journal_log.split_offset.load(Ordering::Acquire) + 1;
             debug!(
                 "start loop and read target offset: {} / {}",
                 target_offset, &self.topic_partition
@@ -160,11 +161,13 @@ impl SplitterTask {
                         .append_records(journal_records_batch)
                         .await?;
 
-                    self.journal_log.split_offset.store(journal_offset);
+                    self.journal_log
+                        .split_offset
+                        .store(journal_offset, Ordering::Release);
                     trace!(
                         "process batch,{}, update split offset: {}/{}",
                         records_count,
-                        self.journal_log.split_offset.load(),
+                        self.journal_log.split_offset.load(Ordering::Acquire),
                         &self.topic_partition
                     );
                     continue;

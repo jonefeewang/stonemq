@@ -11,8 +11,8 @@ use crate::log::QueueLog;
 use crate::message::LogFetchInfo;
 use crate::message::TopicPartition;
 use crate::request::FetchRequest;
-use crossbeam::atomic::AtomicCell;
 use std::collections::BTreeMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -45,6 +45,6 @@ pub struct DelayedFetch {
     pub request: FetchRequest,
     pub read_position_infos: BTreeMap<TopicPartition, PositionInfo>,
     pub tx: Arc<Mutex<Option<FetchResultSender>>>,
-    is_completed: AtomicCell<bool>,
+    is_completed: AtomicBool,
     pub correlation_id: i32,
 }

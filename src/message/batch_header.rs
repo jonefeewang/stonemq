@@ -1,5 +1,6 @@
-use chrono::{Local, TimeZone};
 use std::fmt::{Debug, Display, Formatter};
+
+use chrono::{Local, TimeZone};
 
 /// Represents the header of a message batch in a Kafka messaging system
 ///

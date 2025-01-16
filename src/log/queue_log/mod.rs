@@ -13,10 +13,9 @@ mod queue_write;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    sync::Arc,
+    sync::{atomic::AtomicI64, Arc},
 };
 
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use tracing::info;
@@ -55,7 +54,7 @@ pub struct QueueLog {
     active_segment_index: RwLock<ActiveSegmentIndex>,
 
     /// Base offset of the active segment
-    active_segment_id: AtomicCell<i64>,
+    active_segment_id: AtomicI64,
 
     /// Topic partition this log belongs to
     topic_partition: TopicPartition,
@@ -64,10 +63,10 @@ pub struct QueueLog {
     log_start_offset: i64,
 
     /// Last known valid offset (for recovery)
-    recover_point: AtomicCell<i64>,
+    recover_point: AtomicI64,
 
     /// Last offset in the log
-    last_offset: AtomicCell<i64>,
+    last_offset: AtomicI64,
 }
 
 impl QueueLog {
@@ -98,10 +97,10 @@ impl QueueLog {
             segments: DashMap::with_capacity(1),
             segments_order: RwLock::new(segments_order),
             active_segment_index: RwLock::new(active_segment_index),
-            active_segment_id: AtomicCell::new(0),
+            active_segment_id: AtomicI64::new(0),
             log_start_offset: INIT_LOG_START_OFFSET,
-            recover_point: AtomicCell::new(INIT_RECOVER_POINT),
-            last_offset: AtomicCell::new(INIT_LAST_OFFSET),
+            recover_point: AtomicI64::new(INIT_RECOVER_POINT),
+            last_offset: AtomicI64::new(INIT_LAST_OFFSET),
         })
     }
 
@@ -135,10 +134,10 @@ impl QueueLog {
             segments: DashMap::from_iter(segments.into_iter().map(|(k, v)| (k, Arc::new(v)))),
             segments_order: RwLock::new(segments_order),
             active_segment_index: RwLock::new(active_segment),
-            active_segment_id: AtomicCell::new(active_segment_base_offset),
+            active_segment_id: AtomicI64::new(active_segment_base_offset),
             log_start_offset,
-            recover_point: AtomicCell::new(recover_point),
-            last_offset: AtomicCell::new(last_offset),
+            recover_point: AtomicI64::new(recover_point),
+            last_offset: AtomicI64::new(last_offset),
         })
     }
 

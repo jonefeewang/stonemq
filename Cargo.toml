@@ -11,15 +11,13 @@ categories = ["network-programming"]
 license = "Apache-2.0"
 
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-#
 [dependencies]
+# tokio
 tokio = { version = "1.33", features = [
     "rt",
     "time",
     "net",
     "io-util",
-    "fs",
     "macros",
     "signal",
     "rt-multi-thread",
@@ -27,51 +25,37 @@ tokio = { version = "1.33", features = [
     "test-util",
 
 ] }
-
-num_cpus = "1.16"
-
 tokio-stream = "0.1.11"
-futures = "0.3"
-futures-util = { version = "0.3.28" }
-
-serde = { version = "1.0.188", features = ["derive"] }
-serde_json = "1.0.107"
+tokio-util = { version = "0.7", features = ["time"] }
 bytes = { version = "1", features = ["serde"] }
-slab = "0.4.9"
+
+# common dependencies
+num_cpus = "1.16"
 thiserror = "1.0.49"
-tokio-util = { version = "0.7", features = ["codec", "time"] }
-rocksdb = "0.22.0"
-
-# concurrency lib
-dashmap = "6.0.0"
-crossbeam = "0.8.4"
-parking_lot = "0.12.3"
-
 config = "0.14"
-tracing = { version = "0.1", features = ["log"] }
-metrics = "0.23.0"
 clap = { version = "4.4", features = ["derive"] }
-
-
+rocksdb = "0.22.0"
+serde = { version = "1.0.188", features = ["derive"] }
+chrono = "0.4"
 uuid = { version = "1.1.2", features = ["v4"] }
 rand = "0.8.5"
-getset = "0.1.2"
-derive_builder = "0.20.0"
 integer-encoding = "4.0.0"
 crc32c = "0.6.5"
 once_cell = "1.19.0"
-# compression lib
-flate2 = "1.0"
-lz4 = "1.23"
-snap = "1.0.0"
 memmap2 = "0.9.4"
-chrono = "0.4"
-
 dotenv = "0.15.0"
 
+# concurrency lib
+dashmap = "6.0.0"
+parking_lot = "0.12.3"
 async-channel = "2.3"
 
-
+# tracing and metrics
+tracing = { version = "0.1", features = ["log"] }
+tracing-core = "0.1.28"
+tracing-appender = "0.2"
+console-subscriber = "0.1.5"
+tracing-opentelemetry = "=0.24.0"
 opentelemetry = { version = "0.23", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.23", default-features = false, features = [
     "trace",
@@ -89,14 +73,9 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
     "ansi",
     "tracing-log",
 ] }
-tracing-opentelemetry = "=0.24.0"
-tracing-core = "0.1.28"
-tracing-appender = "0.2"
-console-subscriber = "0.1.5"
-
 
 [dev-dependencies]
-fake = "2.9.2"
+# fake = "2.9.2"
 tempfile = "3"
 rstest = "0.22.0"
 

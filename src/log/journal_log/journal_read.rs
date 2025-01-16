@@ -3,6 +3,8 @@
 //! This module provides functionality for reading from journal logs,
 //! including position lookup and metadata access.
 
+use std::sync::atomic::Ordering;
+
 use crate::{
     log::{segment_index::SegmentIndexCommon, PositionInfo},
     message::TopicPartition,
@@ -54,7 +56,7 @@ impl JournalLog {
             })?;
 
         // Check if the offset belongs to the active segment
-        if segment_offset == self.active_segment_base_offset.load() {
+        if segment_offset == self.active_segment_base_offset.load(Ordering::Acquire) {
             self.active_segment_index
                 .read()
                 .get_relative_position(offset)
@@ -82,7 +84,7 @@ impl JournalLog {
     /// The base offset of the active segment as an `i64`
     #[inline]
     pub fn current_active_seg_offset(&self) -> i64 {
-        self.active_segment_base_offset.load()
+        self.active_segment_base_offset.load(Ordering::Acquire)
     }
 
     /// Calculates the overhead size for a journal log record.

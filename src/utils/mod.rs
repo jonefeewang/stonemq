@@ -6,10 +6,11 @@ pub use multiple_channel_worker_pool::MultipleChannelWorkerPool;
 pub use multiple_channel_worker_pool::PoolHandler;
 pub use multiple_channel_worker_pool::WorkerPoolConfig;
 
-use crossbeam::atomic::AtomicCell;
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
@@ -35,9 +36,9 @@ pub trait DelayedAsyncOperation: Send + Sync {
 #[derive(Debug)]
 struct DelayedAsyncOperationState<T: DelayedAsyncOperation> {
     operation: Arc<T>,
-    completed: AtomicCell<bool>,
-    delay_key: AtomicCell<Option<delay_queue::Key>>,
-    is_expired: AtomicCell<bool>,
+    completed: AtomicBool,
+    delay_key: RwLock<Option<delay_queue::Key>>,
+    is_expired: AtomicBool,
 }
 
 // define the operation of delay queue
