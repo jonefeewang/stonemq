@@ -1,3 +1,5 @@
+/// Module for managing consumer group metadata persistence and retrieval.
+/// Provides functionality for storing and loading group metadata and offsets using RocksDB.
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
@@ -16,18 +18,44 @@ use super::GroupMetadata;
 use super::GroupMetadataManager;
 
 impl GroupMetadataManager {
+    /// Prefix for group metadata keys in RocksDB
     const GROUP_PREFIX: &str = "group";
+    /// Prefix for offset keys in RocksDB
     const OFFSET_PREFIX: &str = "offset";
+
+    /// Generates a RocksDB key for storing group metadata
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the consumer group
     pub fn group_db_key(group_id: &str) -> String {
         format!("{}:{}", Self::GROUP_PREFIX, group_id)
     }
+
+    /// Generates a RocksDB key for storing partition offsets
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the consumer group
+    /// * `topic_partition` - Topic partition information
     pub fn offset_db_key(group_id: &str, topic_partition: &TopicPartition) -> String {
         format!("{}:{}:{}", Self::OFFSET_PREFIX, group_id, topic_partition)
     }
+
+    /// Creates a new GroupMetadataManager instance
+    ///
+    /// # Arguments
+    /// * `groups` - Map of group IDs to their metadata
+    /// * `db` - RocksDB instance for persistence
     pub fn new(groups: DashMap<String, Arc<RwLock<GroupMetadata>>>, db: DB) -> Self {
         Self { groups, db }
     }
 
+    /// Adds a new group to the manager
+    ///
+    /// # Arguments
+    /// * `group_metadata` - Metadata for the new group
+    ///
+    /// # Returns
+    /// Reference to the stored group metadata
     pub fn add_group(&self, group_metadata: GroupMetadata) -> Arc<RwLock<GroupMetadata>> {
         self.groups
             .entry(group_metadata.id.clone())
@@ -35,9 +63,26 @@ impl GroupMetadataManager {
             .value()
             .clone()
     }
+
+    /// Retrieves a group's metadata by ID
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the group to retrieve
+    ///
+    /// # Returns
+    /// Optional reference to the group metadata
     pub fn get_group(&self, group_id: &str) -> Option<Arc<RwLock<GroupMetadata>>> {
         self.groups.get(group_id).map(|g| g.clone())
     }
+
+    /// Stores group metadata in RocksDB
+    ///
+    /// # Arguments
+    /// * `write_lock` - Write lock containing the group metadata to store
+    ///
+    /// # Returns
+    /// * `Ok(())` - If storage succeeds
+    /// * `Err(KafkaError)` - If storage fails
     pub fn store_group(&self, write_lock: &RwLockWriteGuard<GroupMetadata>) -> KafkaResult<()> {
         let group_id = write_lock.id.clone();
         let group_data = write_lock.serialize()?;
@@ -48,6 +93,17 @@ impl GroupMetadataManager {
         }
         Ok(())
     }
+
+    /// Stores partition offsets for a group member
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the consumer group
+    /// * `member_id` - ID of the group member
+    /// * `offsets` - Map of topic partitions to their offsets
+    ///
+    /// # Returns
+    /// * `Ok(())` - If storage succeeds
+    /// * `Err(KafkaError)` - If storage fails
     pub fn store_offset(
         &self,
         group_id: &str,
@@ -58,9 +114,9 @@ impl GroupMetadataManager {
             let key = Self::offset_db_key(group_id, &topic_partition);
             let value = offset_and_metadata.serialize();
             if let Err(e) = value {
-                error!("序列化offset失败: {}", e);
+                error!("Failed to serialize offset: {}", e);
                 return Err(KafkaError::Unknown(format!(
-                    "group id:{}  member id:{} 序列化offset失败: {}",
+                    "Failed to serialize offset for group:{} member:{}: {}",
                     group_id, member_id, e
                 )));
             } else {
@@ -68,7 +124,7 @@ impl GroupMetadataManager {
                 let result = self.db.put(&key, &value);
                 if result.is_err() {
                     let error_msg = format!(
-                        "group id:{}  member id:{} 存储offset失败: {:?}",
+                        "Failed to store offset for group:{} member:{}: {:?}",
                         group_id,
                         member_id,
                         result.err().unwrap()
@@ -76,12 +132,22 @@ impl GroupMetadataManager {
                     error!("{}", error_msg);
                     return Err(KafkaError::Unknown(error_msg));
                 } else {
-                    trace!("存储offset成功: {}, value: {:?}", key, value);
+                    trace!("Successfully stored offset: {}, value: {:?}", key, value);
                 }
             }
         }
         Ok(())
     }
+
+    /// Retrieves partition offsets for a group
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the consumer group
+    /// * `partitions` - Optional list of partitions to retrieve offsets for
+    ///
+    /// # Returns
+    /// * `Ok(HashMap)` - Map of topic partitions to their offset data
+    /// * `Err(KafkaError)` - If retrieval fails
     pub fn get_offset(
         &self,
         group_id: &str,
@@ -93,7 +159,7 @@ impl GroupMetadataManager {
             let value = self.db.get(key);
             let partition_id = partition.partition();
             if let Ok(Some(value)) = value {
-                // 如果offset存在，则返回offset
+                // Return stored offset if it exists
                 let partition_offset_data = PartitionOffsetCommitData::deserialize(&value);
                 if let Ok(partition_offset_data) = partition_offset_data {
                     offsets.insert(
@@ -107,13 +173,13 @@ impl GroupMetadataManager {
                     );
                 } else {
                     return Err(KafkaError::Unknown(format!(
-                        "group id:{} 反序列化offset失败: {}",
+                        "Failed to deserialize offset for group:{}: {}",
                         group_id,
                         partition_offset_data.err().unwrap()
                     )));
                 }
             } else {
-                // 如果offset不存在，则返回0
+                // Return 0 if offset doesn't exist
                 offsets.insert(
                     partition,
                     PartitionOffsetData {
@@ -125,40 +191,49 @@ impl GroupMetadataManager {
                 );
             }
         }
-        trace!("获取offset成功: {:?}", offsets);
+        trace!("Successfully retrieved offsets: {:?}", offsets);
         Ok(offsets)
     }
+
+    /// Loads all group metadata from RocksDB
+    ///
+    /// Initializes RocksDB with appropriate options and loads all stored
+    /// group metadata into memory.
+    ///
+    /// # Returns
+    /// New GroupMetadataManager instance with loaded data
     pub fn load() -> Self {
-        // 配置 RocksDB 选项
+        // Configure RocksDB options
         let mut opts = Options::default();
         opts.create_if_missing(true);
 
-        // 假设所有 Group ID 前缀为 "group:"
+        // Set prefix extractor for group ID prefix
         opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(6));
 
-        // 打开数据库
-        let db = DB::open(&opts, &global_config().general.local_db_path).expect("无法打开 RocksDB");
+        // Open database
+        let db = DB::open(&opts, &global_config().general.local_db_path)
+            .expect("Failed to open RocksDB");
 
-        // 设置迭代器模式
+        // Set iterator mode
         let mode = IteratorMode::From(Self::GROUP_PREFIX.as_bytes(), rocksdb::Direction::Forward);
         let iter = db.iterator(mode);
 
-        // 执行前缀扫描
+        // Scan for group metadata
         let groups = DashMap::new();
         for result in iter {
             if let Ok((key, value)) = result {
                 if key.starts_with(Self::GROUP_PREFIX.as_bytes()) {
-                    // 处理键值对
+                    // Process key-value pair
                     let group_id = String::from_utf8_lossy(&key).to_string();
                     let group_metadata = GroupMetadata::deserialize(&value, &group_id).unwrap();
-                    info!("加载组元数据: {} {:#?}", group_id, group_metadata);
+                    info!("Loaded group metadata: {} {:#?}", group_id, group_metadata);
                     groups.insert(group_id, Arc::new(RwLock::new(group_metadata)));
                 } else {
-                    // 超过前缀范围，停止扫描
+                    // Stop scanning when prefix no longer matches
                     break;
                 }
             } else {
-                error!("加载组元数据失败: {}", result.err().unwrap());
+                error!("Failed to load group metadata: {}", result.err().unwrap());
             }
         }
         Self::new(groups, db)

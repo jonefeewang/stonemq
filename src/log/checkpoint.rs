@@ -1,3 +1,33 @@
+//! Checkpoint Management Implementation
+//!
+//! This module implements checkpoint functionality for tracking and persisting log recovery points.
+//! It provides mechanisms to save and load offset information for topic partitions, enabling
+//! reliable recovery after system restarts or failures.
+//!
+//! # Checkpoint File Format
+//!
+//! The checkpoint file follows a simple text-based format:
+//! ```text
+//! <version>
+//! <topic_partition_id> <offset>
+//! <topic_partition_id> <offset>
+//! ...
+//! ```
+//!
+//! # Features
+//!
+//! - Version-controlled file format for future compatibility
+//! - Atomic file operations for consistency
+//! - Support for both journal and queue logs
+//! - Error handling for file corruption and version mismatches
+//!
+//! # Thread Safety
+//!
+//! The implementation ensures thread safety through:
+//! - Atomic file operations
+//! - Immutable state within the CheckPointFile struct
+//! - Safe concurrent access to checkpoint data
+
 use crate::message::TopicPartition;
 use crate::AppError::{self};
 use crate::AppResult;
@@ -8,6 +38,17 @@ use tracing::{debug, trace, warn};
 
 use super::LogType;
 
+/// Manages checkpoint file operations for storing and retrieving log offsets.
+///
+/// The CheckPointFile struct provides functionality to:
+/// - Write checkpoint data atomically
+/// - Read checkpoint data with version validation
+/// - Handle file format and corruption errors
+///
+/// # Fields
+///
+/// * `file_name` - Path to the checkpoint file
+/// * `version` - Version of the checkpoint file format
 #[derive(Debug)]
 pub struct CheckPointFile {
     file_name: String,
@@ -15,8 +56,18 @@ pub struct CheckPointFile {
 }
 
 impl CheckPointFile {
+    /// Current version of the checkpoint file format
     pub const CK_FILE_VERSION_1: i8 = 1;
 
+    /// Creates a new CheckPointFile instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_name` - Path to the checkpoint file
+    ///
+    /// # Returns
+    ///
+    /// A new CheckPointFile instance configured with the current version
     pub fn new(file_name: impl AsRef<str>) -> Self {
         Self {
             file_name: file_name.as_ref().to_string(),
@@ -24,6 +75,25 @@ impl CheckPointFile {
         }
     }
 
+    /// Writes checkpoint data to disk.
+    ///
+    /// Atomically writes the provided offset information to the checkpoint file.
+    /// The operation ensures consistency by:
+    /// - Creating a new file if it doesn't exist
+    /// - Truncating existing file before writing
+    /// - Writing version and offsets in a single operation
+    ///
+    /// # Arguments
+    ///
+    /// * `points` - Map of topic partitions to their checkpoint offsets
+    ///
+    /// # Returns
+    ///
+    /// * `std::io::Result<()>` - Success if write completes
+    ///
+    /// # Thread Safety
+    ///
+    /// This operation is atomic at the file system level
     pub async fn write_checkpoints(
         &self,
         points: HashMap<TopicPartition, i64>,
@@ -55,6 +125,27 @@ impl CheckPointFile {
         Ok(())
     }
 
+    /// Reads checkpoint data from disk.
+    ///
+    /// Reads and validates checkpoint information including:
+    /// - Version validation
+    /// - File format checking
+    /// - Offset parsing
+    ///
+    /// # Arguments
+    ///
+    /// * `log_type` - Type of log (Journal or Queue) to filter entries
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<HashMap<TopicPartition, i64>>` - Map of topic partitions to offsets
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - File version doesn't match
+    /// - File format is invalid
+    /// - Offset parsing fails
     pub fn read_checkpoints(&self, log_type: LogType) -> AppResult<HashMap<TopicPartition, i64>> {
         let error = |line| AppError::InvalidValue(format!("checkpoint {}", line));
         trace!("read checkpoints from {}", self.file_name);

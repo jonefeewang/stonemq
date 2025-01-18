@@ -1,3 +1,26 @@
+//! Log Manager Background Tasks Implementation
+//!
+//! This module implements various background tasks that run as part of the LogManager:
+//! - Recovery checkpoint task for persisting recovery progress
+//! - Splitter task for converting journal logs to queue logs
+//! - Active segment writer initialization
+//!
+//! # Task Types
+//!
+//! ## Recovery Checkpoint Task
+//! Periodically saves the recovery progress of both journal and queue logs to disk.
+//! This ensures that after a system restart, logs can be recovered from their last
+//! known good state.
+//!
+//! ## Splitter Task
+//! Handles the conversion of messages from journal format to queue format.
+//! This task reads from journal logs and writes to appropriate queue logs based
+//! on topic partitions.
+//!
+//! ## Active Segment Writer
+//! Manages the active segments of logs, handling the actual writing of data to disk
+//! in an efficient manner using buffering and background flushes.
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::{atomic::Ordering, Arc},
@@ -21,6 +44,23 @@ use crate::{
 use super::LogManager;
 
 impl LogManager {
+    /// Runs the recovery checkpoint task that periodically saves recovery progress.
+    ///
+    /// This task performs several critical functions:
+    /// 1. Saves journal log recovery points
+    /// 2. Saves queue log recovery points
+    /// 3. Saves split progress checkpoints
+    /// 4. Updates next offset checkpoints
+    /// 5. Handles graceful shutdown by flushing all logs
+    ///
+    /// # Arguments
+    ///
+    /// * `interval` - The interval at which to run checkpoints
+    /// * `shutdown` - Shutdown signal receiver
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if all checkpoints are written, error otherwise
     pub async fn recovery_checkpoint_task(
         &self,
         mut interval: Interval,
@@ -126,6 +166,22 @@ impl LogManager {
         Ok(())
     }
 
+    /// Starts a splitter task for converting journal logs to queue logs.
+    ///
+    /// The splitter task reads messages from a journal log and distributes them
+    /// to appropriate queue logs based on their topic partitions. This is a
+    /// critical component in the message processing pipeline.
+    ///
+    /// # Arguments
+    ///
+    /// * `journal_topic_partition` - Source journal topic partition
+    /// * `queue_topic_partition` - Set of target queue topic partitions
+    /// * `shutdown` - Shutdown signal receiver
+    /// * `shutdown_complete_tx` - Channel to signal task completion
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if splitter starts, error otherwise
     pub async fn start_splitter_task(
         &self,
         journal_topic_partition: TopicPartition,
@@ -163,6 +219,21 @@ impl LogManager {
         Ok(())
     }
 
+    /// Initializes the active segment writer with configuration from global settings.
+    ///
+    /// The active segment writer is responsible for efficiently managing write
+    /// operations to log segments. It uses buffering and background flushes to
+    /// optimize I/O performance.
+    ///
+    /// # Configuration
+    ///
+    /// Uses the following global configuration:
+    /// - Worker pool settings (channel capacity, number of channels, etc.)
+    /// - Write buffer settings (capacity, flush interval)
+    ///
+    /// # Arguments
+    ///
+    /// * `notify_shutdown` - Channel for shutdown notifications
     pub fn init_active_segment_writer(notify_shutdown: broadcast::Sender<()>) {
         let worker_pool_config = WorkerPoolConfig {
             channel_capacity: global_config().active_segment_writer_pool.channel_capacity,

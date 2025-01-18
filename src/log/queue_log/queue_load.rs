@@ -1,3 +1,27 @@
+//! Queue Log Loading Implementation
+//!
+//! This module handles the loading and initialization of queue logs from disk.
+//! It provides functionality for:
+//! - Loading existing log segments
+//! - Recovering log state after crashes
+//! - Initializing new logs when none exist
+//!
+//! # Loading Process
+//!
+//! The loading process follows these steps:
+//! 1. Scan directory for segment files
+//! 2. Parse segment filenames to extract offsets
+//! 3. Load index files for segments
+//! 4. Initialize active and read-only segments
+//! 5. Reconstruct log state from loaded segments
+//!
+//! # File Structure
+//!
+//! Queue logs use several file types:
+//! - `.log`: Contains the actual message data
+//! - `.index`: Contains offset indexes for message lookup
+//! - `.time_index`: Contains time-based indexes (optional)
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -14,13 +38,28 @@ use crate::{
 use super::QueueLog;
 
 impl QueueLog {
-    /// Loads a QueueLog from existing data
+    /// Loads a QueueLog from existing data on disk.
+    ///
+    /// This method handles the complete process of loading a queue log,
+    /// including scanning for segments, initializing indexes, and setting
+    /// up the active segment.
     ///
     /// # Arguments
     ///
     /// * `topic_partition` - The topic partition to load
-    /// * `recover_point` - Recovery point offset
+    /// * `recover_point` - Offset to start recovery from
     /// * `index_file_max_size` - Maximum size for index files
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Self>` - Loaded queue log or error
+    ///
+    /// # Recovery Process
+    ///
+    /// 1. Load existing segments from disk
+    /// 2. Initialize active segment
+    /// 3. Determine starting offset
+    /// 4. Set up recovery point
     pub fn load_from(
         topic_partition: &TopicPartition,
         recover_point: i64,
@@ -47,7 +86,21 @@ impl QueueLog {
         Ok(log)
     }
 
-    /// Determines the starting offset for the log
+    /// Determines the starting offset for the log.
+    ///
+    /// The starting offset is determined by:
+    /// - First segment's base offset if segments exist
+    /// - Active segment's base offset if no other segments
+    /// - 0 if no segments exist at all
+    ///
+    /// # Arguments
+    ///
+    /// * `segments` - Map of existing read-only segments
+    /// * `active_segment` - Optional active segment
+    ///
+    /// # Returns
+    ///
+    /// The determined starting offset
     fn determine_start_offset(
         segments: &BTreeMap<i64, ReadOnlySegmentIndex>,
         active_segment: &Option<ActiveSegmentIndex>,
@@ -62,7 +115,20 @@ impl QueueLog {
         }
     }
 
-    /// Loads segments from disk
+    /// Loads all segments from disk for a topic partition.
+    ///
+    /// Scans the directory and loads both read-only segments and
+    /// initializes the active segment.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - Topic partition to load segments for
+    /// * `index_file_max_size` - Maximum size for index files
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<(BTreeMap<i64, ReadOnlySegmentIndex>, Option<ActiveSegmentIndex>)>` -
+    ///   Tuple of read-only segments and optional active segment
     fn load_segments(
         topic_partition: &TopicPartition,
         index_file_max_size: u32,
@@ -86,7 +152,15 @@ impl QueueLog {
         Self::build_segments(&dir, index_files, log_files, index_file_max_size)
     }
 
-    /// Checks if directory has any segment files
+    /// Checks if a directory contains any segment files.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory path to check
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<bool>` - True if directory contains files, false otherwise
     fn has_segment_files(dir: impl AsRef<Path>) -> AppResult<bool> {
         Ok(std::fs::read_dir(&dir)
             .map_err(|e| {
@@ -100,7 +174,21 @@ impl QueueLog {
             .is_some())
     }
 
-    /// Parses a segment filename into its components
+    /// Parses a segment filename to extract base offset and file type.
+    ///
+    /// Expects filenames in format: `<base_offset>.<extension>`
+    /// where extension is one of:
+    /// - "index" for index files
+    /// - "log" for log files
+    /// - "time_index" for time index files
+    ///
+    /// # Arguments
+    ///
+    /// * `filename` - Name of the file to parse
+    ///
+    /// # Returns
+    ///
+    /// * `Option<(i64, SegmentFileType)>` - Base offset and file type if valid
     fn parse_segment_filename(filename: &str) -> Option<(i64, SegmentFileType)> {
         let (base, ext) = filename.rsplit_once('.')?;
         let base_offset = base.parse::<i64>().ok()?;
@@ -115,7 +203,19 @@ impl QueueLog {
         Some((base_offset, file_type))
     }
 
-    /// Scans directory for segment files
+    /// Scans a directory for segment files and categorizes them.
+    ///
+    /// Creates sets of base offsets for:
+    /// - Index files
+    /// - Log files
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory to scan
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<(BTreeSet<i64>, BTreeSet<i64>)>` - Sets of index and log file offsets
     fn scan_segment_files(dir: impl AsRef<Path>) -> AppResult<(BTreeSet<i64>, BTreeSet<i64>)> {
         let mut index_files = BTreeSet::new();
         let mut log_files = BTreeSet::new();
@@ -157,7 +257,23 @@ impl QueueLog {
         Ok((index_files, log_files))
     }
 
-    /// Builds segments from files
+    /// Builds segment objects from scanned files.
+    ///
+    /// Creates:
+    /// - Read-only segments for all but the latest offset
+    /// - Active segment for the latest offset
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Base directory for segments
+    /// * `index_files` - Set of index file offsets
+    /// * `log_files` - Set of log file offsets
+    /// * `index_file_max_size` - Maximum size for index files
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<(BTreeMap<i64, ReadOnlySegmentIndex>, Option<ActiveSegmentIndex>)>` -
+    ///   Map of read-only segments and optional active segment
     fn build_segments(
         dir: impl AsRef<Path>,
         index_files: BTreeSet<i64>,
@@ -194,7 +310,17 @@ impl QueueLog {
         Ok((segments, active_segment))
     }
 
-    /// Creates an active segment
+    /// Creates an active segment for writing.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_offset` - Base offset for the segment
+    /// * `index_path` - Path to the index file
+    /// * `index_file_max_size` - Maximum size for the index file
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<ActiveSegmentIndex>` - New active segment
     fn create_active_segment(
         base_offset: i64,
         index_path: &str,
@@ -204,7 +330,16 @@ impl QueueLog {
         ActiveSegmentIndex::open(base_offset, index_file, None)
     }
 
-    /// Creates a readonly segment
+    /// Creates a read-only segment for completed segments.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_offset` - Base offset for the segment
+    /// * `index_path` - Path to the index file
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<ReadOnlySegmentIndex>` - New read-only segment
     fn create_readonly_segment(
         base_offset: i64,
         index_path: &str,

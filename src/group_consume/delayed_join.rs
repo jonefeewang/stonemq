@@ -1,3 +1,6 @@
+/// Module for handling delayed operations in consumer group coordination.
+/// This includes delayed join operations for new members and heartbeat monitoring
+/// for existing members.
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use tokio::{sync::RwLock, time::Instant};
@@ -7,13 +10,25 @@ use crate::utils::{DelayedAsyncOperation, DelayedAsyncOperationPurgatory};
 
 use super::{GroupCoordinator, GroupMetadata};
 
+/// Represents a delayed join operation for a consumer group member.
+/// This is used to handle the rebalance timeout when members join the group.
 #[derive(Debug)]
 pub struct DelayedJoin {
+    /// Reference to the group coordinator that manages this operation
     group_cordinator: Arc<GroupCoordinator>,
+    /// Reference to the group metadata
     group: Arc<RwLock<GroupMetadata>>,
+    /// Maximum time to wait for all members to join
     rebalance_timeout: u64,
 }
+
 impl DelayedJoin {
+    /// Creates a new delayed join operation
+    ///
+    /// # Arguments
+    /// * `group_cordinator` - Reference to the group coordinator
+    /// * `group` - Reference to the group metadata
+    /// * `rebalance_timeout` - Maximum time to wait for all members to join
     pub fn new(
         group_cordinator: Arc<GroupCoordinator>,
         group: Arc<RwLock<GroupMetadata>>,
@@ -26,6 +41,7 @@ impl DelayedJoin {
         }
     }
 }
+
 impl DelayedAsyncOperation for DelayedJoin {
     fn delay_ms(&self) -> u64 {
         self.rebalance_timeout
@@ -49,17 +65,36 @@ impl DelayedAsyncOperation for DelayedJoin {
         debug!("delayed join expired");
     }
 }
-// 初始化延迟加入，第一个组的加入者
+
+/// Represents an initial delayed join operation for the first member of a group.
+/// This implements a special delay mechanism for the first rebalance to allow
+/// additional members to join before completing the initial group formation.
 #[derive(Debug)]
 pub struct InitialDelayedJoin {
+    /// Reference to the group coordinator
     group_cordinator: Arc<GroupCoordinator>,
+    /// Reference to the group metadata
     group: Arc<RwLock<GroupMetadata>>,
+    /// Reference to the purgatory that manages this operation
     purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
+    /// Configured delay for initial rebalance
     configured_rebalance_delay: i32,
+    /// Current delay duration
     delay_ms: i32,
+    /// Remaining delay time
     remaining_delay_ms: i32,
 }
+
 impl InitialDelayedJoin {
+    /// Creates a new initial delayed join operation
+    ///
+    /// # Arguments
+    /// * `group_cordinator` - Reference to the group coordinator
+    /// * `group` - Reference to the group metadata
+    /// * `purgatory` - Reference to the purgatory that manages this operation
+    /// * `configured_rebalance_delay` - Configured delay for initial rebalance
+    /// * `delay_ms` - Current delay duration
+    /// * `remaining_delay_ms` - Remaining delay time
     pub fn new(
         group_cordinator: Arc<GroupCoordinator>,
         group: Arc<RwLock<GroupMetadata>>,
@@ -78,6 +113,7 @@ impl InitialDelayedJoin {
         }
     }
 }
+
 impl DelayedAsyncOperation for InitialDelayedJoin {
     fn delay_ms(&self) -> u64 {
         self.delay_ms as u64
@@ -133,15 +169,32 @@ impl DelayedAsyncOperation for InitialDelayedJoin {
     }
 }
 
+/// Represents a delayed heartbeat operation for monitoring member liveness.
+/// This is used to detect member failures when heartbeats are not received
+/// within the session timeout period.
 #[derive(Debug)]
 pub struct DelayedHeartbeat {
+    /// Reference to the group coordinator
     group_cordinator: Arc<GroupCoordinator>,
+    /// Reference to the group metadata
     group: Arc<RwLock<GroupMetadata>>,
+    /// Deadline by which the next heartbeat must be received
     heartbeat_deadline: Instant,
+    /// Session timeout period
     session_timeout: u64,
+    /// ID of the member being monitored
     member_id: String,
 }
+
 impl DelayedHeartbeat {
+    /// Creates a new delayed heartbeat operation
+    ///
+    /// # Arguments
+    /// * `group_cordinator` - Reference to the group coordinator
+    /// * `group` - Reference to the group metadata
+    /// * `heartbeat_deadline` - Deadline by which the next heartbeat must be received
+    /// * `member_id` - ID of the member being monitored
+    /// * `session_timeout` - Session timeout period
     pub fn new(
         group_cordinator: Arc<GroupCoordinator>,
         group: Arc<RwLock<GroupMetadata>>,
@@ -163,6 +216,7 @@ impl DelayedHeartbeat {
         }
     }
 }
+
 impl DelayedAsyncOperation for DelayedHeartbeat {
     fn delay_ms(&self) -> u64 {
         self.session_timeout

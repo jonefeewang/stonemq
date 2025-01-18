@@ -75,7 +75,6 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-# fake = "2.9.2"
 tempfile = "3"
 rstest = "0.22.0"
 

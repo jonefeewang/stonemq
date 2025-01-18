@@ -1,3 +1,6 @@
+/// Module for managing consumer group metadata.
+/// This includes functionality for group member management, protocol selection,
+/// and state transitions.
 use std::collections::HashMap;
 use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
@@ -11,8 +14,12 @@ use crate::request::KafkaResult;
 use super::GroupMetadata;
 use super::GroupState;
 use super::MemberMetadata;
+
 impl GroupMetadata {
-    /// create new group metadata
+    /// Creates a new group metadata instance
+    ///
+    /// # Arguments
+    /// * `group_id` - The unique identifier for the group
     pub fn new(group_id: impl Into<String>) -> Self {
         Self {
             id: group_id.into(),
@@ -26,7 +33,14 @@ impl GroupMetadata {
         }
     }
 
-    /// add new member
+    /// Adds a new member to the group
+    ///
+    /// If this is the first member:
+    /// - Sets the group's protocol type
+    /// - Makes this member the leader
+    ///
+    /// # Arguments
+    /// * `member` - The member metadata to add
     pub fn add_member(&mut self, member: MemberMetadata) {
         if self.members.is_empty() {
             self.protocol_type = Some(member.protocol_type.clone());
@@ -38,7 +52,16 @@ impl GroupMetadata {
         self.members.insert(member.id.clone(), member);
     }
 
-    /// remove member
+    /// Removes a member from the group
+    ///
+    /// If the removed member was the leader, selects a new leader
+    /// from the remaining members.
+    ///
+    /// # Arguments
+    /// * `member_id` - ID of the member to remove
+    ///
+    /// # Returns
+    /// The removed member's metadata if found
     pub fn remove_member(&mut self, member_id: &str) -> Option<MemberMetadata> {
         let removed_member = self.members.remove(member_id);
         if member_id == self.leader_id.as_deref().unwrap() {
@@ -47,17 +70,29 @@ impl GroupMetadata {
         removed_member
     }
 
-    /// check if the group contains the specified member
+    /// Checks if a member exists in the group
+    ///
+    /// # Arguments
+    /// * `member_id` - ID of the member to check
+    ///
+    /// # Returns
+    /// `true` if the member exists, `false` otherwise
     pub fn has_member(&self, member_id: &str) -> bool {
         self.members.contains_key(member_id)
     }
 
-    /// get all members' mutable references
+    /// Gets mutable references to all members in the group
+    ///
+    /// # Returns
+    /// Vector of mutable references to member metadata
     pub fn members(&mut self) -> Vec<&mut MemberMetadata> {
         self.members.values_mut().collect()
     }
 
-    /// get the maximum rebalance timeout for the group
+    /// Gets the maximum rebalance timeout among all members
+    ///
+    /// # Returns
+    /// The maximum rebalance timeout in milliseconds
     pub fn max_rebalance_timeout(&self) -> i32 {
         self.members
             .values()
@@ -66,7 +101,10 @@ impl GroupMetadata {
             .unwrap_or(0)
     }
 
-    /// get the metadata of the current member that matches the group's selected protocol
+    /// Gets the metadata of current members that match the group's selected protocol
+    ///
+    /// # Returns
+    /// Map of member IDs to their metadata bytes
     pub fn current_member_metadata(&self) -> BTreeMap<String, Bytes> {
         self.members
             .iter()
@@ -79,7 +117,11 @@ impl GroupMetadata {
             .collect()
     }
 
-    /// select a protocol for the group
+    /// Selects a protocol for the group based on member votes
+    ///
+    /// # Returns
+    /// * `Ok(String)` - The selected protocol name
+    /// * `Err(KafkaError)` - If no common protocol can be found
     pub fn select_protocol(&self) -> Result<String, KafkaError> {
         let candidates = self.candidate_protocols();
         if candidates.is_empty() {
@@ -104,7 +146,10 @@ impl GroupMetadata {
             .ok_or_else(|| KafkaError::InconsistentGroupProtocol("No protocol selected".into()))
     }
 
-    /// get the protocols supported by all members
+    /// Gets the set of protocols supported by all members
+    ///
+    /// # Returns
+    /// Set of protocol names supported by all members
     fn candidate_protocols(&self) -> HashSet<String> {
         self.members
             .values()
@@ -116,12 +161,21 @@ impl GroupMetadata {
             .unwrap_or_default()
     }
 
-    /// check if the group supports the given protocol list
+    /// Checks if the group supports any of the given protocols
+    ///
+    /// # Arguments
+    /// * `protocols` - Set of protocol names to check
+    ///
+    /// # Returns
+    /// `true` if the group supports any of the protocols, `false` otherwise
     pub fn is_support_protocols(&self, protocols: &HashSet<String>) -> bool {
         self.members.is_empty() || self.candidate_protocols().intersection(protocols).count() > 0
     }
 
-    /// get the members that have not yet rejoined
+    /// Gets the list of members that have not yet rejoined the group
+    ///
+    /// # Returns
+    /// Vector of member IDs that have not rejoined
     pub fn not_yet_rejoined_members(&self) -> Vec<String> {
         self.members
             .values()
@@ -130,7 +184,7 @@ impl GroupMetadata {
             .collect()
     }
 
-    /// cancel all members' assignment
+    /// Cancels the partition assignments for all members
     #[allow(dead_code)]
     pub fn cancel_all_member_assignment(&mut self) {
         self.members.values_mut().for_each(|member| {
@@ -138,6 +192,11 @@ impl GroupMetadata {
         });
     }
 
+    /// Serializes the group metadata to bytes
+    ///
+    /// # Returns
+    /// * `Ok(Bytes)` - The serialized metadata
+    /// * `Err(KafkaError)` - If serialization fails
     pub fn serialize(&self) -> KafkaResult<Bytes> {
         let mut buffer = BytesMut::new();
 
@@ -180,6 +239,15 @@ impl GroupMetadata {
         Ok(buffer.freeze())
     }
 
+    /// Deserializes group metadata from bytes
+    ///
+    /// # Arguments
+    /// * `data` - The serialized metadata bytes
+    /// * `group_id` - The group ID
+    ///
+    /// # Returns
+    /// * `Ok(GroupMetadata)` - The deserialized metadata
+    /// * `Err(KafkaError)` - If deserialization fails
     pub fn deserialize(data: &[u8], group_id: &str) -> KafkaResult<Self> {
         let mut cursor = std::io::Cursor::new(data);
 
@@ -191,7 +259,7 @@ impl GroupMetadata {
             let mut protocol_type_bytes = vec![0; protocol_type_len as usize];
             cursor.read_exact(&mut protocol_type_bytes).unwrap();
             Some(String::from_utf8(protocol_type_bytes).map_err(|e| {
-                KafkaError::CoordinatorNotAvailable(format!("无法解析protocol_type: {}", e))
+                KafkaError::CoordinatorNotAvailable(format!("Failed to parse protocol_type: {}", e))
             })?)
         };
 
@@ -206,7 +274,7 @@ impl GroupMetadata {
             let mut protocol_bytes = vec![0; protocol_len as usize];
             cursor.read_exact(&mut protocol_bytes).unwrap();
             Some(String::from_utf8(protocol_bytes).map_err(|e| {
-                KafkaError::CoordinatorNotAvailable(format!("无法解析protocol: {}", e))
+                KafkaError::CoordinatorNotAvailable(format!("Failed to parse protocol: {}", e))
             })?)
         };
 
@@ -218,7 +286,7 @@ impl GroupMetadata {
             let mut leader_id_bytes = vec![0; leader_id_len as usize];
             cursor.read_exact(&mut leader_id_bytes).unwrap();
             Some(String::from_utf8(leader_id_bytes).map_err(|e| {
-                KafkaError::CoordinatorNotAvailable(format!("无法解析leader_id: {}", e))
+                KafkaError::CoordinatorNotAvailable(format!("Failed to parse leader_id: {}", e))
             })?)
         };
 
@@ -242,10 +310,10 @@ impl GroupMetadata {
 
         Ok(Self {
             id: group_id.to_string(),
-            protocol_type: protocol_type.clone(),
+            protocol_type,
             generation_id,
-            protocol: protocol.clone(),
-            leader_id: leader_id.clone(),
+            protocol,
+            leader_id,
             members,
             state: GroupState::Stable,
             new_member_added: false,

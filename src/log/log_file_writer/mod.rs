@@ -1,4 +1,18 @@
-//! Log file writer module for handling journal and queue logs.
+//! Log File Writer Module
+//!
+//! This module provides a high-performance, asynchronous log file writing system for handling both journal
+//! and queue logs in a message queue system. It implements a specialized architecture to handle the
+//! challenges of async Rust and file I/O operations efficiently.
+//!
+//! # Architecture
+//!
+//! The module uses a worker pool pattern to manage active log segments, with the following key components:
+//!
+//! * `ActiveSegmentWriter`: Central manager for all active log segments, using a worker pool pattern
+//! * `SegmentLog`: Handles individual log segment operations
+//! * `FileWriteRequest`: Represents different types of write operations (journal, queue, flush)
+//!
+//! # Design Considerations
 //!
 //! In async Rust, it is not possible to hold a `MutexGuard` across an `.await`. As a result,
 //! the log segment is split into an index file and a log segment. Operations on the index file are
@@ -7,6 +21,17 @@
 //! need for each log to initiate its own channel. This design eliminates the necessity of acquiring a
 //! log segment lock before performing asynchronous file write or flush operations in Journal logs or
 //! Queue logs. An async channel must be used here to prevent blocking the Tokio runtime.
+//!
+//! # Components
+//!
+//! * `active_segment_writer`: Manages active segment writers for different topic partitions
+//! * `log_request`: Defines various types of log write requests
+//! * `segment_log`: Implements the core log segment functionality
+//!
+//! # Global Instance
+//!
+//! The module provides a global instance of `ActiveSegmentWriter` through `ACTIVE_SEGMENT_WRITER`,
+//! which can be initialized once and accessed throughout the application.
 
 mod active_segment_writer;
 mod log_request;

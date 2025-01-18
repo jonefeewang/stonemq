@@ -1,3 +1,25 @@
+//! Log Manager Loading Implementation
+//!
+//! This module implements the log loading and initialization functionality for the LogManager.
+//! It handles loading both journal and queue logs from disk, including recovery from checkpoints
+//! and creation of new logs when necessary.
+//!
+//! # Loading Process
+//!
+//! The loading process involves:
+//! 1. Reading checkpoint files to determine recovery points
+//! 2. Scanning log directories for existing logs
+//! 3. Initializing log structures with appropriate recovery offsets
+//! 4. Creating new logs when requested but not found
+//!
+//! # Error Handling
+//!
+//! The module provides detailed error handling for various failure scenarios:
+//! - Missing directories
+//! - Invalid log formats
+//! - Corrupted checkpoint files
+//! - I/O errors during loading
+
 use std::{path::PathBuf, sync::Arc};
 
 use dashmap::Entry;
@@ -12,6 +34,25 @@ use crate::{
 use super::LogManager;
 
 impl LogManager {
+    /// Loads all journal logs from the configured journal log directory.
+    ///
+    /// This method scans the journal log directory and loads all valid journal logs,
+    /// applying recovery checkpoints and split points as necessary.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_file_max_size` - Maximum size for index files in bytes
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Vec<(TopicPartition, Arc<JournalLog>)>>` - List of loaded journal logs
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Journal log directory doesn't exist
+    /// - Directory scanning fails
+    /// - Log loading fails
     pub fn load_journal_logs(
         &self,
         index_file_max_size: u32,
@@ -35,6 +76,20 @@ impl LogManager {
         Ok(logs)
     }
 
+    /// Internal implementation for loading journal logs.
+    ///
+    /// Handles the actual loading process including:
+    /// 1. Reading recovery and split checkpoints
+    /// 2. Scanning directory for log files
+    /// 3. Initializing journal logs with appropriate offsets
+    ///
+    /// # Arguments
+    ///
+    /// * `index_file_max_size` - Maximum size for index files
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Vec<(TopicPartition, Arc<JournalLog>)>>` - List of loaded logs
     fn do_load_journal_log(
         &self,
         index_file_max_size: u32,
@@ -82,6 +137,25 @@ impl LogManager {
         Ok(logs)
     }
 
+    /// Loads all queue logs from the configured queue log directory.
+    ///
+    /// Similar to journal log loading, but specifically for queue logs.
+    /// Applies recovery checkpoints during the loading process.
+    ///
+    /// # Arguments
+    ///
+    /// * `index_file_max_size` - Maximum size for index files in bytes
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Vec<(TopicPartition, Arc<QueueLog>)>>` - List of loaded queue logs
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Queue log directory doesn't exist
+    /// - Directory scanning fails
+    /// - Log loading fails
     pub fn load_queue_logs(
         &self,
         index_file_max_size: u32,
@@ -105,6 +179,20 @@ impl LogManager {
         Ok(logs)
     }
 
+    /// Internal implementation for loading queue logs.
+    ///
+    /// Handles the actual loading process including:
+    /// 1. Reading recovery checkpoints
+    /// 2. Scanning directory for log files
+    /// 3. Initializing queue logs with appropriate offsets
+    ///
+    /// # Arguments
+    ///
+    /// * `index_file_max_size` - Maximum size for index files
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Vec<(TopicPartition, Arc<QueueLog>)>>` - List of loaded logs
     fn do_load_queue_logs(
         &self,
         index_file_max_size: u32,
@@ -142,6 +230,18 @@ impl LogManager {
         Ok(logs)
     }
 
+    /// Gets an existing journal log or creates a new one for the specified topic partition.
+    ///
+    /// This method provides thread-safe access to journal logs, creating new ones
+    /// when necessary and ensuring only one instance exists per topic partition.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition to get or create a log for
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Arc<JournalLog>>` - The journal log instance
     pub fn get_or_create_journal_log(
         &self,
         topic_partition: &TopicPartition,
@@ -162,6 +262,19 @@ impl LogManager {
             }
         }
     }
+
+    /// Gets an existing queue log or creates a new one for the specified topic partition.
+    ///
+    /// Similar to journal log creation, but for queue logs. Ensures thread-safe
+    /// access and singleton instances per topic partition.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition to get or create a log for
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<Arc<QueueLog>>` - The queue log instance
     pub fn get_or_create_queue_log(
         &self,
         topic_partition: &TopicPartition,

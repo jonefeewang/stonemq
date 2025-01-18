@@ -1,6 +1,34 @@
-use std::{fs::File, sync::atomic::Ordering};
+//! Queue Log Reading Implementation
+//!
+//! This module implements the reading functionality for queue logs. It provides
+//! methods for reading records from log segments, handling offsets, and managing
+//! read positions.
+//!
+//! # Reading Process
+//!
+//! The reading process involves several steps:
+//! 1. Finding the correct segment for a given offset
+//! 2. Seeking to the correct position within the segment
+//! 3. Reading records up to the requested size
+//! 4. Handling segment boundaries and transitions
+//!
+//! # Position Management
+//!
+//! The module maintains several types of positions:
+//! - Physical file positions
+//! - Logical offsets
+//! - Segment base offsets
+//!
+//! # Performance Considerations
+//!
+//! Reading is optimized through:
+//! - Buffered reading
+//! - Position caching
+//! - Efficient segment lookup
+
 use std::io::Read;
 use std::path::PathBuf;
+use std::{fs::File, sync::atomic::Ordering};
 
 use bytes::BytesMut;
 use tracing::{debug, trace};
@@ -16,21 +44,45 @@ use crate::{
 
 use super::QueueLog;
 
-/// read config
+/// Configuration for reading records from a queue log.
+///
+/// Controls various aspects of the read operation including:
+/// - Maximum position to read to
+/// - Target offset position to start from
+/// - Maximum size of data to read
 #[derive(Debug, Clone)]
 struct ReadConfig {
+    /// Maximum position that can be read up to
     max_position: u64,
+    /// Target position to start reading from
     target_offset_position: u64,
+    /// Maximum size of data to read in bytes
     max_size: i32,
 }
 
 impl QueueLog {
-    /// get recover point offset
+    /// Gets the current recovery point offset.
+    ///
+    /// The recovery point represents the last known good offset
+    /// that has been fully written and can be safely read.
+    ///
+    /// # Returns
+    ///
+    /// The current recovery point offset
     pub fn get_recover_point(&self) -> i64 {
         self.recover_point.load(Ordering::Acquire)
     }
 
-    /// get LEO(Log End Offset) info
+    /// Gets the Log End Offset (LEO) information.
+    ///
+    /// Returns information about the current end of the log including:
+    /// - Base offset of the active segment
+    /// - Last offset in the log
+    /// - Physical position in the active segment
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<PositionInfo>` - Position information for the log end
     pub fn get_leo_info(&self) -> AppResult<PositionInfo> {
         let active_seg_size =
             get_active_segment_writer().active_segment_size(&self.topic_partition);
@@ -42,7 +94,17 @@ impl QueueLog {
         })
     }
 
-    /// get position info for offset
+    /// Gets position information for a specific offset.
+    ///
+    /// Finds the segment containing the offset and returns its position information.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The offset to get position information for
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<PositionInfo>` - Position information for the offset
     pub fn get_reference_position_info(&self, offset: i64) -> AppResult<PositionInfo> {
         debug!("get_reference_position_info: {}", offset);
         let base_offset = self.find_segment_for_offset(offset)?;
@@ -50,7 +112,18 @@ impl QueueLog {
         self.get_segment_position(base_offset, offset)
     }
 
-    /// find segment for offset
+    /// Finds the appropriate segment for a given offset.
+    ///
+    /// Searches through segments in reverse order to find the segment
+    /// containing the specified offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The offset to find a segment for
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<i64>` - Base offset of the containing segment
     fn find_segment_for_offset(&self, offset: i64) -> AppResult<i64> {
         self.segments_order
             .read()
@@ -63,7 +136,19 @@ impl QueueLog {
             })
     }
 
-    /// get segment position info
+    /// Gets position information within a specific segment.
+    ///
+    /// Handles both active and read-only segments to find the exact
+    /// position for a given offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_offset` - Base offset of the segment
+    /// * `offset` - Target offset to get position for
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<PositionInfo>` - Position information within the segment
     fn get_segment_position(&self, base_offset: i64, offset: i64) -> AppResult<PositionInfo> {
         debug!("get_segment_position: {} {}", base_offset, offset);
         if base_offset == self.active_segment_id.load(Ordering::Acquire) {
@@ -80,7 +165,23 @@ impl QueueLog {
         }
     }
 
-    /// read records
+    /// Reads records from the log starting at a specific offset.
+    ///
+    /// This is the main entry point for reading records. It handles:
+    /// 1. Finding the correct segment
+    /// 2. Seeking to the right position
+    /// 3. Reading up to the specified size
+    /// 4. Handling end of segments
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - The topic partition to read from
+    /// * `start_offset` - Offset to start reading from
+    /// * `max_size` - Maximum number of bytes to read
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<LogFetchInfo>` - Fetched records and metadata
     pub async fn read_records(
         &self,
         topic_partition: &TopicPartition,
@@ -134,7 +235,18 @@ impl QueueLog {
             .await
     }
 
-    /// open segment file
+    /// Opens a segment file for reading.
+    ///
+    /// Creates a file handle for the segment containing the specified position.
+    ///
+    /// # Arguments
+    ///
+    /// * `topic_partition` - Topic partition of the segment
+    /// * `position_info` - Position information for the segment
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<File>` - Opened file handle
     fn open_segment_file(
         &self,
         topic_partition: &TopicPartition,
@@ -152,7 +264,19 @@ impl QueueLog {
         })
     }
 
-    /// seek to position
+    /// Seeks to a specific position within a segment file.
+    ///
+    /// Positions the file cursor at the correct location for reading.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - File handle to seek within
+    /// * `start_offset` - Target offset to seek to
+    /// * `position_info` - Position information for seeking
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<(File, PositionInfo)>` - Updated file and position
     async fn seek_to_position(
         &self,
         file: File,
@@ -164,7 +288,22 @@ impl QueueLog {
             .map_err(|e| AppError::DetailedIoError(format!("Failed to seek to position: {}", e)))
     }
 
-    /// calculate read config
+    /// Calculates configuration for a read operation.
+    ///
+    /// Determines read boundaries and limits based on:
+    /// - Segment boundaries
+    /// - Maximum read size
+    /// - Current position
+    ///
+    /// # Arguments
+    ///
+    /// * `position_info` - Current position information
+    /// * `target_position` - Target position to read from
+    /// * `max_size` - Maximum size to read
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<ReadConfig>` - Calculated read configuration
     fn calculate_read_config(
         &self,
         position_info: &PositionInfo,
@@ -180,8 +319,19 @@ impl QueueLog {
         })
     }
 
-    /// calculate max read size
-    /// active segment can read to size, inactive segment can read to segment_size
+    /// Calculates the maximum readable size for a segment.
+    ///
+    /// Handles different size calculations for:
+    /// - Active segments (up to current write position)
+    /// - Read-only segments (entire segment size)
+    ///
+    /// # Arguments
+    ///
+    /// * `base_offset` - Base offset of the segment
+    ///
+    /// # Returns
+    ///
+    /// Maximum number of bytes that can be read
     fn calc_max_read_size(&self, base_offset: i64) -> usize {
         let segments = self.segments_order.read();
         segments
@@ -198,7 +348,23 @@ impl QueueLog {
             .unwrap()
     }
 
-    /// do read records
+    /// Performs the actual reading of records from a file.
+    ///
+    /// Handles the low-level reading operation including:
+    /// - Respecting size limits
+    /// - Creating record batches
+    /// - Collecting metadata
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - File to read from
+    /// * `topic_partition` - Topic partition being read
+    /// * `config` - Read configuration
+    /// * `target_position_info` - Target position information
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<LogFetchInfo>` - Read records and metadata
     async fn do_read_records(
         &self,
         file: File,
@@ -246,7 +412,18 @@ impl QueueLog {
         })
     }
 
-    /// read file chunk
+    /// Reads a chunk of data from a file.
+    ///
+    /// Performs the actual I/O operation to read bytes from disk.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - File to read from
+    /// * `size` - Number of bytes to read
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<BytesMut>` - Read bytes
     async fn read_file_chunk(&self, mut file: File, size: usize) -> AppResult<BytesMut> {
         tokio::task::spawn_blocking(move || {
             let mut buffer = BytesMut::zeroed(size);

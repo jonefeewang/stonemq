@@ -1,3 +1,5 @@
+/// Module for managing individual consumer group member metadata.
+/// This includes member state, protocol support, assignments, and heartbeat tracking.
 use std::collections::HashSet;
 use std::io::Read;
 
@@ -18,7 +20,17 @@ use crate::request::ProtocolMetadata;
 use crate::request::SyncGroupResponse;
 
 impl MemberMetadata {
-    /// 创建新的成员元数据
+    /// Creates a new member metadata instance
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for the member
+    /// * `client_id` - Client application identifier
+    /// * `client_host` - Host address of the client
+    /// * `group_id` - ID of the group this member belongs to
+    /// * `rebalance_timeout` - Maximum time to wait for rebalance completion
+    /// * `session_timeout` - Time after which member is considered dead
+    /// * `protocol_type` - Type of protocol used by this member
+    /// * `supported_protocols` - List of protocols supported by this member
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: impl Into<String>,
@@ -50,7 +62,10 @@ impl MemberMetadata {
         }
     }
 
-    /// 更新支持的协议列表
+    /// Updates the list of protocols supported by this member
+    ///
+    /// # Arguments
+    /// * `protocols` - New list of supported protocols with their metadata
     pub fn update_supported_protocols(&mut self, protocols: Vec<ProtocolMetadata>) {
         self.supported_protocols = protocols
             .into_iter()
@@ -61,7 +76,13 @@ impl MemberMetadata {
             .collect();
     }
 
-    /// 检查提供的协议元数据是否与当前存储的元数据匹配
+    /// Checks if the provided protocol metadata matches the currently stored metadata
+    ///
+    /// # Arguments
+    /// * `protocols` - List of protocols to check against
+    ///
+    /// # Returns
+    /// `true` if the protocols match, `false` otherwise
     pub fn protocol_matches(&self, protocols: &[ProtocolMetadata]) -> bool {
         if protocols.len() != self.supported_protocols.len() {
             return false;
@@ -73,7 +94,10 @@ impl MemberMetadata {
         })
     }
 
-    /// 获取支持的协议名称集合
+    /// Gets the set of protocol names supported by this member
+    ///
+    /// # Returns
+    /// Set of supported protocol names
     pub fn protocols(&self) -> HashSet<String> {
         self.supported_protocols
             .iter()
@@ -81,7 +105,13 @@ impl MemberMetadata {
             .collect()
     }
 
-    /// 对候选协议进行投票
+    /// Votes for a protocol from the candidate set
+    ///
+    /// # Arguments
+    /// * `candidates` - Set of candidate protocol names
+    ///
+    /// # Returns
+    /// The selected protocol name
     pub fn vote(&self, candidates: &HashSet<String>) -> String {
         self.protocols()
             .intersection(candidates)
@@ -90,11 +120,18 @@ impl MemberMetadata {
             .unwrap_or_default()
     }
 
-    // Getters
+    /// Gets the member's ID
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    /// Gets the metadata for a specific protocol
+    ///
+    /// # Arguments
+    /// * `protocol` - Name of the protocol
+    ///
+    /// # Returns
+    /// The protocol metadata if found
     pub fn metadata(&self, protocol: &str) -> Option<Bytes> {
         self.supported_protocols
             .iter()
@@ -102,62 +139,79 @@ impl MemberMetadata {
             .map(|p| p.metadata.clone())
     }
 
-    // Assignment 相关方法
+    /// Gets the current partition assignment
     pub fn assignment(&self) -> Option<Bytes> {
         self.assignment.clone()
     }
 
+    /// Sets the partition assignment
     pub fn set_assignment(&mut self, assignment: Bytes) {
         self.assignment = Some(assignment);
     }
 
-    // Callback channel 相关方法
+    /// Sets the callback channel for join group response
     pub fn set_join_group_callback(&mut self, tx: oneshot::Sender<JoinGroupResult>) {
         self.join_group_cb_sender = Some(tx);
     }
 
+    /// Takes and returns the join group callback channel
     pub fn take_join_group_callback(&mut self) -> oneshot::Sender<JoinGroupResult> {
         self.join_group_cb_sender.take().unwrap()
     }
 
+    /// Sets the callback channel for sync group response
     pub fn set_sync_group_callback(&mut self, tx: oneshot::Sender<SyncGroupResponse>) {
         self.sync_group_cb_sender = Some(tx);
     }
 
+    /// Takes and returns the sync group callback channel if present
     pub fn take_sync_group_callback(&mut self) -> Option<oneshot::Sender<SyncGroupResponse>> {
         self.sync_group_cb_sender.take()
     }
 
-    // Heartbeat 相关方法
+    /// Gets the timestamp of the last heartbeat
     pub fn last_heartbeat(&self) -> Instant {
         self.last_heartbeat
     }
 
+    /// Updates the last heartbeat timestamp to now
     pub fn update_heartbeat(&mut self) {
         self.last_heartbeat = Instant::now();
     }
 
-    // 状态检查方法
+    /// Gets the session timeout value
     pub fn session_timeout(&self) -> i32 {
         self.session_timeout
     }
 
+    /// Checks if the member is waiting for join group response
     pub fn is_awaiting_join(&self) -> bool {
         self.join_group_cb_sender.is_some()
     }
 
+    /// Checks if the member is waiting for sync group response
     pub fn is_awaiting_sync(&self) -> bool {
         self.sync_group_cb_sender.is_some()
     }
 
+    /// Checks if the member is in the process of leaving
     pub fn is_leaving(&self) -> bool {
         self.is_leaving
     }
 
+    /// Marks the member as leaving the group
     pub fn set_leaving(&mut self) {
         self.is_leaving = true;
     }
 
+    /// Serializes the member metadata to bytes
+    ///
+    /// # Arguments
+    /// * `group_protocol` - The protocol selected by the group
+    ///
+    /// # Returns
+    /// * `Ok(Bytes)` - The serialized metadata
+    /// * `Err(KafkaError)` - If serialization fails
     pub fn serialize(&self, group_protocol: &str) -> KafkaResult<Bytes> {
         let mut buffer = BytesMut::new();
         // id - string
@@ -182,7 +236,7 @@ impl MemberMetadata {
         }
         // assignment
         if let Some(assignment) = self.assignment() {
-            buffer.put_i32(assignment.len() as i32); // 修改为i32以匹配反序列化
+            buffer.put_i32(assignment.len() as i32);
             buffer.put(assignment);
         } else {
             buffer.put_i32(-1);
@@ -190,11 +244,23 @@ impl MemberMetadata {
 
         Ok(buffer.freeze())
     }
+
+    /// Deserializes member metadata from bytes
+    ///
+    /// # Arguments
+    /// * `data` - The serialized metadata bytes
+    /// * `group_id` - ID of the group
+    /// * `protocol_type` - Type of protocol used by the group
+    /// * `protocol` - Protocol selected by the group
+    ///
+    /// # Returns
+    /// * `Ok(MemberMetadata)` - The deserialized metadata
+    /// * `Err(KafkaError)` - If deserialization fails
     pub fn deserialize(
         data: &[u8],
         group_id: &str,
-        protocol_type: &String,
-        protocol: &String,
+        protocol_type: &str,
+        protocol: &str,
     ) -> KafkaResult<Self> {
         let mut cursor = std::io::Cursor::new(data);
 
@@ -202,15 +268,16 @@ impl MemberMetadata {
         let id_len = cursor.get_u32() as usize;
         let mut id_bytes = vec![0; id_len];
         cursor.read_exact(&mut id_bytes).unwrap();
-        let id = String::from_utf8(id_bytes)
-            .map_err(|e| KafkaError::CoordinatorNotAvailable(format!("无法解析id: {}", e)))?;
+        let id = String::from_utf8(id_bytes).map_err(|e| {
+            KafkaError::CoordinatorNotAvailable(format!("Failed to parse id: {}", e))
+        })?;
 
         // client_id - string
         let client_id_len = cursor.get_u32() as usize;
         let mut client_id_bytes = vec![0; client_id_len];
         cursor.read_exact(&mut client_id_bytes).unwrap();
         let client_id = String::from_utf8(client_id_bytes).map_err(|e| {
-            KafkaError::CoordinatorNotAvailable(format!("无法解析client_id: {}", e))
+            KafkaError::CoordinatorNotAvailable(format!("Failed to parse client_id: {}", e))
         })?;
 
         // client_host - string
@@ -218,7 +285,7 @@ impl MemberMetadata {
         let mut client_host_bytes = vec![0; client_host_len];
         cursor.read_exact(&mut client_host_bytes).unwrap();
         let client_host = String::from_utf8(client_host_bytes).map_err(|e| {
-            KafkaError::CoordinatorNotAvailable(format!("无法解析client_host: {}", e))
+            KafkaError::CoordinatorNotAvailable(format!("Failed to parse client_host: {}", e))
         })?;
 
         // session_timeout - int32
@@ -237,7 +304,7 @@ impl MemberMetadata {
         }
 
         // assignment
-        let assignment_len = cursor.get_i32(); // 修改为get_i32以匹配序列化
+        let assignment_len = cursor.get_i32();
         let mut assignment: Option<Bytes> = None;
         if assignment_len > 0 {
             let mut buf = vec![0; assignment_len as usize];
@@ -252,15 +319,11 @@ impl MemberMetadata {
             group_id,
             rebalance_timeout,
             session_timeout,
-            protocol_type,
-            vec![(protocol.to_string(), metadata.unwrap())],
+            protocol_type.to_string(),
+            vec![(protocol.to_string(), metadata.unwrap_or_default())],
         );
 
-        // 设置assignment
-        if let Some(assignment) = assignment {
-            member.set_assignment(assignment);
-        }
-
+        member.assignment = assignment;
         Ok(member)
     }
 }

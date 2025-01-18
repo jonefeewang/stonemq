@@ -1,3 +1,31 @@
+//! Queue Log Writing Implementation
+//!
+//! This module implements the writing functionality for queue logs. It handles
+//! appending records to segments, segment rolling, and maintaining write state.
+//!
+//! # Write Process
+//!
+//! The writing process involves several steps:
+//! 1. Checking if a new segment is needed
+//! 2. Rolling to a new segment if necessary
+//! 3. Updating segment metadata
+//! 4. Writing records to disk
+//! 5. Updating offsets and recovery points
+//!
+//! # Segment Management
+//!
+//! The module handles segment lifecycle:
+//! - Creating new segments when size limits are reached
+//! - Converting active segments to read-only
+//! - Maintaining segment metadata and indexes
+//!
+//! # Thread Safety
+//!
+//! Write operations are protected through:
+//! - Atomic operations for offset updates
+//! - Write locks for segment transitions
+//! - Coordinated access to active segments
+
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -15,17 +43,27 @@ use super::QueueLog;
 impl QueueLog {
     /// Appends records to the queue log.
     ///
+    /// This is the main entry point for writing records to the queue log.
+    /// The method handles the complete write process including:
+    /// - Segment rolling if needed
+    /// - Metadata updates
+    /// - Record writing
+    /// - Offset management
+    ///
     /// # Arguments
     ///
-    /// * `records` - A tuple containing the topic partition and memory records to append.
+    /// * `journal_records_batch` - Batch of records from the journal to append
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing `LogAppendInfo` on success.
+    /// * `AppResult<LogAppendInfo>` - Information about the append operation
     ///
-    /// # Performance
+    /// # Concurrency
     ///
-    /// This method acquires a write lock on the entire log, which may impact concurrent operations.
+    /// This operation is thread-safe but may block other writers while:
+    /// - Rolling segments
+    /// - Updating metadata
+    /// - Writing records
     pub async fn append_records(
         &self,
         journal_records_batch: JournalRecordsBatch,
@@ -74,7 +112,20 @@ impl QueueLog {
         Ok(log_append_info)
     }
 
-    /// check if need roll new segment
+    /// Checks if a new segment should be created.
+    ///
+    /// Evaluates segment rolling criteria including:
+    /// - Current segment size vs maximum
+    /// - Index fullness
+    /// - Incoming record size
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_records` - Records to be written
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<bool>` - True if new segment needed
     async fn should_roll_segment(&self, memory_records: &MemoryRecords) -> AppResult<bool> {
         let active_seg_size =
             get_active_segment_writer().active_segment_size(&self.topic_partition);
@@ -88,7 +139,23 @@ impl QueueLog {
         ))
     }
 
-    /// roll new segment
+    /// Creates and switches to a new segment.
+    ///
+    /// This operation involves:
+    /// 1. Flushing current segment
+    /// 2. Creating new segment files
+    /// 3. Updating segment references
+    /// 4. Converting old segment to read-only
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if segment roll completes
+    ///
+    /// # State Changes
+    ///
+    /// - Creates new active segment
+    /// - Converts current segment to read-only
+    /// - Updates segment maps and orders
     async fn roll_new_segment(&self) -> AppResult<()> {
         let new_base_offset = self.last_offset.load(Ordering::Acquire) + 1;
 
@@ -130,7 +197,22 @@ impl QueueLog {
         Ok(())
     }
 
-    /// create log append info
+    /// Creates append information for the log operation.
+    ///
+    /// Generates metadata about the append operation including:
+    /// - First and last offsets
+    /// - Record counts
+    /// - Timestamps
+    ///
+    /// # Arguments
+    ///
+    /// * `first_batch_queue_base_offset` - First offset in the batch
+    /// * `last_batch_queue_base_offset` - Last offset in the batch
+    /// * `records_count` - Number of records in the batch
+    ///
+    /// # Returns
+    ///
+    /// Information about the append operation
     fn create_log_append_info(
         &self,
         first_batch_queue_base_offset: i64,
@@ -147,7 +229,21 @@ impl QueueLog {
         }
     }
 
-    /// update active segment metadata
+    /// Updates metadata for the active segment.
+    ///
+    /// Maintains index information including:
+    /// - Offset mappings
+    /// - Size information
+    /// - Position tracking
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_records` - Records being written
+    /// * `first_offset` - First offset in the batch
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if metadata updates
     fn update_active_segment_metadata(
         &self,
         memory_records: &MemoryRecords,
@@ -163,7 +259,20 @@ impl QueueLog {
         )
     }
 
-    /// execute write operation
+    /// Performs the actual write operation to disk.
+    ///
+    /// Handles the low-level write operation including:
+    /// - Creating write request
+    /// - Sending to segment writer
+    /// - Handling write errors
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_records` - Records to write
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if write completes
     async fn execute_write_operation(&self, memory_records: MemoryRecords) -> AppResult<()> {
         let queue_log_write_op = QueueFileWriteReq {
             topic_partition: self.topic_partition.clone(),
@@ -175,12 +284,31 @@ impl QueueLog {
             .await
     }
 
-    /// update last offset
+    /// Updates the last offset after a successful write.
+    ///
+    /// Atomically updates the last offset based on:
+    /// - First offset in batch
+    /// - Number of records written
+    ///
+    /// # Arguments
+    ///
+    /// * `first_offset` - First offset in the batch
+    /// * `records_count` - Number of records written
     fn update_last_offset(&self, first_offset: i64, records_count: u32) {
         self.last_offset
             .store(first_offset + records_count as i64 - 1, Ordering::Release);
     }
 
+    /// Closes the queue log, ensuring all data is flushed.
+    ///
+    /// Performs cleanup operations:
+    /// 1. Closes active segment index
+    /// 2. Flushes pending writes
+    /// 3. Updates recovery point
+    ///
+    /// # Returns
+    ///
+    /// * `AppResult<()>` - Success if close completes
     pub async fn close(&self) -> AppResult<()> {
         self.active_segment_index.write().close()?;
 
@@ -194,18 +322,22 @@ impl QueueLog {
         Ok(())
     }
 
-    /// Determines if a new segment roll is needed.
+    /// Determines if a new segment should be created.
+    ///
+    /// Evaluates multiple criteria:
+    /// - Current segment size vs configured maximum
+    /// - Index capacity
+    /// - Incoming record size
     ///
     /// # Arguments
     ///
-    /// * `topic_partition` - The topic partition.
-    /// * `active_seg_size` - The size of the active segment.
-    /// * `memory_records` - The memory records to be appended.
-    /// * `active_segment_offset_index_full` - Whether the active segment's offset index is full.
+    /// * `active_seg_size` - Current size of active segment
+    /// * `memory_records` - Records to be written
+    /// * `active_segment_offset_index_full` - Whether index is full
     ///
     /// # Returns
     ///
-    /// Returns a boolean indicating whether a new segment roll is needed.
+    /// `true` if new segment needed, `false` otherwise
     fn need_roll(
         &self,
         active_seg_size: u64,

@@ -1,3 +1,6 @@
+/// Module for coordinating consumer group operations.
+/// This module handles group membership, rebalancing, heartbeats, and offset management.
+/// It implements the core group coordination logic similar to Kafka's group coordinator.
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{
@@ -32,18 +35,36 @@ use crate::{
 
 use super::delayed_join::{DelayedHeartbeat, DelayedJoin, InitialDelayedJoin};
 
+/// Coordinates consumer group operations including member management,
+/// group state transitions, and offset management.
 #[derive(Debug)]
 pub struct GroupCoordinator {
+    /// Whether the coordinator is active and can process requests
     active: AtomicBool,
+    /// Node information for this coordinator
     node: Node,
+    /// Configuration for group consumption
     group_config: GroupConsumeConfig,
+    /// Manager for group metadata persistence
     group_manager: GroupMetadataManager,
+    /// Handles delayed join operations
     delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedJoin>>,
+    /// Handles initial delayed join operations for new groups
     initial_delayed_join_purgatory: Arc<DelayedAsyncOperationPurgatory<InitialDelayedJoin>>,
+    /// Handles delayed heartbeat operations
     delayed_heartbeat_purgatory: Arc<DelayedAsyncOperationPurgatory<DelayedHeartbeat>>,
 }
 
 impl GroupCoordinator {
+    /// Creates a new GroupCoordinator instance
+    ///
+    /// # Arguments
+    /// * `node` - Node information for this coordinator
+    /// * `group_manager` - Manager for group metadata
+    /// * `group_config` - Configuration for group consumption
+    /// * `delayed_join_purgatory` - Handler for delayed joins
+    /// * `initial_delayed_join_purgatory` - Handler for initial delayed joins
+    /// * `delayed_heartbeat_purgatory` - Handler for delayed heartbeats
     async fn new(
         node: Node,
         group_manager: GroupMetadataManager,
@@ -62,6 +83,16 @@ impl GroupCoordinator {
             delayed_heartbeat_purgatory,
         }
     }
+
+    /// Starts up the group coordinator
+    ///
+    /// # Arguments
+    /// * `group_config` - Configuration for group consumption
+    /// * `notify_shutdown` - Channel for shutdown notifications
+    /// * `node` - Node information
+    ///
+    /// # Returns
+    /// A new GroupCoordinator instance
     pub async fn startup(
         group_config: GroupConsumeConfig,
         notify_shutdown: broadcast::Sender<()>,
@@ -104,11 +135,32 @@ impl GroupCoordinator {
         coordinator
     }
 
+    /// Handles a find coordinator request
+    ///
+    /// Currently always returns this node as the coordinator since
+    /// single-node operation is supported.
+    ///
+    /// # Arguments
+    /// * `request` - The find coordinator request
+    ///
+    /// # Returns
+    /// Response containing this node's information
     pub async fn find_coordinator(&self, _: FindCoordinatorRequest) -> FindCoordinatorResponse {
         // 因为stonemq目前支持单机，所以coordinator就是自身
         let response: FindCoordinatorResponse = self.node.clone().into();
         response
     }
+
+    /// Handles a join group request from a member
+    ///
+    /// Processes member joins, manages group state transitions, and
+    /// coordinates group rebalancing.
+    ///
+    /// # Arguments
+    /// * `request` - The join group request
+    ///
+    /// # Returns
+    /// Result containing join group response or error
     pub async fn handle_join_group(self: Arc<Self>, request: JoinGroupRequest) -> JoinGroupResult {
         // 检查请求是否合法
         if request.group_id.is_empty() {
@@ -139,6 +191,7 @@ impl GroupCoordinator {
             self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
         }
     }
+
     async fn do_join_group(
         self: &Arc<Self>,
         request: JoinGroupRequest,
@@ -625,6 +678,17 @@ impl GroupCoordinator {
         }
     }
 
+    /// Handles member heartbeat requests
+    ///
+    /// Validates member status and updates heartbeat timing.
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the group
+    /// * `member_id` - ID of the member
+    /// * `generation_id` - Current generation ID
+    ///
+    /// # Returns
+    /// Result indicating success or error
     pub async fn handle_heartbeat(
         self: Arc<Self>,
         group_id: &str,
@@ -695,6 +759,18 @@ impl GroupCoordinator {
         }
     }
 
+    /// Handles sync group requests
+    ///
+    /// Processes group assignments and transitions group to stable state.
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the group
+    /// * `member_id` - ID of the member
+    /// * `generation_id` - Current generation ID
+    /// * `group_assignment` - Map of member assignments
+    ///
+    /// # Returns
+    /// Result containing sync response or error
     pub async fn handle_sync_group(
         self: Arc<Self>,
         group_id: &str,
@@ -858,6 +934,16 @@ impl GroupCoordinator {
         }
     }
 
+    /// Handles member leave requests
+    ///
+    /// Removes member from group and triggers rebalance if needed.
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the group
+    /// * `member_id` - ID of the member
+    ///
+    /// # Returns
+    /// Result indicating success or error
     pub async fn handle_group_leave(
         self: Arc<Self>,
         group_id: &str,
@@ -889,6 +975,18 @@ impl GroupCoordinator {
         }
     }
 
+    /// Handles offset commit requests
+    ///
+    /// Stores consumer group offsets for partitions.
+    ///
+    /// # Arguments
+    /// * `group_id` - ID of the group
+    /// * `member_id` - ID of the member
+    /// * `generation_id` - Current generation ID
+    /// * `offsets` - Map of partition offsets to commit
+    ///
+    /// # Returns
+    /// Map of partition errors if any occurred
     pub async fn handle_commit_offsets(
         self: Arc<Self>,
         group_id: &str,
@@ -992,13 +1090,20 @@ impl GroupCoordinator {
     }
 }
 
+/// Result of a join group operation
 #[derive(Debug)]
 pub struct JoinGroupResult {
+    /// Map of member IDs to their metadata
     pub members: BTreeMap<String, Bytes>,
+    /// ID assigned to the member
     pub member_id: String,
+    /// Current generation ID of the group
     pub generation_id: i32,
+    /// Selected protocol for the group
     pub sub_protocol: String,
+    /// ID of the group leader
     pub leader_id: String,
+    /// Error code if any occurred
     pub error: ErrorCode,
 }
 

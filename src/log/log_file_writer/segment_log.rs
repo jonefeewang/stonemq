@@ -1,3 +1,30 @@
+//! Segment Log Implementation
+//!
+//! This module implements the core functionality for managing individual log segments.
+//! A segment log is a portion of a larger log file that handles both journal and queue writes.
+//! It provides efficient buffering and writing mechanisms to optimize I/O operations.
+//!
+//! # Design
+//!
+//! The segment log implementation uses a combination of:
+//! - Buffered writes to optimize I/O performance
+//! - Atomic counters to track write progress
+//! - Async I/O operations for actual disk writes
+//! - Separate tracking for received vs. written data
+//!
+//! # Components
+//!
+//! - `SegmentLog`: Main struct managing a single log segment
+//! - `WriteBuffer`: Internal buffer managing write operations
+//! - Atomic counters for thread-safe size tracking
+//!
+//! # Write Process
+//!
+//! 1. Data is received and tracked via `received_write`
+//! 2. Data is accumulated in `WriteBuffer`
+//! 3. When buffer is full or flush is triggered, data is written to disk
+//! 4. Successfully written data is tracked via `file_write`
+
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,14 +39,23 @@ use crate::message::TopicPartition;
 use super::log_request::{JournalFileWriteReq, QueueFileWriteReq};
 use super::WriteConfig;
 
-/// Represents a segment of a log file that handles both journal and queue writes
+/// Represents a segment of a log file that handles both journal and queue writes.
+///
+/// A SegmentLog manages a single segment file, providing buffered write operations
+/// and atomic tracking of write progress. It supports both journal and queue
+/// write operations with different formats and requirements.
 ///
 /// # Fields
 ///
-/// * `path` - Path to the segment file
-/// * `received_write` - Total amount of data received for writing
-/// * `acc_buffer` - Accumulation buffer for write operations
-/// * `file_write` - Amount of data successfully written to disk
+/// * `path` - Path to the segment file on disk
+/// * `received_write` - Atomic counter tracking total amount of data received for writing
+/// * `acc_buffer` - Accumulation buffer for optimizing write operations
+/// * `file_write` - Atomic counter tracking amount of data successfully written to disk
+///
+/// # Thread Safety
+///
+/// The struct uses atomic counters to ensure thread-safe tracking of write progress,
+/// while the actual write operations are serialized through the async interface.
 #[derive(Debug)]
 pub struct SegmentLog {
     path: PathBuf,
@@ -29,7 +65,10 @@ pub struct SegmentLog {
 }
 
 impl SegmentLog {
-    /// Creates a new SegmentLog instance
+    /// Creates a new SegmentLog instance.
+    ///
+    /// Initializes a new segment log with the given parameters and creates
+    /// the underlying file if it doesn't exist.
     ///
     /// # Arguments
     ///
@@ -87,29 +126,27 @@ impl SegmentLog {
         }
     }
 
-    /// Write journal log
+    /// Writes journal records to the segment.
+    ///
+    /// Handles the complex format of journal log entries, including metadata
+    /// and actual message content.
+    ///
+    /// # Format
+    ///
+    /// Journal log entry format:
+    /// ```text
+    /// [batch_size(4)][journal_offset(8)][topic_partition_id_size(4)][topic_partition_id(var)]
+    /// [first_queue_offset(8)][last_queue_offset(8)][records_count(4)][message_data(var)]
+    /// ```
+    /// Note: batch_size does not include its own 4 bytes
+    ///
     /// # Arguments
     ///
-    /// * `request` - Journal write request containing:
-    ///   * records - Message records
-    ///   * journal_offset - Journal log offset
-    ///   * queue_topic_partition - Queue topic partition info
-    ///   * first_batch_queue_base_offset - First batch queue base offset
-    ///   * last_batch_queue_base_offset - Last batch queue base offset
-    ///   * records_count - Number of records
+    /// * `request` - Journal write request containing all necessary metadata and records
     ///
     /// # Returns
     ///
-    /// Returns an IO result:
-    /// * `Ok(())` - Write successful
-    /// * `Err(io::Error)` - Write failed
-    ///
-    /// # Errors
-    ///
-    /// Returns error when file operations fail
-    /// journal log format:
-    /// batch_size + journal_offset + topic_partition_id_string_size + topic_partition _id_string + first_batch_queue_base_offset + last_batch_queue_base_offset + records_count + msg
-    /// batch_size does not include the 4 bytes of itself
+    /// Returns an IO Result indicating success or failure of the write operation
     pub async fn write_journal(&mut self, request: JournalFileWriteReq) -> io::Result<()> {
         let msg = request.records.buffer.unwrap();
         let total_size = JournalLog::calculate_journal_log_overhead(&request.topic_partition)
@@ -159,7 +196,9 @@ impl SegmentLog {
         Ok(())
     }
 
-    /// Writes queue data to the segment
+    /// Writes queue records to the segment.
+    ///
+    /// Simpler than journal writes as it only needs to append the raw message data.
     ///
     /// # Arguments
     ///
@@ -167,13 +206,7 @@ impl SegmentLog {
     ///
     /// # Returns
     ///
-    /// Returns an IO Result:
-    /// * `Ok(())` - Write successful
-    /// * `Err(io::Error)` - Write failed
-    ///
-    /// # Errors
-    ///
-    /// Returns error when file operations fail
+    /// Returns an IO Result indicating success or failure of the write operation
     pub async fn write_queue(&mut self, request: QueueFileWriteReq) -> io::Result<()> {
         let msg = request.records.buffer.unwrap();
         let total_write = msg.remaining();
@@ -203,16 +236,14 @@ impl SegmentLog {
         Ok(())
     }
 
-    /// Flushes buffered data to disk
+    /// Flushes all buffered data to disk.
+    ///
+    /// Forces any buffered data to be written to the underlying file and
+    /// updates the file_write counter to match received_write.
     ///
     /// # Returns
     ///
-    /// Returns an IO Result containing:
-    /// * The total file size after flush
-    ///
-    /// # Errors
-    ///
-    /// Returns error when file operations fail
+    /// Returns an IO Result containing the total file size after flush
     pub async fn flush(&mut self) -> io::Result<u64> {
         let path = self.path.clone();
 
@@ -238,7 +269,10 @@ impl SegmentLog {
         Ok(true_file_size)
     }
 
-    /// Returns the total size of data received for writing
+    /// Returns the total size of data received for writing.
+    ///
+    /// This includes both data that has been written to disk and
+    /// data that is still buffered.
     ///
     /// # Returns
     ///
@@ -247,23 +281,29 @@ impl SegmentLog {
         self.received_write.load(Ordering::Acquire)
     }
 
-    /// Returns the size of data that has been written to disk
+    /// Returns the size of data that has been written to disk.
+    ///
+    /// This represents the amount of data that has been successfully
+    /// flushed to the underlying file.
     ///
     /// # Returns
     ///
-    /// The size in bytes of data that has been successfully written to disk
+    /// The size in bytes of data written to disk
     pub fn readable_size(&self) -> u64 {
         self.file_write.load(Ordering::Acquire)
     }
 }
 
-/// Buffer for accumulating write operations before flushing to disk
+/// Internal buffer for managing write operations.
+///
+/// Provides buffering functionality with configurable capacity and flush intervals
+/// to optimize I/O performance.
 ///
 /// # Fields
 ///
-/// * `buffer` - The actual buffer storing data
+/// * `buffer` - Optional vector storing the actual data
 /// * `last_flush` - Timestamp of the last flush operation
-/// * `config` - Configuration for write operations including buffer capacity and flush interval
+/// * `config` - Configuration controlling buffer behavior
 #[derive(Debug)]
 struct WriteBuffer {
     buffer: Option<Vec<u8>>,
@@ -272,15 +312,15 @@ struct WriteBuffer {
 }
 
 impl WriteBuffer {
-    /// Creates a new WriteBuffer instance
+    /// Creates a new write buffer with the specified configuration.
     ///
     /// # Arguments
     ///
-    /// * `config` - Configuration for the write buffer
+    /// * `config` - Configuration controlling buffer capacity and flush intervals
     ///
     /// # Returns
     ///
-    /// Returns a new WriteBuffer instance
+    /// A new WriteBuffer instance initialized with the given configuration
     pub fn new(config: &WriteConfig) -> Self {
         let config_clone = config.clone();
         Self {
@@ -290,15 +330,19 @@ impl WriteBuffer {
         }
     }
 
-    /// Attempts to write data to the buffer
+    /// Attempts to write data to the buffer.
+    ///
+    /// Checks if the buffer should be flushed based on size and time criteria,
+    /// and returns true if a flush is needed.
     ///
     /// # Arguments
     ///
-    /// * `data` - Data to write to the buffer
+    /// * `data` - The data to write to the buffer
     ///
     /// # Returns
     ///
-    /// Returns true if the buffer should be flushed, false otherwise
+    /// * `true` if the buffer should be flushed
+    /// * `false` if the data was buffered without requiring a flush
     pub fn try_write(&mut self, data: &[u8]) -> bool {
         if self.should_flush(data.len()) {
             self.last_flush = Instant::now();
@@ -311,15 +355,19 @@ impl WriteBuffer {
         }
     }
 
-    /// Determines if the buffer should be flushed
+    /// Determines if the buffer should be flushed.
+    ///
+    /// Checks both size and time-based criteria for flushing:
+    /// - Buffer capacity threshold
+    /// - Time since last flush
     ///
     /// # Arguments
     ///
-    /// * `incoming_size` - Size of incoming data
+    /// * `incoming_size` - Size of incoming data to consider
     ///
     /// # Returns
     ///
-    /// Returns true if the buffer should be flushed based on capacity or time criteria
+    /// `true` if the buffer should be flushed, `false` otherwise
     fn should_flush(&self, incoming_size: usize) -> bool {
         self.buffer.as_ref().unwrap().len() + incoming_size >= self.config.buffer_capacity
             || self.last_flush.elapsed() >= self.config.flush_interval
