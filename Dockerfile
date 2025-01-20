@@ -1,5 +1,5 @@
-# 使用阿里云的 Ubuntu 源（以 Ubuntu 20.04 为例）
-# 使用 Ubuntu 作为基础镜像
+# use aliyun ubuntu source
+# use ubuntu 20.04 as base image
 FROM ubuntu:20.04
 
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.aliyun.com/ubuntu/|g' /etc/apt/sources.list && \
@@ -14,22 +14,22 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|https://mirrors.aliyun.com/ubunt
     libclang-dev \
     && apt-get clean
 
-# 设置 LIBCLANG_PATH 环境变量
+# set LIBCLANG_PATH environment variable
 ENV LIBCLANG_PATH=/usr/lib/llvm-10/lib/
 
-# 创建 /tmp/queue 和 /tmp/journal 目录
+# create /tmp/queue and /tmp/journal directory
 RUN mkdir -p /tmp/queue /tmp/journal /usr/src/stonemq/stonemq_perf
 
 
 
-# 设置工作目录
+# set working directory
 WORKDIR /usr/src/stonemq
 
-# 将当前目录（主机）中的所有文件复制到容器内部的工作目录
+# copy all files from host to container working directory
 COPY . .
 
-# 构建 Rust 项目
-# RUN cargo build --release
+# build rust project
+RUN cargo build --release
 
-# 默认命令（在容器中运行你的可执行文件）
-# CMD ["heaptrack", "./target/release/stonemq"]
+# default command (run your executable file in container)
+CMD ["heaptrack", "./target/release/stonemq"]
