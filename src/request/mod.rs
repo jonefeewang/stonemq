@@ -50,13 +50,3 @@ pub enum ApiRequest {
     OffsetCommit(OffsetCommitRequest),
     FetchOffsets(FetchOffsetsRequest),
 }
-
-// impl ApiRequest {
-//     pub fn is_blocking(&self) -> bool {
-//         match self {
-//             ApiRequest::JoinGroup(_) => true,
-//             ApiRequest::Heartbeat(_) => true,
-//             _ => false,
-//         }
-//     }
-// }

@@ -102,7 +102,7 @@ impl<T: DelayedAsyncOperation> DelayedAsyncOperationPurgatory<T> {
         mut delay_queue_rx: Receiver<DelayQueueOp<T>>,
         _notify_shutdown: broadcast::Sender<()>,
     ) {
-        // DelayQueue 处理循环
+        // DelayQueue processing loop
         let purgatory_name_clone = self.name.clone();
 
         // let mut delay_queue_shutdown = Shutdown::new(notify_shutdown.clone().subscribe());

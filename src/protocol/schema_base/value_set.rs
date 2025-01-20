@@ -8,12 +8,12 @@ use crate::protocol::schema_base::Schema;
 use crate::protocol::types::ArrayType;
 
 ///
-/// ValueSet是一个schema相对应的值，同样也是一个有序的序列，这里使用BTreeMap来存储
+/// ValueSet is a value corresponding to a schema, which is also an ordered sequence, and here BTreeMap is used to store
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ValueSet {
-    // 这里是一个指向schema的引用, 但是ValueSet本身也是一个DataType，DataType是一个递归结构体，如果使用
-    // 普通引用的话，会造成循环引用，引用解析非常复杂，所以这里使用Arc
-    // 不能使用Rc包装的原因: 因为Schema要作为全局变量使用，需要在多个地方引用，而Rc只能在单线程中使用
+    // this is a reference to the schema, but ValueSet itself is also a DataType, and DataType is a recursive structure,
+    // if using normal references, it will cause circular references, and the reference resolution will be very complex,
+    // so here Arc is used
     pub schema: Arc<Schema>,
     pub values: BTreeMap<i32, ProtocolType>,
 }
@@ -246,13 +246,13 @@ mod tests {
         use super::*;
         use crate::protocol::base::{PString, I32};
 
-        // 创建内部schema
+        // create inner schema
         let inner_schema = Arc::new(Schema::from_fields_desc_vec(vec![
             (0, "inner_field1", ProtocolType::I32(I32::default())),
             (1, "inner_field2", ProtocolType::PString(PString::default())),
         ]));
 
-        // 创建外部schema,包含一个内部schema字段
+        // create outer schema, which contains an inner schema field
         let outer_schema = Arc::new(Schema::from_fields_desc_vec(vec![
             (0, "outer_field1", ProtocolType::I32(I32::default())),
             (
@@ -262,11 +262,11 @@ mod tests {
             ),
         ]));
 
-        // 创建外部value set
+        // create outer value set
         let mut outer_value_set = ValueSet::new(outer_schema.clone());
         outer_value_set.append_field_value("outer_field1", ProtocolType::I32(I32 { value: 1 }));
 
-        // 创建内部value set
+        // create inner value set
         let mut inner_value_set = outer_value_set.sub_valueset_of_schema_field("outer_field2");
         inner_value_set.append_field_value("inner_field1", ProtocolType::I32(I32 { value: 2 }));
         inner_value_set.append_field_value(
@@ -276,20 +276,20 @@ mod tests {
             }),
         );
 
-        // 将内部value set添加到外部value set
+        // add inner value set to outer value set
         outer_value_set.append_field_value("outer_field2", ProtocolType::ValueSet(inner_value_set));
 
         let outer_value_set_clone = outer_value_set.clone();
 
-        // 写入buffer
+        // write to buffer
         let mut writer = BytesMut::new();
         outer_value_set.write_to(&mut writer);
 
-        // 从buffer读取
+        // read from buffer
         let mut buffer = BytesMut::from(&writer[..]);
         let read_outer_value_set = outer_schema.read_from(&mut buffer).unwrap();
 
-        // 验证
+        // check
         assert_eq!(read_outer_value_set, outer_value_set_clone);
     }
 }

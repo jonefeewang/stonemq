@@ -1,11 +1,43 @@
-// Record 相关常量
+//! Message Format Constants
+//!
+//! This module defines the constants used in the message format implementation.
+//! It includes offsets and lengths for various record fields, batch metadata,
+//! and special values used throughout the messaging system.
+//!
+//! # Record Format
+//!
+//! The message record format consists of:
+//! - 8-byte offset
+//! - 4-byte size
+//! - Variable-length message content
+//!
+//! # Batch Format
+//!
+//! The record batch format includes:
+//! - Base offset (8 bytes)
+//! - Length (4 bytes)
+//! - Partition leader epoch (4 bytes)
+//! - Magic byte (1 byte)
+//! - CRC (4 bytes)
+//! - Attributes (2 bytes)
+//! - Last offset delta (4 bytes)
+//! - First timestamp (8 bytes)
+//! - Max timestamp (8 bytes)
+//! - Producer ID (8 bytes)
+//! - Producer epoch (2 bytes)
+//! - Base sequence (4 bytes)
+//! - Record count (4 bytes)
+//! - Records (variable length)
+
+// Record field offsets and lengths
+// 记录字段的偏移量和长度
 pub const OFFSET_OFFSET: usize = 0;
 pub const OFFSET_LENGTH: usize = 8;
 pub const SIZE_OFFSET: usize = OFFSET_OFFSET + OFFSET_LENGTH;
 pub const SIZE_LENGTH: usize = 4;
 pub const LOG_OVERHEAD: usize = SIZE_OFFSET + SIZE_LENGTH;
 
-// Record Batch 相关常量
+// Record batch field offsets and lengths
 pub const BASE_OFFSET_OFFSET: i32 = 0;
 pub const BASE_OFFSET_LENGTH: i32 = 8;
 pub const LENGTH_OFFSET: i32 = BASE_OFFSET_OFFSET + BASE_OFFSET_LENGTH;
@@ -35,10 +67,17 @@ pub const RECORDS_COUNT_LENGTH: i32 = 4;
 pub const RECORDS_OFFSET: i32 = RECORDS_COUNT_OFFSET + RECORDS_COUNT_LENGTH;
 pub const RECORD_BATCH_OVERHEAD: i32 = RECORDS_OFFSET;
 
-// 其他常量
+// Special values and defaults
+
+/// Magic value for the current message format version
 pub const MAGIC: i8 = 2;
+/// Special value indicating no producer ID
 pub const NO_PRODUCER_ID: i64 = -1;
+/// Special value indicating no producer epoch
 pub const NO_PRODUCER_EPOCH: i16 = -1;
+/// Special value indicating no sequence number
 pub const NO_SEQUENCE: i32 = -1;
+/// Special value indicating no partition leader epoch
 pub const NO_PARTITION_LEADER_EPOCH: i32 = -1;
+/// Default attributes value
 pub const ATTRIBUTES: i16 = 0;

@@ -19,15 +19,15 @@ use crate::request::RequestContext;
 
 use super::api::ApiHandler;
 
-/// 通用异步处理器
+/// general async handler
 async fn execute_handler<H>(handler: H, request: H::Request, context: &RequestContext) -> BytesMut
 where
     H: ApiHandler + Sync,
 {
-    // 调用具体的 handler 来生成响应
+    // call the specific handler to generate the response
     let response = handler.handle_request(request, context).await;
 
-    // 将响应编码为字节流
+    // encode the response to byte stream
     response.encode(
         &context.request_header.api_version,
         context.request_header.correlation_id,

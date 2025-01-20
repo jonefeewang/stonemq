@@ -90,16 +90,12 @@ pub enum ProtocolType {
     PVarLong(PVarLong),
 
     // Represents an array of any FieldTypes.
-    // array里包含一个DataType, 这里是一个循环引用，这里使用Arc来包装
-    // 不能使用Rc包装的原因: 因为Schema要作为全局变量使用，需要在多个地方引用，而Rc只能在单线程中使用
     Array(ArrayType),
 
     // Represents the record type in memory.
     Records(MemoryRecords),
 
     // Represents a pointer to a schema.
-    // 为了能在其他的数据结构体里引用这里边包装的Schema，这里使用Arc包装
-    // 不能使用Rc包装的原因: 因为Schema要作为全局变量使用，需要在多个地方引用，而Rc只能在单线程中使用
     Schema(Arc<Schema>),
 
     // Represents a schema's data(value) type.
@@ -120,7 +116,7 @@ impl Eq for ProtocolType {}
 
 impl ProtocolType {
     ///
-    /// 生成一个array of value set 数据类型
+    /// generate a array of value set data type
     pub fn array_of_value_set(values: Vec<ProtocolType>, schema: Arc<Schema>) -> ProtocolType {
         ProtocolType::Array(ArrayType {
             can_be_empty: false,
@@ -129,7 +125,7 @@ impl ProtocolType {
         })
     }
     ///
-    /// 生成一个array of schema 数据类型
+    /// generate a array of schema data type
     pub fn array_of_schema(schema: Arc<Schema>) -> ProtocolType {
         ProtocolType::Array(ArrayType {
             can_be_empty: false,

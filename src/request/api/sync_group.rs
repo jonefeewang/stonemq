@@ -19,7 +19,8 @@ impl ApiHandler for SyncGroupRequestHandler {
         context: &RequestContext,
     ) -> SyncGroupResponse {
         debug!("sync group request: {:?}", request);
-        // request 中的bytesmut 来自于connection中的buffer，不能破坏掉，需要返还给connection，这里将BytesMut转换成Bytes，返还BytesMut
+        // the BytesMut in request comes from the buffer of the connection, it cannot be destroyed,
+        // it needs to be returned to the connection, here BytesMut is converted to Bytes, and returned to BytesMut
         let group_assignment = request
             .group_assignment
             .iter()

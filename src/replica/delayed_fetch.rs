@@ -43,8 +43,8 @@ impl DelayedAsyncOperation for DelayedFetch {
         if self.is_completed.load(Ordering::Acquire) {
             return true;
         }
-        // 1.读取的partition里有segment roll，读取的offset已经不在active的segment里了
-        // 2.读取的offset还在active的segment里，但计算可读消息的总量已经够了
+        // 1. the partition has segment roll, the read offset is not in the active segment
+        // 2. the read offset is in the active segment, but the total number of readable messages is enough
         let mut accumulated_size = 0;
         for (tp, _) in self.request.fetch_data.iter() {
             let log_fetch_info = self.read_position_infos.get(tp).unwrap();

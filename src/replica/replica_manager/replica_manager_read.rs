@@ -35,7 +35,7 @@ impl ReplicaManager {
             debug!("fetch success: {:?}", read_result);
             FetchResponse::from_data(read_result, 0)
         } else {
-            // 如果读取到的消息小于min_bytes，则将请求加入到delayed_fetch_purgatory中
+            // if the message read is less than min_bytes, add the request to the delayed_fetch_purgatory
             let position_infos = read_result
                 .iter()
                 .map(|(tp, log_fetch_info)| (tp.clone(), log_fetch_info.position_info))

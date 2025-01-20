@@ -1,9 +1,39 @@
+//! Frame Processing Implementation
+//!
+//! This module implements the frame processing functionality for the network protocol.
+//! It handles parsing, validation, and processing of network frames that encapsulate
+//! client requests.
+//!
+//! # Frame Format
+//!
+//! Each frame consists of:
+//! - 4-byte length prefix (big-endian)
+//! - Request header
+//! - Request body
+//!
+//! # Features
+//!
+//! - Frame size validation
+//! - Partial frame handling
+//! - Buffer management
+//! - Error handling for malformed frames
+//! - Configurable size limits
+
 use bytes::{Buf, BytesMut};
 
 use crate::request::RequestHeader;
 use crate::AppError::Incomplete;
 use crate::{global_config, AppError, AppResult};
 
+/// Represents a request frame in the network protocol.
+///
+/// A frame contains both the request header and body, providing
+/// a complete encapsulation of a client request.
+///
+/// # Fields
+///
+/// * `request_header` - Header containing request metadata
+/// * `request_body` - Body containing the actual request data
 #[derive(Debug)]
 pub struct RequestFrame {
     pub request_header: RequestHeader,
@@ -11,6 +41,23 @@ pub struct RequestFrame {
 }
 
 impl RequestFrame {
+    /// Checks if a buffer contains a complete frame.
+    ///
+    /// Validates:
+    /// - Buffer has enough bytes for length prefix
+    /// - Frame size is positive
+    /// - Frame size is within configured limits
+    /// - Buffer contains complete frame data
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - Buffer containing frame data
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Buffer contains a valid complete frame
+    /// * `Err(Incomplete)` - Buffer contains a partial frame
+    /// * `Err(e)` - Frame is invalid
     pub fn check(buffer: &mut BytesMut) -> AppResult<()> {
         if buffer.remaining() < 4 {
             return Err(Incomplete);
@@ -36,6 +83,20 @@ impl RequestFrame {
         Ok(())
     }
 
+    /// Attempts to parse a complete frame from a buffer.
+    ///
+    /// If the buffer contains a complete frame, consumes the frame data
+    /// and returns the parsed frame. Otherwise, returns None or an error.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - Buffer containing frame data
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(frame))` - Successfully parsed a complete frame
+    /// * `Ok(None)` - Buffer contains a partial frame
+    /// * `Err(e)` - Error parsing frame
     pub(crate) fn parse(buffer: &mut BytesMut) -> AppResult<Option<RequestFrame>> {
         // perform a check to ensure we have enough data
         match RequestFrame::check(buffer) {

@@ -1,3 +1,14 @@
+/// This module implements the RecordBatch functionality, which is a fundamental component
+/// for managing message records in the messaging system. A RecordBatch represents a collection
+/// of records that are stored and processed together for efficiency.
+///
+/// Key features:
+/// - Efficient batch processing of records
+/// - Support for record headers and metadata
+/// - CRC validation for data integrity
+/// - Flexible record building through RecordBatchBuilder
+/// - Memory-efficient buffer management using BytesMut
+///
 use bytes::{Buf, BufMut, BytesMut};
 use integer_encoding::VarInt;
 use std::io::{Cursor, Write};
@@ -11,15 +22,28 @@ use crate::{global_config, AppError, AppResult};
 
 use super::MemoryRecords;
 
+/// Represents a batch of records that are stored and processed together.
+/// The batch includes a header with metadata and a collection of records.
+/// All records within a batch share common properties like base offset and timestamp.
 pub struct RecordBatch {
+    /// The underlying buffer containing the batch data in a compact binary format
     pub(crate) buffer: BytesMut,
 }
 
 impl RecordBatch {
+    /// Creates a new RecordBatch with the given buffer.
+    ///
+    /// # Arguments
+    /// * `buffer` - A BytesMut buffer containing the batch data
     pub fn new(buffer: BytesMut) -> Self {
         RecordBatch { buffer }
     }
 
+    /// Retrieves the header information from the batch.
+    /// The header contains metadata such as offsets, timestamps, and record count.
+    ///
+    /// # Returns
+    /// A BatchHeader struct containing the batch metadata
     pub fn header(&self) -> BatchHeader {
         let mut cursor = Cursor::new(self.buffer.as_ref());
         BatchHeader {
@@ -38,41 +62,84 @@ impl RecordBatch {
             records_count: cursor.get_i32(),
         }
     }
-    // 将批次的 buffer 合并回原始 MemoryRecords
+    /// Merges this batch's buffer back into the original MemoryRecords.
+    /// This is typically used after processing a split batch to recombine it.
+    ///
+    /// # Arguments
+    /// * `records` - The MemoryRecords to merge this batch back into
     pub fn unsplit(self, records: &mut MemoryRecords) {
         if let Some(main_buffer) = &mut records.buffer {
             main_buffer.unsplit(self.buffer);
         }
     }
+    /// Gets the number of records in this batch.
+    ///
+    /// # Returns
+    /// The number of records as an i32
     pub fn records_count(&self) -> i32 {
         self.get_field(RECORDS_COUNT_OFFSET, |c| c.get_i32())
     }
 
+    /// Gets the maximum timestamp in this batch.
+    ///
+    /// # Returns
+    /// The maximum timestamp as an i64
     pub fn max_timestamp(&self) -> i64 {
         self.get_field(MAX_TIMESTAMP_OFFSET, |c| c.get_i64())
     }
+    /// Gets the base (first) timestamp in this batch.
+    ///
+    /// # Returns
+    /// The base timestamp as an i64
     pub fn base_timestamp(&self) -> i64 {
         self.get_field(FIRST_TIMESTAMP_OFFSET, |c| c.get_i64())
     }
 
+    /// Gets the base offset of this batch.
+    ///
+    /// # Returns
+    /// The base offset as an i64
     pub fn base_offset(&self) -> i64 {
         self.get_field(BASE_OFFSET_OFFSET, |c| c.get_i64())
     }
+    /// Gets the last offset delta in this batch.
+    ///
+    /// # Returns
+    /// The last offset delta as an i32
     pub fn last_offset_delta(&self) -> i32 {
         self.get_field(LAST_OFFSET_DELTA_OFFSET, |c| c.get_i32())
     }
 
+    /// Helper method to get a field from the buffer at a specific offset.
+    ///
+    /// # Arguments
+    /// * `offset` - The offset in the buffer to read from
+    /// * `getter` - A function that reads the field value from a cursor
+    ///
+    /// # Returns
+    /// The field value of type T
     fn get_field<T>(&self, offset: i32, getter: impl Fn(&mut Cursor<&[u8]>) -> T) -> T {
         let mut cursor = Cursor::new(self.buffer.as_ref());
         cursor.set_position(offset as u64);
         getter(&mut cursor)
     }
 
+    /// Sets the base offset for this batch.
+    ///
+    /// # Arguments
+    /// * `base_offset` - The new base offset value
     pub fn set_base_offset(&mut self, base_offset: i64) {
         let mut cursor = Cursor::new(self.buffer.as_mut());
         cursor.set_position(BASE_OFFSET_OFFSET as u64);
         cursor.write_all(&base_offset.to_be_bytes()).unwrap();
     }
+    /// Sets the first timestamp for this batch.
+    ///
+    /// # Arguments
+    /// * `first_timestamp` - The new first timestamp value
+    ///
+    /// # Returns
+    /// An AppResult indicating success or failure
     pub fn set_first_timestamp(&mut self, first_timestamp: i64) -> AppResult<()> {
         let mut cursor = Cursor::new(self.buffer.as_mut());
         cursor.set_position(FIRST_TIMESTAMP_OFFSET as u64);
@@ -84,19 +151,20 @@ impl RecordBatch {
         Ok(())
     }
 
-    /// 验证 RecordBatch 的有效性
+    /// Validates the batch to ensure it meets all requirements.
+    /// This includes checking buffer size, offsets, magic value, and CRC.
     ///
-    /// 验证以下内容:
-    /// - buffer 不能为空且长度必须大于 LOG_OVERHEAD
-    /// - base_offset 必须为 0
-    /// - batch_size 必须在合法范围内(小于 max_msg_size,大于 RECORD_BATCH_OVERHEAD)
-    /// - magic 必须为 2 (当前仅支持 magic 2)
-    /// - CRC 校验必须通过
-    /// - record_count 必须为非负数
+    /// /// Validate the following:  
+    /// - The buffer must not be empty and its length must exceed LOG_OVERHEAD.  
+    /// - The base_offset must be 0.  
+    /// - The batch_size must fall within the valid range (less than max_msg_size and greater than RECORD_BATCH_OVERHEAD).  
+    /// - The magic value must be 2 (currently, only magic 2 is supported).  
+    /// - The CRC check must pass.  
+    /// - The record_count must be a non-negative number.  
+    ///  
     ///
-    /// # 返回
-    /// - Ok(()) 如果验证通过
-    /// - Err(AppError::RequestError) 如果验证失败,错误信息包含具体原因
+    /// # Returns
+    /// An AppResult indicating whether the batch is valid
     pub fn validate_batch(&self) -> AppResult<()> {
         let mut cursor = Cursor::new(self.buffer.as_ref());
 
@@ -169,6 +237,10 @@ impl RecordBatch {
         Ok(())
     }
 
+    /// Retrieves all records from this batch.
+    ///
+    /// # Returns
+    /// A vector containing all Record instances in this batch
     pub fn records(&self) -> Vec<Record> {
         let mut cursor = Cursor::new(self.buffer.as_ref());
         cursor.advance(RECORDS_COUNT_OFFSET as usize);
@@ -184,6 +256,12 @@ impl RecordBatch {
         records
     }
 
+    /// Decodes a single record from the buffer.
+    ///
+    /// # Arguments
+    /// * `cursor` - The cursor pointing to the record data
+    /// * `records` - The vector to append the decoded record to
+    /// * `record_length` - The length of the record to decode
     fn decode_record_body(
         cursor: &mut Cursor<&[u8]>,
         records: &mut Vec<Record>,
@@ -284,6 +362,8 @@ impl RecordBatch {
     }
 }
 
+/// A builder for creating new RecordBatch instances.
+/// Provides methods to append records and configure batch properties.
 pub struct RecordBatchBuilder {
     buffer: BytesMut,
     _magic: i8,
@@ -311,8 +391,9 @@ impl Default for RecordBatchBuilder {
         builder
     }
 }
-
+#[allow(dead_code)]
 impl RecordBatchBuilder {
+    /// Initializes the buffer with default values for batch metadata.
     fn initialize_buffer(&mut self) {
         self.buffer.put_i64(0); //first offset
         self.buffer.put_i32(0); //length
@@ -328,7 +409,13 @@ impl RecordBatchBuilder {
         self.buffer.put_i32(NO_SEQUENCE);
         self.buffer.put_i32(0); //record count
     }
-    #[cfg(test)]
+    /// Appends a record with a specific offset to the batch.
+    ///
+    /// # Arguments
+    /// * `offset` - The offset for the record
+    /// * `timestamp` - The timestamp for the record
+    /// * `key` - The record key
+    /// * `value` - The record value
     pub fn append_record_with_offset<T: AsRef<[u8]>>(
         &mut self,
         offset: i64,
@@ -338,7 +425,14 @@ impl RecordBatchBuilder {
     ) {
         self.append_record(Some(offset), Some(timestamp), key, value, None);
     }
-    #[cfg(test)]
+    /// Appends a record to the batch with optional parameters.
+    ///
+    /// # Arguments
+    /// * `offset` - Optional offset for the record
+    /// * `timestamp` - Optional timestamp for the record
+    /// * `key` - The record key
+    /// * `value` - The record value
+    /// * `headers` - Optional headers for the record
     pub fn append_record<T: AsRef<[u8]>>(
         &mut self,
         offset: Option<i64>,
@@ -390,7 +484,15 @@ impl RecordBatchBuilder {
         self._record_count += 1;
     }
 
-    #[cfg(test)]
+    /// Writes a record to the buffer.
+    ///
+    /// # Arguments
+    /// * `record_size` - The size of the record
+    /// * `timestamp_delta` - The timestamp delta from the base timestamp
+    /// * `offset_delta` - The offset delta from the base offset
+    /// * `key` - The record key
+    /// * `value` - The record value
+    /// * `headers` - Optional headers for the record
     fn write_record<T: AsRef<[u8]>>(
         &mut self,
         record_size: usize,
@@ -438,7 +540,10 @@ impl RecordBatchBuilder {
         }
     }
 
-    #[cfg(test)]
+    /// Builds and returns a new RecordBatch.
+    ///
+    /// # Returns
+    /// A new RecordBatch instance containing all appended records
     pub fn build(&mut self) -> RecordBatch {
         let mut cursor = Cursor::new(self.buffer.as_mut());
 
@@ -476,15 +581,23 @@ impl RecordBatchBuilder {
 
         RecordBatch::new(self.buffer.split())
     }
-    #[cfg(test)]
-
+    /// Gets the current time in milliseconds.
+    ///
+    /// # Returns
+    /// The current time as an i64
     fn current_millis() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as i64
     }
-    #[cfg(test)]
+    /// Calculates the size of data in VarInt encoding.
+    ///
+    /// # Arguments
+    /// * `data` - The data to calculate size for
+    ///
+    /// # Returns
+    /// The size in bytes
     fn calculate_size(data: &[u8]) -> usize {
         if data.is_empty() {
             (-1).required_space()
@@ -492,7 +605,11 @@ impl RecordBatchBuilder {
             data.len().required_space() + data.len()
         }
     }
-    #[cfg(test)]
+    /// Appends data to a BytesMut buffer.
+    ///
+    /// # Arguments
+    /// * `buffer` - The buffer to append to
+    /// * `data` - The data to append
     fn append_data(buffer: &mut BytesMut, data: &[u8]) {
         if data.is_empty() {
             buffer.put_slice((-1).encode_var_vec().as_ref());
@@ -501,7 +618,10 @@ impl RecordBatchBuilder {
             buffer.put_slice(data);
         }
     }
-    #[cfg(test)]
+    /// Gets the next sequence offset.
+    ///
+    /// # Returns
+    /// The next offset as an i64
     fn next_sequence_offset(&mut self) -> i64 {
         let ret = self._last_offset;
         self._last_offset += 1;
@@ -517,19 +637,19 @@ mod tests {
     fn test_record_batch_builder() {
         let mut builder = RecordBatchBuilder::default();
 
-        // 添加第一条记录
+        // append first record
         let key1 = "key1";
         let value1 = "value1";
         builder.append_record(None, None, key1, value1, None);
 
-        // 添加第二条记录，带有时间戳和偏移量
+        // append second record with timestamp and offset
         let key2 = "key2";
         let value2 = "value2";
         let offset = 5;
         let timestamp = 1234567890;
         builder.append_record_with_offset(offset, timestamp, key2, value2);
 
-        // 添加第三条记录，带有header
+        // append third record with header
         let key3 = "key3";
         let value3 = "value3";
         let headers = vec![RecordHeader {
@@ -538,11 +658,11 @@ mod tests {
         }];
         builder.append_record(None, None, key3, value3, Some(headers));
 
-        // 构建RecordBatch
+        // build RecordBatch
         let batch = builder.build();
         let header = batch.header();
 
-        // 验证header字段
+        // validate header fields
         assert_eq!(header.magic, MAGIC);
         assert_eq!(header.attributes, ATTRIBUTES);
         assert_eq!(header.records_count, 3);

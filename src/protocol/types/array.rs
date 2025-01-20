@@ -12,8 +12,8 @@ use crate::protocol::schema_base::ValueSet;
 use crate::{AppError, AppResult};
 
 ///
-/// 注意: ArrayType作为类型使用的时候，这里的p_type是arrayOf(schema),
-/// 当表示值的时候，这里的p_type是arrayOf(ValueSet)
+/// Note: When ArrayType is used as a type, p_type is arrayOf(schema),
+/// When representing a value, p_type is arrayOf(ValueSet)
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ArrayType {
     pub can_be_empty: bool,

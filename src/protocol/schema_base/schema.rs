@@ -15,9 +15,9 @@ use crate::protocol::types::ArrayType;
 use crate::AppResult;
 
 ///
-/// Schema包含一系列字段，字段是有序的，表明了该schema的定义
-/// field在schema中的位置和自己的index是一致的
-/// 为了方便按名字查找schema，这里使用了HashMap做了映射
+/// Schema contains a series of fields, which are ordered and indicate the definition of the schema
+/// The position of the field in the schema is consistent with its index
+/// To facilitate searching for the schema by name, a HashMap is used for mapping
 #[derive(Debug, Clone, Default)]
 pub struct Schema {
     pub fields_index_by_name: HashMap<&'static str, i32>,

@@ -1,3 +1,15 @@
+/// This module contains test cases for the RecordBatch functionality.
+/// The tests verify various aspects of record batch creation, manipulation,
+/// and validation, ensuring the correct behavior of the RecordBatch implementation.
+///
+/// Test coverage includes:
+/// - Basic record batch building and validation
+/// - Record batch header verification
+/// - Record headers support
+/// - Multiple records handling
+/// - Record batch splitting and merging
+/// - Memory management and buffer reuse
+///
 #[cfg(test)]
 use crate::message::{
     constants::{MAGIC, NO_PRODUCER_EPOCH, NO_PRODUCER_ID, NO_SEQUENCE},
@@ -6,6 +18,9 @@ use crate::message::{
     MemoryRecords,
 };
 
+/// Tests the basic functionality of RecordBatchBuilder.
+/// Verifies that a simple record can be added and the resulting batch
+/// has the correct header values.
 #[test]
 fn test_record_batch_builder() {
     let mut builder = RecordBatchBuilder::default();
@@ -25,6 +40,9 @@ fn test_record_batch_builder() {
     assert_eq!(header.last_offset_delta, 0);
 }
 
+/// Tests the creation and validation of a RecordBatch.
+/// Verifies that all header fields are set correctly when creating
+/// a new batch with a single record.
 #[test]
 fn test_record_batch() {
     // 创建一个简单的RecordBatch
@@ -54,6 +72,9 @@ fn test_record_batch() {
     assert_eq!(header.first_sequence, NO_SEQUENCE);
 }
 
+/// Tests RecordBatch creation with custom headers.
+/// Verifies that records can be created with custom headers
+/// and that the resulting batch maintains the correct structure.
 #[test]
 fn test_record_batch_with_headers() {
     let mut builder = RecordBatchBuilder::default();
@@ -80,6 +101,9 @@ fn test_record_batch_with_headers() {
     assert_eq!(header.magic, MAGIC);
 }
 
+/// Tests handling of multiple records in a batch.
+/// Verifies that multiple records can be added to a batch
+/// and that the batch metadata (timestamps, offsets) is updated correctly.
 #[test]
 fn test_multiple_records() {
     let mut builder = RecordBatchBuilder::default();
@@ -104,6 +128,9 @@ fn test_multiple_records() {
     assert_eq!(header.max_timestamp, 1002);
 }
 
+/// Tests the splitting functionality of RecordBatch.
+/// Verifies that a batch can be split into MemoryRecords
+/// and that the resulting split maintains data integrity.
 #[test]
 fn test_split_record_batch() {
     let mut builder = RecordBatchBuilder::default();
@@ -138,8 +165,13 @@ fn test_split_record_batch() {
     assert!(records.next().is_none());
 }
 
+/// Generates a random RecordBatch for testing purposes.
+/// Creates a batch with 1-10 random records, each with unique
+/// keys, values, and timestamps.
+///
+/// # Returns
+/// A RecordBatch containing random test data
 #[cfg(test)]
-
 fn generate_random_record_batch() -> RecordBatch {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -171,6 +203,10 @@ fn generate_random_record_batch() -> RecordBatch {
 
     builder.build()
 }
+
+/// Tests that BytesMut's unsplit operation reuses the original memory.
+/// Verifies that when batches are split and then merged back together,
+/// the system efficiently reuses memory buffers instead of creating new ones.
 #[test]
 fn test_bytes_mut_unsplit_reuse_original_memory() {
     // 创建原始记录
