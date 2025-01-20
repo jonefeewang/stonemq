@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::BytesMut;
-use once_cell::sync::Lazy;
 
 use crate::message::TopicData;
 use crate::message::{MemoryRecords, PartitionMsgData};
@@ -217,7 +216,7 @@ impl ProduceRequest {
 ///                   )
 ///            )
 ///  )`
-pub static TOPIC_PRODUCE_DATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static TOPIC_PRODUCE_DATA_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     // inner schema: [Partition MessageSetSize MessageSet]
 
     let inner_fields_desc_vec = vec![
@@ -266,7 +265,7 @@ pub static TOPIC_PRODUCE_DATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
 ///                     )
 ///          )
 ///  )`
-pub static PRODUCE_REQUEST_SCHEMA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PRODUCE_REQUEST_SCHEMA_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, ACKS_KEY_NAME, ProtocolType::I16(I16::default())),
         (1, TIMEOUT_KEY_NAME, ProtocolType::I32(I32::default())),
@@ -302,7 +301,7 @@ pub static PRODUCE_REQUEST_SCHEMA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
 ///                     )
 ///          )
 ///  )`
-pub static PRODUCE_REQUEST_SCHEMA_V3: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PRODUCE_REQUEST_SCHEMA_V3: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (
             0,

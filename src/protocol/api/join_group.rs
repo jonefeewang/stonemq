@@ -5,9 +5,7 @@ use crate::protocol::{ApiKey, ApiVersion, ProtocolCodec};
 use crate::request::{JoinGroupRequest, JoinGroupResponse, ProtocolMetadata};
 use crate::{AppError, AppResult};
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
-
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
 const SESSION_TIMEOUT_KEY_NAME: &str = "session_timeout";
@@ -141,7 +139,7 @@ impl JoinGroupResponse {
     }
 }
 
-static JOIN_GROUP_REQUEST_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+static JOIN_GROUP_REQUEST_PROTOCOL_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -156,7 +154,7 @@ static JOIN_GROUP_REQUEST_PROTOCOL_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-pub static JOIN_GROUP_REQUEST_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static JOIN_GROUP_REQUEST_V2_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -197,7 +195,7 @@ pub static JOIN_GROUP_REQUEST_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-static JOIN_GROUP_RESPONSE_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+static JOIN_GROUP_RESPONSE_MEMBER_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -212,7 +210,7 @@ static JOIN_GROUP_RESPONSE_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-pub static JOIN_GROUP_RESPONSE_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static JOIN_GROUP_RESPONSE_V2_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),

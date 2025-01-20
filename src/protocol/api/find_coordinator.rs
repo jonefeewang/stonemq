@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
 
 use crate::{
     protocol::{
@@ -92,7 +91,7 @@ impl FindCoordinatorResponse {
     }
 }
 
-pub static FIND_COORDINATOR_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FIND_COORDINATOR_REQUEST_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -108,7 +107,7 @@ pub static FIND_COORDINATOR_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| 
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FIND_COORDINATOR_BROKER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FIND_COORDINATOR_BROKER_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, NODE_ID_KEY_NAME, ProtocolType::I32(I32::default())),
         (
@@ -121,7 +120,7 @@ pub static FIND_COORDINATOR_BROKER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FIND_COORDINATOR_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FIND_COORDINATOR_RESPONSE_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),

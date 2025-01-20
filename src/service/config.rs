@@ -1,13 +1,12 @@
 extern crate config as _;
 
-use std::path::Path;
+use std::{path::Path, sync::OnceLock};
 
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 
 use super::{AppError, AppResult};
 
-pub static GLOBAL_CONFIG: OnceCell<BrokerConfig> = OnceCell::new();
+pub static GLOBAL_CONFIG: OnceLock<BrokerConfig> = OnceLock::new();
 pub fn global_config() -> &'static BrokerConfig {
     GLOBAL_CONFIG.get().unwrap()
 }

@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
@@ -83,11 +82,11 @@ impl ApiVersionResponse {
     }
 }
 
-pub static API_VERSIONS_REQUEST_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static API_VERSIONS_REQUEST_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![]);
     Arc::new(schema)
 });
-pub static API_VERSIONS_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static API_VERSIONS_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, API_KEY_NAME, 0i16.into()),
         (1, MIN_VERSION_KEY_NAME, 0i16.into()),
@@ -95,7 +94,7 @@ pub static API_VERSIONS_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static API_VERSIONS_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static API_VERSIONS_RESPONSE_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, ERROR_CODE_KEY_NAME, 0i16.into()),
         (
@@ -106,7 +105,7 @@ pub static API_VERSIONS_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static API_VERSIONS_RESPONSE_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, ERROR_CODE_KEY_NAME, 0i16.into()),
         (
@@ -118,6 +117,3 @@ pub static API_VERSIONS_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-
-
-

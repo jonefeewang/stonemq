@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::{
     protocol::{
@@ -23,7 +23,7 @@ const MEMBER_ID_KEY_NAME: &str = "member_id";
 const THROTTLE_TIME_KEY_NAME: &str = "throttle_time_ms";
 const ERROR_CODE_KEY_NAME: &str = "error_code";
 
-pub static SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -39,7 +39,7 @@ pub static SYNC_GROUP_REQUEST_MEMBER_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(||
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static SYNC_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static SYNC_GROUP_REQUEST_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -67,7 +67,7 @@ pub static SYNC_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static SYNC_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static SYNC_GROUP_RESPONSE_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),

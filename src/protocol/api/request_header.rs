@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::BytesMut;
-use once_cell::sync::Lazy;
 
 use crate::{
     protocol::{
@@ -20,7 +19,7 @@ static CORRELATION_ID_KEY_NAME: &str = "correlation_id";
 static CLIENT_ID_KEY_NAME: &str = "client_id";
 
 // Lazy static reference to the request header schema
-pub static REQUEST_HEADER_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static REQUEST_HEADER_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let tuple: Vec<(i32, &str, ProtocolType)> = vec![
         (0, API_KEY, 0i16.into()),
         (1, API_VERSION_KEY_NAME, 0i16.into()),

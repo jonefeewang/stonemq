@@ -57,40 +57,40 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
 
     // 输出解析结果
     println!("┌──────────────────────────────────────────────────────────────────────────────┐");
-    println!("│                                  日志解析器                                    │");
+    println!("│                                  log parser                                    │");
     println!("├──────────────────────────────────────────────────────────────────────────────┤");
     println!(
-        "│ 打印时间: {:<70} │",
+        "│ print time: {:<70} │",
         Local::now().format("%Y-%m-%d %H:%M:%S")
     );
-    println!("│ 文件路径: {:<70} │", file_path.to_str().unwrap_or(""));
+    println!("│ file path: {:<70} │", file_path.to_str().unwrap_or(""));
     println!("└──────────────────────────────────────────────────────────────────────────────┘");
 
     let mut batch_count = 0;
 
     loop {
-        // 读取batch大小
+        // read batch size
         buffer.resize(4, 0);
         let position = reader.stream_position()?;
 
         match reader.read_exact(&mut buffer) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                println!("读取到文件末尾");
+                println!("read to end of file");
                 break;
             }
             Err(e) => {
-                println!("读取文件失败: {}", e);
+                println!("read file failed: {}", e);
                 return Err(e.into());
             }
         }
         let batch_size = buffer.get_u32();
 
-        // 读取batch内容
+        // read batch content
         buffer.resize(batch_size as usize, 0);
         reader.read_exact(&mut buffer)?;
 
-        // 解析batch内容
+        // parse batch content
         let journal_offset: i64 = buffer.get_i64();
 
         let str_len = buffer.get_u32();
@@ -108,9 +108,9 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         let records_count: u32 = buffer.get_u32();
 
         println!("--------------------------------------------------");
-        println!("journal 批次(以0开始): {}", batch_count);
-        println!("批次开头位置: {}", position);
-        println!("批次大小(不包含开头size大小4个字节): {}", batch_size);
+        println!("journal batch(start from 0): {}", batch_count);
+        println!("batch start position: {}", position);
+        println!("batch size(not include start size 4 bytes): {}", batch_size);
         println!("--------------------------------------------------");
 
         println!("Journal Offset: {}", journal_offset);
@@ -124,7 +124,7 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
             last_batch_queue_base_offset
         );
         println!("Records count: {}", records_count);
-        // 使用MemoryRecords解析剩余的buffer内容
+        // parse remaining buffer content
         let memory_records = MemoryRecords::new(buffer.clone());
 
         let mut batchs = vec![];
@@ -135,7 +135,7 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         let first_batch = batchs.first().unwrap();
         // let last_batch = batchs.last().unwrap();
 
-        // 解析batch header
+        // parse batch header
         // let batch_header = first_batch.header();
         // println!("Batch Header:");
         // println!(
@@ -155,7 +155,7 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         //     format_timestamp(batch_header.max_timestamp)
         // );
 
-        // 解析records
+        // parse records
         let records = first_batch.records();
         println!("Records:");
         for (_i, record) in records.iter().enumerate() {
@@ -171,7 +171,7 @@ fn parse_journal_log(file_path: &PathBuf) -> AppResult<()> {
         println!();
         batch_count += 1;
 
-        // 输出解析结果
+        // print parse result
     }
 
     Ok(())
@@ -184,7 +184,7 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
     let mut offset_and_length = [0; 12];
 
     loop {
-        // 读取batch大小
+        // read batch size
         let position = reader.stream_position()?;
 
         match reader.read_exact(&mut offset_and_length) {
@@ -202,8 +202,8 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
                 }
 
                 let batch_header = batchs.first().unwrap().header();
-                println!("批次开头位置: {}", position);
-                println!("第一个batch header: {}", batch_header);
+                println!("batch start position: {}", position);
+                println!("first batch header: {}", batch_header);
 
                 let records = batchs.first().unwrap().records();
                 for record in records {
@@ -212,22 +212,21 @@ fn parse_queue_log(file: &PathBuf) -> AppResult<()> {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                println!("读取到文件末尾");
+                println!("read to end of file");
                 break;
             }
             Err(e) => {
-                println!("读取文件失败: {}", e);
+                println!("read file failed: {}", e);
                 return Err(e.into());
             }
         }
     }
     Ok(())
 }
-// 读取batch大小
 
 fn parse_index(file: &PathBuf) -> AppResult<()> {
-    println!("解析索引文件: {:?}", file);
-    // 实现索引文件解析逻辑
+    println!("parse index file: {:?}", file);
+    // implement index file parse logic
 
     let mut file = File::open(file)?;
     let mut buffer = BytesMut::zeroed(4);
@@ -238,7 +237,7 @@ fn parse_index(file: &PathBuf) -> AppResult<()> {
         file.read_exact(&mut buffer)?;
         let position = buffer.get_u32();
         println!(
-            "Relative Offset: {}, Position: {}\n",
+            "relative offset: {}, position: {}\n",
             relative_offset, position
         );
         buffer.resize(4, 0);
@@ -247,11 +246,11 @@ fn parse_index(file: &PathBuf) -> AppResult<()> {
 }
 
 async fn parse_checkpoint(file: &PathBuf) -> AppResult<()> {
-    println!("解析检查点文件: {:?}", file);
+    println!("parse checkpoint file: {:?}", file);
 
     let checkpoint = CheckPointFile::new(file.to_str().unwrap());
     let points = checkpoint.read_checkpoints(LogType::Journal)?;
-    println!("检查点文件解析结果: {:?}", points);
+    println!("checkpoint file parse result: {:?}", points);
 
     Ok(())
 }

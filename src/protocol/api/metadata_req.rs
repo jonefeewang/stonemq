@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
 
 use crate::protocol::base::{Bool, PString, ProtocolType};
 use crate::protocol::schema_base::{Schema, ValueSet};
@@ -67,7 +66,7 @@ impl MetaDataRequest {
 
 const TOPICS_KEY_NAME: &str = "topics";
 const ALLOW_AUTO_TOPIC_CREATION_KEY_NAME: &str = "allow_auto_topic_creation";
-pub static METADATA_REQUEST_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_REQUEST_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![(
         0,
         TOPICS_KEY_NAME,
@@ -79,7 +78,7 @@ pub static METADATA_REQUEST_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     )]);
     Arc::new(schema)
 });
-pub static METADATA_REQUEST_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_REQUEST_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![(
         0,
         TOPICS_KEY_NAME,
@@ -91,7 +90,7 @@ pub static METADATA_REQUEST_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     )]);
     Arc::new(schema)
 });
-pub static METADATA_REQUEST_V4: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_REQUEST_V4: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (
             0,

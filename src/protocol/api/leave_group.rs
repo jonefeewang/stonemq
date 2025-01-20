@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     protocol::{
         base::{NPBytes, PString, ProtocolType, I16, I32},
@@ -10,7 +8,7 @@ use crate::{
     AppResult,
 };
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
+use std::sync::{Arc, LazyLock};
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
 const MEMBER_ID_KEY_NAME: &str = "member_id";
@@ -77,7 +75,7 @@ impl LeaveGroupResponse {
     }
 }
 
-pub static LEAVE_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static LEAVE_GROUP_REQUEST_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -93,7 +91,7 @@ pub static LEAVE_GROUP_REQUEST_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static LEAVE_GROUP_RESPONSE_V1_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static LEAVE_GROUP_RESPONSE_V1_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),

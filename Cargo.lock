@@ -1941,7 +1941,6 @@ dependencies = [
  "integer-encoding",
  "memmap2",
  "num_cpus",
- "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",

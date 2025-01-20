@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
@@ -42,7 +41,7 @@ const THROTTLE_TIME_MS_KEY_NAME: &str = "throttle_time_ms";
 const BASE_OFFSET_KEY_NAME: &str = "base_offset";
 const LOG_APPEND_TIME_KEY_NAME: &str = "log_append_time";
 
-pub static PRODUCE_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PRODUCE_RESPONSE_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let partition_reps_schema = Schema::from_fields_desc_vec(vec![
         (0, PARTITION_KEY_NAME, 0i32.into()),
         (1, ERROR_CODE_KEY_NAME, 0i16.into()),
@@ -64,7 +63,7 @@ pub static PRODUCE_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
 
     Arc::new(responses_schema)
 });
-pub static PRODUCE_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PRODUCE_RESPONSE_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let partition_reps_schema = Schema::from_fields_desc_vec(vec![
         (0, PARTITION_KEY_NAME, 0i32.into()),
         (1, ERROR_CODE_KEY_NAME, 0i16.into()),
@@ -89,7 +88,7 @@ pub static PRODUCE_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
 
     Arc::new(responses_schema)
 });
-pub static PRODUCE_RESPONSE_V2: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PRODUCE_RESPONSE_V2: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let partition_reps_schema = Schema::from_fields_desc_vec(vec![
         (0, PARTITION_KEY_NAME, 0i32.into()),
         (1, ERROR_CODE_KEY_NAME, 0i16.into()),

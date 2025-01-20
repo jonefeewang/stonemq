@@ -1,9 +1,7 @@
 use std::clone::Clone;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
-
 use tracing::trace;
 
 use crate::protocol::base::ProtocolType;
@@ -52,7 +50,7 @@ const REPLICAS_KEY_NAME: &str = "replicas";
 const ISR_KEY_NAME: &str = "isr";
 const THROTTLE_TIME_MS_KEY_NAME: &str = "throttle_time_ms";
 
-pub static PARTITION_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static PARTITION_METADATA_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, PARTITION_ERROR_CODE_KEY_NAME, 0i16.into()),
         (1, PARTITION_KEY_NAME, 0i32.into()),
@@ -63,7 +61,7 @@ pub static PARTITION_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(schema)
 });
 
-pub static TOPIC_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static TOPIC_METADATA_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, TOPIC_ERROR_CODE_KEY_NAME, 0i16.into()),
         (1, TOPIC_KEY_NAME, "".into()),
@@ -75,7 +73,7 @@ pub static TOPIC_METADATA_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static TOPIC_METADATA_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static TOPIC_METADATA_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, TOPIC_ERROR_CODE_KEY_NAME, 0i16.into()),
         (1, TOPIC_KEY_NAME, "".into()),
@@ -88,7 +86,7 @@ pub static TOPIC_METADATA_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static METADATA_BROKER_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_BROKER_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, NODE_ID_KEY_NAME, 0i32.into()),
         (1, HOST_KEY_NAME, "".into()),
@@ -96,7 +94,7 @@ pub static METADATA_BROKER_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static METADATA_BROKER_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_BROKER_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, NODE_ID_KEY_NAME, 0i32.into()),
         (1, HOST_KEY_NAME, "".into()),
@@ -106,7 +104,7 @@ pub static METADATA_BROKER_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(schema)
 });
 
-pub static METADATA_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_RESPONSE_V0: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (
             0,
@@ -121,7 +119,7 @@ pub static METADATA_RESPONSE_V0: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static METADATA_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_RESPONSE_V1: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (
             0,
@@ -136,7 +134,7 @@ pub static METADATA_RESPONSE_V1: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static METADATA_RESPONSE_V2: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_RESPONSE_V2: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (
             0,
@@ -153,7 +151,7 @@ pub static METADATA_RESPONSE_V2: Lazy<Arc<Schema>> = Lazy::new(|| {
     ]);
     Arc::new(schema)
 });
-pub static METADATA_RESPONSE_V3: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static METADATA_RESPONSE_V3: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let schema = Schema::from_fields_desc_vec(vec![
         (0, THROTTLE_TIME_MS_KEY_NAME, 0i32.into()),
         (

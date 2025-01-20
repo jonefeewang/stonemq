@@ -1,9 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
-
-use once_cell::sync::Lazy;
 
 use crate::{
     log::LogType,
@@ -200,7 +198,7 @@ impl FetchResponse {
     }
 }
 
-pub static FETCH_PARTITION_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_PARTITION_REQUEST_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (0, "partition", ProtocolType::I32(I32::default())),
         (1, "fetch_offset", ProtocolType::I64(I64::default())),
@@ -210,7 +208,7 @@ pub static FETCH_PARTITION_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_TOPIC_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_TOPIC_REQUEST_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (0, "topic", ProtocolType::PString(PString::default())),
         (
@@ -228,7 +226,7 @@ pub static FETCH_TOPIC_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_REQUEST_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, "replica_id", ProtocolType::I32(I32::default())),
         (1, "max_wait_time", ProtocolType::I32(I32::default())),
@@ -248,14 +246,14 @@ pub static FETCH_REQUEST_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_ABORTED_TRANSACTION_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_ABORTED_TRANSACTION_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (0, "producer_id", ProtocolType::I64(I64::default())),
         (1, "first_offset", ProtocolType::I64(I64::default())),
     ];
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
-pub static FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (0, "partition", ProtocolType::I32(I32::default())),
         (1, "error_code", ProtocolType::I16(I16::default())),
@@ -277,7 +275,7 @@ pub static FETCH_PARTITION_RESPONSE_HEADER_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (
             0,
@@ -293,7 +291,7 @@ pub static FETCH_PARTITION_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| 
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_TOPIC_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_TOPIC_RESPONSE_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc = vec![
         (0, "topic", ProtocolType::PString(PString::default())),
         (
@@ -311,7 +309,7 @@ pub static FETCH_TOPIC_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static FETCH_RESPONSE_V5_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static FETCH_RESPONSE_V5_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, "throttle_time_ms", ProtocolType::I32(I32::default())),
         (

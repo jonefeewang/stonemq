@@ -10,11 +10,10 @@ use crate::{
     AppError,
 };
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::{message::TopicPartition, AppResult};
 use bytes::{BufMut, BytesMut};
-use once_cell::sync::Lazy;
 
 const GROUP_ID_KEY_NAME: &str = "group_id";
 const GROUP_GENERATION_ID_KEY_NAME: &str = "group_generation_id";
@@ -228,7 +227,7 @@ impl OffsetCommitResponse {
     }
 }
 
-pub static OFFSET_COMMIT_REQUEST_PARTITION_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_REQUEST_PARTITION_V2_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, PARTITION_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, OFFSET_KEY_NAME, ProtocolType::I64(I64::default())),
@@ -241,7 +240,7 @@ pub static OFFSET_COMMIT_REQUEST_PARTITION_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static OFFSET_COMMIT_REQUEST_TOPIC_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_REQUEST_TOPIC_V2_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, TOPIC_KEY_NAME, ProtocolType::PString(PString::default())),
         (
@@ -259,7 +258,7 @@ pub static OFFSET_COMMIT_REQUEST_TOPIC_V2_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static OFFSET_COMMIT_REQUEST_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_REQUEST_V3_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (
             0,
@@ -296,7 +295,7 @@ pub static OFFSET_COMMIT_REQUEST_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static OFFSET_COMMIT_RESPONSE_PARTITION_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_RESPONSE_PARTITION_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, PARTITION_KEY_NAME, ProtocolType::I32(I32::default())),
         (1, ERROR_CODE_KEY_NAME, ProtocolType::I16(I16::default())),
@@ -304,7 +303,7 @@ pub static OFFSET_COMMIT_RESPONSE_PARTITION_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy:
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static OFFSET_COMMIT_RESPONSE_TOPIC_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_RESPONSE_TOPIC_V0_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, TOPIC_KEY_NAME, ProtocolType::PString(PString::default())),
         (
@@ -322,7 +321,7 @@ pub static OFFSET_COMMIT_RESPONSE_TOPIC_V0_SCHEMA: Lazy<Arc<Schema>> = Lazy::new
     Arc::new(Schema::from_fields_desc_vec(fields_desc))
 });
 
-pub static OFFSET_COMMIT_RESPONSE_V3_SCHEMA: Lazy<Arc<Schema>> = Lazy::new(|| {
+pub static OFFSET_COMMIT_RESPONSE_V3_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| {
     let fields_desc: Vec<(i32, &str, ProtocolType)> = vec![
         (0, THROTTLE_TIME_KEY_NAME, ProtocolType::I32(I32::default())),
         (
