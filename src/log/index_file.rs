@@ -215,13 +215,13 @@ fn binary_search_index(slice: &[u8], entries: usize, target_offset: u32) -> Opti
         return Some((0, 0));
     }
 
-    // 读取第一个条目
+    // Read the first entry
     let first_entry = u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]);
     if target_offset < first_entry {
         return Some((0, 0));
     }
 
-    // 二分查找
+    // Binary search
     let mut left = 0;
     let mut right = entries - 1;
 

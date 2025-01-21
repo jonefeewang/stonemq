@@ -14,7 +14,7 @@
 
 use thiserror::Error;
 
-/// Kafka错误类型
+/// Kafka Error Types
 #[derive(Error, Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum KafkaError {
@@ -189,7 +189,7 @@ pub enum KafkaError {
     OperationNotAttempted(String),
 }
 
-/// Kafka错误码
+/// Kafka Error Codes
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(i16)]
 pub enum ErrorCode {
@@ -275,8 +275,8 @@ pub enum ErrorCode {
 
 }
 
+/// Get error description message
 impl ErrorCode {
-    /// 获取错误描述信息
     #[allow(dead_code)]
     pub fn message(&self) -> &'static str {
         match self {

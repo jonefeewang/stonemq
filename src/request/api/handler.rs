@@ -18,7 +18,7 @@ pub trait ApiHandler {
     type Request: ProtocolCodec<Self::Request> + Send + 'static;
     type Response: ProtocolCodec<Self::Response> + Send + 'static;
 
-    // 处理请求并返回响应
+    // Process request and return response
     fn handle_request(
         &self,
         request: Self::Request,

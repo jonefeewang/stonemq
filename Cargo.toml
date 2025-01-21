@@ -12,7 +12,7 @@ license = "Apache-2.0"
 
 
 [dependencies]
-# tokio
+# tokio dependencies
 tokio = { version = "1.33", features = [
     "rt",
     "time",

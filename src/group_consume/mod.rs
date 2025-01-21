@@ -106,7 +106,7 @@ pub struct GroupMetadataManager {
     db: DB,
 }
 
-/// 协议信息
+/// Protocol Information
 #[derive(Debug, Clone)]
 struct Protocol {
     name: String,

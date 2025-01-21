@@ -149,7 +149,7 @@ impl SplitterTask {
                 Ok(()) => continue,
                 Err(e) if self.is_retrievable_error(&e) => {
                     trace!(
-                        "读取目标offset失败,可恢复中: {}/{}",
+                        "Failed to read target offset, recoverable: {}/{}",
                         e,
                         &self.topic_partition
                     );
@@ -158,7 +158,7 @@ impl SplitterTask {
                     }
                     tokio::select! {
                         _ = self.read_wait_interval.tick() => {
-                            trace!("等待继续读取...... / {}", &self.topic_partition);
+                            trace!("Waiting to continue reading... / {}", &self.topic_partition);
                         },
                         _ = shutdown.recv() => {
                             return Ok(());
@@ -168,7 +168,7 @@ impl SplitterTask {
                 }
                 Err(e) => {
                     error!(
-                        "读取目标offset失败,不可恢复: {}/{}",
+                        "Failed to read target offset, unrecoverable: {}/{}",
                         e, &self.topic_partition
                     );
                     return Err(e);
@@ -219,7 +219,7 @@ impl SplitterTask {
     ///
     /// * `AppResult<()>` - Success if read completes
     async fn read_from(&mut self, target_offset: i64, shutdown: &mut Shutdown) -> AppResult<()> {
-        // Simply seek the file pointer to the target offset and continue reading until the end of the segment (EOF). Once this segment is fully processed, return Ok(()); 
+        // Simply seek the file pointer to the target offset and continue reading until the end of the segment (EOF). Once this segment is fully processed, return Ok(());
         // Any EOF errors encountered during reading are handled internally.
         // Function return values:
         // 1. Normal read and processing: Read until EOF of the segment, complete processing of this segment, return Ok(()), wait to switch to next segment
@@ -400,4 +400,3 @@ impl SplitterTask {
         })
     }
 }
-

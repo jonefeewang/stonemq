@@ -70,7 +70,7 @@ impl FetchOffsetsResponse {
         }
     }
 }
-// 在fetch offsets response 中使用
+// Used in fetch offsets response
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct PartitionOffsetData {

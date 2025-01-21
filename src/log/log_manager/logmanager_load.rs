@@ -211,7 +211,7 @@ impl LogManager {
         &self,
         index_file_max_size: u32,
     ) -> AppResult<Vec<(TopicPartition, Arc<QueueLog>)>> {
-        // 加载检查点文件
+        // Load checkpoint file
         let recovery_checkpoints = self
             .queue_recovery_checkpoints
             .read_checkpoints(LogType::Queue)?;

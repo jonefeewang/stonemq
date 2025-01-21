@@ -82,7 +82,7 @@ impl LogManager {
     ) -> AppResult<()> {
         loop {
             tokio::select! {
-                // 第一次运行定时任务，会马上结束
+                // First run of the scheduled task will end immediately
                 _ = interval.tick() => {trace!("tick complete .")},
                 _ = shutdown.recv() => {trace!("recovery checkpoint task receiving shutdown signal");}
             };

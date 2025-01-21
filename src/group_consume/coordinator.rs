@@ -160,7 +160,7 @@ impl GroupCoordinator {
     /// # Returns
     /// Response containing this node's information
     pub async fn find_coordinator(&self, _: FindCoordinatorRequest) -> FindCoordinatorResponse {
-        // 因为stonemq目前支持单机，所以coordinator就是自身
+        // Since stonemq currently supports single node, the coordinator is itself
         let response: FindCoordinatorResponse = self.node.clone().into();
         response
     }
@@ -176,7 +176,7 @@ impl GroupCoordinator {
     /// # Returns
     /// Result containing join group response or error
     pub async fn handle_join_group(self: Arc<Self>, request: JoinGroupRequest) -> JoinGroupResult {
-        // 检查请求是否合法
+        // Check if the request is valid
         if request.group_id.is_empty() {
             return self.join_error(request.member_id.clone(), ErrorCode::InvalidGroupId);
         } else if !self.active.load(Ordering::Relaxed) {
@@ -193,15 +193,15 @@ impl GroupCoordinator {
 
         let group = self.group_manager.get_group(&request.group_id);
         if let Some(group) = group {
-            // 加入一个已经存在的组
+            // Join an existing group
             self.do_join_group(request, group).await
         } else if request.member_id.is_empty() {
-            // 新组，新成员
+            // New group, new member
             let group = GroupMetadata::new(&request.group_id);
             let group = self.group_manager.add_group(group);
             self.do_join_group(request, group).await
         } else {
-            // 旧成员加入一个不存在的组
+            // Old member joining a non-existent group
             self.join_error(request.member_id.clone(), ErrorCode::UnknownMemberId)
         }
     }
@@ -345,7 +345,7 @@ impl GroupCoordinator {
                     }
                 }
             };
-            // 再次获取锁，尝试完成延迟加入
+            // Get lock again, try to complete delayed join
             let locked_group = group.read().await;
             if locked_group.is(GroupState::PreparingRebalance) {
                 coordinator_clone
@@ -361,7 +361,7 @@ impl GroupCoordinator {
         }
     }
 
-    // do_join_group 的辅助函数-1，在获取写锁的情况下，添加成员，释放锁，并触发rebalance
+    // Helper function for do_join_group-1, add member with write lock, release lock, and trigger rebalance
     async fn add_member_and_rebalance(
         self: &Arc<Self>,
         request: JoinGroupRequest,
@@ -394,7 +394,7 @@ impl GroupCoordinator {
             locked_group.set_new_member_added();
         }
 
-        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
         drop(locked_group);
 
         self.maybe_prepare_rebalance(group).await;
@@ -416,7 +416,7 @@ impl GroupCoordinator {
         member.update_supported_protocols(protocols);
         member.set_join_group_callback(tx);
 
-        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
         drop(locked_group);
 
         self.maybe_prepare_rebalance(group).await;
@@ -433,7 +433,7 @@ impl GroupCoordinator {
             drop(locked_group);
             return;
         }
-        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
         drop(locked_group);
         self.prepare_rebalance(group).await;
     }
@@ -450,7 +450,7 @@ impl GroupCoordinator {
                 member.set_assignment(Bytes::new());
             }
 
-            // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+            // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
             drop(locked_group);
 
             self.progate_assignment(
@@ -459,7 +459,7 @@ impl GroupCoordinator {
             )
             .await;
 
-            // 重新获取锁, 保持外部锁的使用状态
+            // Get lock again, 保持外部锁的使用状态
             locked_group = group.write().await;
         }
 
@@ -480,7 +480,7 @@ impl GroupCoordinator {
             );
             locked_group.transition_to(GroupState::PreparingRebalance);
 
-            // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
+            // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
             drop(locked_group);
 
             let initial_delayed_join_clone = Arc::new(initial_delayed_join);
@@ -498,7 +498,7 @@ impl GroupCoordinator {
             );
             locked_group.transition_to(GroupState::PreparingRebalance);
 
-            // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
+            // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
             drop(locked_group);
             let delayed_join_clone = Arc::new(delayed_join);
             self.delayed_join_purgatory
@@ -583,7 +583,7 @@ impl GroupCoordinator {
 
         let last_heartbeat = member.last_heartbeat();
         let session_timeout = member.session_timeout();
-        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
         drop(group_lock);
 
         self.delayed_heartbeat_purgatory
@@ -739,7 +739,7 @@ impl GroupCoordinator {
                         } else if generation_id != locked_read_group.generation_id() {
                             Err(KafkaError::IllegalGeneration(group_id.to_string()))
                         } else {
-                            // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
+                            // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
                             drop(locked_read_group);
                             self.complete_and_schedule_next_heartbeat_expiry(
                                 group_clone,
@@ -756,7 +756,7 @@ impl GroupCoordinator {
                         } else if generation_id != locked_read_group.generation_id() {
                             Err(KafkaError::IllegalGeneration(group_id.to_string()))
                         } else {
-                            // 释放锁, 因为下边的调用会再次尝试获取锁，否则会造成死锁
+                            // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
                             drop(locked_read_group);
                             self.complete_and_schedule_next_heartbeat_expiry(
                                 group_clone,
@@ -878,22 +878,22 @@ impl GroupCoordinator {
                                     );
                                 }
 
-                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
                                 drop(write_lock);
                                 self.progate_assignment(group_clone, &KafkaError::None)
                                     .await;
 
-                                // 获取锁，改变状态
+                                // Get lock again, change state
                                 write_lock = group.write().await;
                                 write_lock.transition_to(GroupState::Stable);
-                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
                                 drop(write_lock);
                             } else {
-                                // 设置错误并准备重新平衡
+                                // Set error and prepare to rebalance
                                 for member in write_lock.members() {
                                     member.set_assignment(Bytes::new());
                                 }
-                                // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+                                // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
                                 drop(write_lock);
                                 self.progate_assignment(group.clone(), &KafkaError::None)
                                     .await;
@@ -906,7 +906,7 @@ impl GroupCoordinator {
                         debug!("not leader, wait for leader to send response");
                         drop(write_lock);
                     }
-                    // 通知processor继续处理, 此处的等待不会阻塞processor
+                    // Notify processor to continue processing, this wait will not block processor
                     Ok(rx.await.unwrap())
                 }
             };
@@ -938,7 +938,7 @@ impl GroupCoordinator {
             }
             member_ids.push(member.id().to_string());
         }
-        // 释放锁，因为下边的调用会再次尝试获取锁，否则会造成死锁
+        // Release lock because the following call will try to acquire lock again, otherwise it will cause deadlock
         drop(locked_write_group);
 
         for member_id in member_ids {
