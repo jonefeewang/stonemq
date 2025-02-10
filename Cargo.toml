@@ -6,8 +6,8 @@ rust-version = "1.80.0"
 repository = "https://github.com/jonefeewang/stonemq"
 authors = ["jonefeewang<jonefeewang@gmail.com>"]
 description = "A high performance and efficient message queue written in Rust."
-keywords = ["kafka", "pulsar"]
-categories = ["network-programming"]
+keywords = ["kafka", "pulsar", "mq", "message queue", "distributed", "queue", "broker", "queue server"]
+categories = ["network-programming", "messaging", "queue", "broker", "queue server"]
 license = "Apache-2.0"
 
 

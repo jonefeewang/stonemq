@@ -24,7 +24,7 @@ queue_topic_count = 2
 recovery_checkpoint_interval = 1000
 file_records_comm_channel_size = 1000
 ## default 100ms
-splitter_wait_interval = 100
+splitter_wait_interval = 100_100
 
 
 ###### journal config
