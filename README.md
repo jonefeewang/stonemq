@@ -114,7 +114,7 @@ This will allow the server to perform a graceful shutdown, ensuring all pending 
 2. **Clone the Repository**:
 
    ```bash
-   git clone https://github.com/username/stonemq.git
+   git clone https://github.com/jonefeewang/stonemq.git
    cd stonemq
    ```
 
@@ -173,8 +173,8 @@ Contributions are welcome and greatly appreciated! Whether it's reporting a bug,
 
 If you encounter issues or have questions, feel free to reach out to the community:
 
-- 🐛 Submit Issues: [GitHub Issues](https://github.com/username/stonemq/issues)
-- 📢 Join Discussions: [GitHub Discussions](https://github.com/username/stonemq/discussions)
+- 🐛 Submit Issues: [GitHub Issues](https://github.com/jonefeewang/stonemq/issues)
+- 📢 Join Discussions: [GitHub Discussions](https://github.com/jonefeewang/stonemq/discussions)
 
 ---
 
