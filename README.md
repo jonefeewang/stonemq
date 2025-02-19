@@ -10,6 +10,8 @@ In use cases involving large clusters with countless queues—particularly in en
 
 Cluster performance should remain consistent regardless of partition growth. Queues with varying traffic volumes need consolidation to enable more efficient message flow—akin to containerized shipping for multiple clients. This is precisely the vision of Stonemq. While solutions like Pulsar utilize journaling for centralized message handling, Stonemq seeks to retain Kafka’s replication , which simplifies and standardizes cluster operation and maintenance.We believe this protocol is both straightforward and highly efficient, forming the backbone of our solution.Additionally, by reusing Kafka's client-server communication protocol, StoneMQ ensures seamless migration without requiring any changes to the user's client applications. This approach significantly reduces adoption costs for users, enabling a smooth transition to StoneMQ while retaining the familiar and reliable interface they are accustomed to. 
 
+For a more detailed analysis and introduction to the project's inception, please refer to the blog: [Blog Link](https://wangjunfei.com/2025/02/10/Announcing-Stonemq-A-high-performance-and-efficient-message-queue-developed-in-Rust/).
+
 ---
 
 ## Current Status
@@ -82,6 +84,19 @@ By default, the system sets up with **2 journals**.
 
 The configuration file, **`conf.toml`**, is located in the project’s root directory. Adjust settings as needed to customize the server's behavior.
 
+### **5. Server Graceful Shutdown**  
+
+StoneMQ provides a graceful shutdown mechanism that allows the server to complete all pending tasks before exiting. This is particularly useful in scenarios where the server needs to ensure all messages are processed or stored before shutting down.
+
+To trigger a graceful shutdown, you can send a termination signal to the server. In a Unix-like environment, you can use `Ctrl+C` to send the `SIGINT` signal or use the following command to send the `SIGINT` signal:
+
+```bash
+kill -2 <pid>
+```
+
+This will allow the server to perform a graceful shutdown, ensuring all pending messages are processed and stored.
+
+
 ---
 
 ## Development Guide
@@ -127,7 +142,7 @@ The configuration file, **`conf.toml`**, is located in the project’s root dire
 
 6. **Log Parsing**  
 
-   An executable file, **`log_parser.rs`**, is available in the project's `bin` directory. This tool can be used to parse `log`,`index`,and `checkpoint` files.
+   An executable log_parser, source file is **`log_parser.rs`**, is available in the project's `bin` directory. This tool can be used to parse `log`,`index`,and `checkpoint` files.
 
 7. **Benchmarking and Monitoring**  
 
@@ -135,7 +150,10 @@ The configuration file, **`conf.toml`**, is located in the project’s root dire
 
    - **Dev Mode**: Suitable for development.  
    - **Perf Mode**: Enables the use of **tokio-console** to monitor the state of Tokio tasks within the process.  
-     Additionally, you can specify whether to enable **trace**. When enabled, added spans can be observed in **Open Jaeger** for in-depth monitoring.
+     
+   Additionally, you can specify whether to enable **trace**. When enabled, added spans can be observed in **Open Jaeger** for in-depth monitoring. 
+
+   You can also specify the **log output level** through environment variables. The project uses **dotenv** crate to configure environment variables for ease of management and flexibility.
 
 ---
 
